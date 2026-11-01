@@ -1,0 +1,40 @@
+[project]
+name = "premiere-mcp-sidecar"
+version = "1.4.0"
+description = "Python sidecar for the Adobe Premiere Pro MCP server: ASR, face scan and caption rendering."
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+dependencies = [
+    "faster-whisper==1.2.1",
+    "ctranslate2==4.8.4",
+    # Pinned only so faster-whisper's PyAV import works; audio is decoded with the
+    # ffmpeg binary, not faster_whisper.decode_audio (PyAV 19 breaks on some files).
+    "av==19.0.2",
+    "numpy>=2,<3",
+    "pillow>=11",
+    "opencv-python-headless>=4.10",
+    "pytest>=8",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "nvidia-cublas-cu12==12.9.2.10",
+    "nvidia-cudnn-cu12==9.27.0.42",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["premiere_mcp_sidecar"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"premiere_mcp_sidecar/fonts" = "premiere_mcp_sidecar/fonts"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The package is not pip-installed (the full dependency set would pull whisper
+# here), so tests import it from this directory even when pytest is run from the
+# repo root.
+pythonpath = ["."]

@@ -17,5 +17,9 @@ release-artifacts/
 # Worktrees
 .worktrees/
 
+# Python sidecar
+python/**/__pycache__/
+python/.venv/
+
 # Cloudflare
 .wrangler/
