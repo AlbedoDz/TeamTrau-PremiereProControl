@@ -698,7 +698,7 @@ async function autoReframeSequence(ctx: ToolContext, sequenceId: string, numerat
   return await ctx.bridge.executeScript(script);
 }
 
-async function createCaptionTrack(ctx: ToolContext, sequenceId: string, projectItemId: string, startTime?: number, captionFormat?: string): Promise<any> {
+export async function createCaptionTrack(ctx: ToolContext, sequenceId: string, projectItemId: string, startTime?: number, captionFormat?: string): Promise<any> {
   const startTimeVal = startTime || 0;
   // createCaptionTrack's optional 3rd arg is a Sequence.CAPTION_FORMAT_* integer
   // constant, NOT a free-form string. Passing a string ("Subtitle Default") raised

@@ -185,6 +185,10 @@ After creation:
 - If `detectFaces` was enabled, direct the user to review any warning markers on the timeline: `"Cảnh nhiều người — kiểm tra khung reframe"`. (When `detectFaces: false`, no markers are added).
 - Advise the user to inspect those timestamps in Premiere Pro to manually adjust Auto Reframe framing if a speaker was partially cut off.
 
+## Captions for the full episode
+
+After `transcribe_sequence` is `done`, `create_captions_from_transcript` (same `dialogueTrackIndices` and `glossary`) writes an SRT from the cached transcript and creates a native caption track in bin `Captions`, editable in Premiere's Captions panel. Run it with `dryRun: true` first to check the cue count and preview; use `startTime`/`endTime` to caption only part of the sequence. It does not run speech recognition again.
+
 ## Core Rules
 
 - **Never export unless asked**: Do NOT run export tools (`export_sequence`, `add_to_render_queue`, etc.) automatically. The user will review the resulting sequences directly in Premiere Pro.
