@@ -97,6 +97,28 @@ For deeper validation in a disposable project, create a test sequence with `crea
 - For timeline cuts, prefer sequence-aware tools and include `sequenceId` when available.
 - Export only after confirming output path, format/preset, and overwrite behavior.
 
+## Efficient Editing
+
+One real session spent 96 calls on a cut that needed about 7: 16 razors, 9 ripple deletes, 35 single `add_to_timeline` calls and repeated listings in between. Work like this instead:
+
+- **Decide first, write once.** Work out every keep range (from analysis, a transcript, or the user) before touching the timeline, then place them all with one `add_to_timeline_batch` call using `sourceInPoint`/`sourceOutPoint`. Single-item tools in `search_tools` results carry a `batchAlternative` field; use it when changing more than 3 items.
+- **Rebuild, don't razor.** With more than ~5 cuts, build a stringout on a fresh sequence (`duplicate_sequence` with `clearContents=true`) rather than razoring and ripple-deleting in place.
+- **Work on a copy.** Duplicate the sequence before bulk edits so the original stays as the reference and undo is never the recovery plan.
+- **Read once, verify once.** `list_sequence_tracks` before the edit and once after, then `qa_sequence`. Do not list between every mutation.
+- **Let analysis tools decide.** `detect_silence`, `find_dead_segments`, `score_clips`, `assemble_rough_cut` and `analyze_music` return ranges computed by ffmpeg; feed those ranges into the batch call instead of eyeballing.
+- **Search once with schemas.** `search_tools` with `detail: "schema"` returns arguments and the batch sibling together, so no separate `get_tool_schema` round-trip.
+- **Whole-sequence batch tools are not multi-select.** `batch_apply_effect`, `batch_enable_disable`, `batch_rename_clips` and `apply_audio_effect_to_all_clips` change EVERY clip of the sequence. For specific clips, call the single tool per clip.
+- Numbers and booleans sent as strings (`"12"`, `"false"`) are converted where the schema expects them; ids stay strings.
+
+### B-roll over voice-over
+
+From a live build that covered 149 s of narration with 35 shots:
+
+- Exclude clips already used elsewhere in the project, and never place one source range twice.
+- Trim ~0.6 s off each clip's head and tail, where handheld cameras shake on record start/stop.
+- Cap shot length to the brief (e.g. 5–6 s) and match shots to the sentence they sit under.
+- Check each placed shot by exporting its middle frame (`export_frame`) before reporting; look for blur, obstruction, reframing, or people looking into the lens.
+
 ## Troubleshooting
 
 If commands time out or report bridge errors:
