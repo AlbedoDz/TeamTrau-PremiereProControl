@@ -27,9 +27,25 @@ def run_check(payload: dict) -> dict:
     return check.run()
 
 
+def run_transcribe(payload: dict) -> dict:
+    # Same reason as `captions`: loading faster-whisper pulls ctranslate2 and the
+    # CUDA DLLs, which `check` has to be able to report on when they are broken.
+    from . import transcribe
+
+    return transcribe.run(payload, payload.get("progressPath"))
+
+
+def run_faces(payload: dict) -> dict:
+    from . import faces
+
+    return faces.run(payload, payload.get("progressPath"))
+
+
 COMMANDS = {
     "captions": run_captions,
     "check": run_check,
+    "faces": run_faces,
+    "transcribe": run_transcribe,
 }
 
 
