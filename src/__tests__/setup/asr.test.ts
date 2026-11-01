@@ -24,26 +24,30 @@ interface FakeChildOpts {
   stdout?: string;
   stderr?: string;
   error?: Error;
+  neverExit?: boolean;
 }
 
 function makeFakeChild(opts: FakeChildOpts = {}) {
-  const { exitCode = 0, stdout = '', stderr = '', error } = opts;
+  const { exitCode = 0, stdout = '', stderr = '', error, neverExit = false } = opts;
   const child: any = new EventEmitter();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
+  child.kill = jest.fn();
 
-  setImmediate(() => {
-    if (error) {
-      child.emit('error', error);
-      return;
-    }
-    if (stdout) child.stdout.write(stdout);
-    child.stdout.end();
-    if (stderr) child.stderr.write(stderr);
-    child.stderr.end();
-    child.emit('exit', exitCode);
-    child.emit('close', exitCode);
-  });
+  if (!neverExit) {
+    setImmediate(() => {
+      if (error) {
+        child.emit('error', error);
+        return;
+      }
+      if (stdout) child.stdout.write(stdout);
+      child.stdout.end();
+      if (stderr) child.stderr.write(stderr);
+      child.stderr.end();
+      child.emit('exit', exitCode);
+      child.emit('close', exitCode);
+    });
+  }
   return child;
 }
 
@@ -56,6 +60,8 @@ describe('setupAsr and asrStatus', () => {
   let failExitCode: number;
   let nvidiaSmiExitCode: number;
   let nvidiaSmiError: Error | null;
+  let nvidiaSmiHangs: boolean;
+  let lastNvidiaSmiChild: any;
 
   afterAll(async () => {
     await rm(fakeHome, { recursive: true, force: true }).catch(() => undefined);
@@ -71,6 +77,8 @@ describe('setupAsr and asrStatus', () => {
     failExitCode = 1;
     nvidiaSmiExitCode = 0;
     nvidiaSmiError = null;
+    nvidiaSmiHangs = false;
+    lastNvidiaSmiChild = null;
 
     mockSpawn.mockImplementation((cmd: string, args: string[]) => {
       spawned.push({ cmd, args: [...args] });
@@ -83,6 +91,10 @@ describe('setupAsr and asrStatus', () => {
       }
 
       if (cmd === 'nvidia-smi') {
+        if (nvidiaSmiHangs) {
+          lastNvidiaSmiChild = makeFakeChild({ neverExit: true });
+          return lastNvidiaSmiChild;
+        }
         if (nvidiaSmiError) {
           return makeFakeChild({ error: nvidiaSmiError });
         }
@@ -306,6 +318,24 @@ describe('setupAsr and asrStatus', () => {
       const hasCuda = spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')));
       expect(hasCuda).toBe(false);
       expect(logs).toContain('No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
+    });
+
+    it('skips CUDA libraries when nvidia-smi hangs and kills the child', async () => {
+      nvidiaSmiHangs = true;
+      const logs: string[] = [];
+      const code = await setupAsr((l) => logs.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+        nvidiaProbeTimeoutMs: 10,
+      });
+
+      expect(code).toBe(0);
+      expect(spawned.some((s) => s.cmd === 'nvidia-smi')).toBe(true);
+      const hasCuda = spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')));
+      expect(hasCuda).toBe(false);
+      expect(logs).toContain('No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
+      expect(lastNvidiaSmiChild?.kill).toHaveBeenCalled();
     });
 
     it('falls back to python -m venv and pip when uv is missing', async () => {

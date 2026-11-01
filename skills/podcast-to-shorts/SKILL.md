@@ -21,7 +21,7 @@ The transcription, visual analysis, and caption rendering pipeline uses a local 
    ```bash
    premiere-pro-mcp --setup-asr
    ```
-2. **Disk space**: Setup downloads about 1.8 GB (Python packages + the 1.6 GB large-v3-turbo model); on PCs with an NVIDIA GPU it also installs the CUDA libraries, about 3.8 GB in total in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows) for the virtual environment and Whisper `large-v3-turbo` model weights. Without an NVIDIA GPU (including PCs with only an Intel/AMD integrated GPU) transcription runs on the CPU: about 0.7× real time on an 8-core CPU, roughly 1.4× on 2 cores (measured), about 1.9 GB RAM.
+2. **Disk space**: Setup downloads about 1.8 GB (Python packages + the 1.6 GB large-v3-turbo model); on PCs with an NVIDIA GPU it also installs the CUDA libraries, about 3.8 GB in total in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows) for the virtual environment and Whisper `large-v3-turbo` model weights. Without an NVIDIA GPU (including PCs with only an Intel/AMD integrated GPU) transcription runs on the CPU: about 0.7 minutes of processing per minute of audio on an 8-core CPU, roughly 1.4 minutes per minute on 2 cores (measured), about 1.9 GB RAM.
 3. **Hardware acceleration**:
    - An NVIDIA GPU with CUDA (`int8_float16`) is optional but recommended (measured on a 9-minute Vietnamese podcast: ~51 s on an RTX 3070 using ~1.4 GB VRAM).
    - If CUDA is not available, inference automatically falls back to CPU (`int8`), which works but is ~7× slower.

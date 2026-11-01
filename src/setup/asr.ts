@@ -26,6 +26,7 @@ export interface SetupAsrOptions {
   home?: string;
   platform?: NodeJS.Platform;
   exists?: (path: string) => boolean;
+  nvidiaProbeTimeoutMs?: number;
 }
 
 function runCommand(
@@ -115,20 +116,47 @@ async function isUvAvailable(spawnFn: typeof spawn = spawn): Promise<boolean> {
   });
 }
 
-async function hasNvidiaGpu(spawnFn: typeof spawn = spawn): Promise<boolean> {
+async function hasNvidiaGpu(
+  spawnFn: typeof spawn = spawn,
+  timeoutMs = 15_000
+): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+
+    const cleanup = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    };
+
     const settle = (val: boolean) => {
+      cleanup();
       if (!settled) {
         settled = true;
         resolve(val);
       }
     };
+
     try {
       const child = spawnFn('nvidia-smi', [], {
         stdio: 'ignore',
         windowsHide: true,
       });
+
+      timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+          // ignore kill error
+        }
+        settle(false);
+      }, timeoutMs);
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
+
       child.on('error', () => settle(false));
       child.on('exit', (code) => settle(code === 0));
       child.on('close', (code) => settle(code === 0));
@@ -159,7 +187,7 @@ export async function setupAsr(
     if (plat !== 'win32' && plat !== 'linux') {
       return false;
     }
-    const gpu = await hasNvidiaGpu(spawnFn);
+    const gpu = await hasNvidiaGpu(spawnFn, options.nvidiaProbeTimeoutMs);
     if (gpu) {
       log('NVIDIA GPU found: installing CUDA libraries (about 2 GB).');
       return true;
@@ -167,7 +195,6 @@ export async function setupAsr(
     log('No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
     return false;
   };
-
 
   const venvExists = exists(py);
   if (venvExists) {
