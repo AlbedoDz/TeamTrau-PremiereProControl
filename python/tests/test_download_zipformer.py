@@ -201,6 +201,8 @@ def test_whisper_still_fetches_whisper_and_yunet_only(tmp_path):
     result = run(tmp_path)
 
     assert FakeSnapshot.calls[0]["repoId"] == download_models.DEFAULT_WHISPER_REPO
+    # Fix round 2 (R36): the face model is fetched whether or not whisper is, so a
+    # whisper run still touches exactly one Hugging Face repo and two URLs.
     assert FakeUrlopen.calls == [download_models.ONNX_URL]
     assert set(result) == {"whisper", "yunet"}
 
@@ -250,8 +252,10 @@ def test_a_second_run_downloads_nothing(tmp_path):
 
     # rover is the two Zipformers, not Whisper: one repo each on the first run.
     assert len(FakeSnapshot.calls) == 2, "the two zipformers, once each"
-    assert len(FakeUrlopen.calls) == 1, "the vad, once"
-    for name in ("zipformer68m", "zipformer30m", "vad"):
+    # Fix round 2: the VAD and the face model, once each -- YuNet is fetched for
+    # every engine set (R36), so a second run finds it and asks for neither.
+    assert len(FakeUrlopen.calls) == 2, "the vad and the face model, once each"
+    for name in ("zipformer68m", "zipformer30m", "vad", "yunet"):
         assert result[name]["downloaded"] is False, name
 
 
@@ -344,6 +348,7 @@ def test_a_truncated_vad_is_downloaded_again(tmp_path):
 
     assert VAD_URL in FakeUrlopen.calls
     assert result["vad"]["downloaded"] is True
+
 
 
 # --- tokens.txt from bpe.model ------------------------------------------------

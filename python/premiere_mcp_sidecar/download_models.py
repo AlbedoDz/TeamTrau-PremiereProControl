@@ -16,7 +16,9 @@ models the sidecar has always fetched:
   dependency. It is streamed into a temp file next to the target and moved into
   place with ``os.replace``, so a dropped connection leaves no half-written model
   that ``check`` would then report as present. A result under 100 KB is treated as
-  an error page or a truncated body, not as the model.
+  an error page or a truncated body, not as the model (the real file is 232,589 B).
+  It is fetched on **every** run, whatever ``engines`` asks for (Ruling R36): the
+  default install is the Zipformer-68M and the shorts pipeline counts faces on it.
 
 The CPU Zipformer engines (T16py) add their own steps, all planned in
 ``sherpa_models``: one Hugging Face folder per model, the shared Silero VAD from
@@ -24,6 +26,7 @@ a GitHub release, and -- for the 30M, whose repo ships no ``tokens.txt`` -- a
 ``tokens.txt`` rebuilt from its ``bpe.model``. ``rover`` fetches both Zipformers.
 Only the models of the engines asked for are in the result, each as
 ``{path, downloaded, failed}``, or ``{error, failed}`` when it could not be made.
+YuNet is the exception: it is in the result of every run (Ruling R36).
 
 Three rules came out of the first live run (fix round 1):
 
@@ -37,8 +40,12 @@ Three rules came out of the first live run (fix round 1):
   Whisper turbo is ~1.8 GB of a Whisper setup but 0 % of a Zipformer-only one, so
   the fixed "first 90 %" jumped the bar to 0.9 on a run that downloads no whisper
   file at all. Sizes: Whisper turbo ~1.8 GB without CUDA (~3.8 GB with it, which
-  the setup warns about separately), YuNet ~345 KB, the 68M int8 ~77 MB, the 30M
-  int8 ~30 MB, the VAD ~0.6 MB.
+  the setup warns about separately), YuNet ~228 KB (232,589 B), the 68M int8
+  ~77 MB, the 30M int8 ~30 MB, the VAD ~0.6 MB.
+
+Fix round 2 (Ruling R36 and failure isolation): the face model is fetched for
+every engine set, and every model -- whisper and YuNet included -- is one entry
+of the result that can fail without touching the others.
 
 Sizes for the Zipformer files are asked of Hugging Face first
 (:func:`refresh_sizes`): the floor each file must clear is then the size the repo
@@ -76,8 +83,8 @@ ONNX_URL = (
     "https://github.com/opencv/opencv_zoo/raw/main/models/"
     "face_detection_yunet/face_detection_yunet_2023mar.onnx"
 )
-# YuNet 2023mar is ~345 KB. A truncated body or an HTML error page is far smaller,
-# and a model that OpenCV cannot load fails every Faces-enabled job.
+# YuNet 2023mar is 232,589 B. A truncated body or an HTML error page is far
+# smaller, and a model that OpenCV cannot load fails every Faces-enabled job.
 MIN_ONNX_BYTES = 100 * 1024
 
 # Read size for the ONNX stream: the file is small, but never load it in one go.
@@ -86,7 +93,7 @@ CHUNK_SIZE = 256 * 1024
 # Rough download sizes, only used to split the progress bar in proportion (see
 # plan_shares). Whisper turbo is the model plus its config: ~1.8 GB.
 WHISPER_BYTES = 1_800 * 1024 * 1024
-YUENT_BYTES = 345 * 1024
+YUENT_BYTES = 232 * 1024
 # Share of the bar a whisper setup gives the whisper weights: ~1.8 GB of ~1.8 GB,
 # so the YuNet stream reports its own byte position in the last fraction.
 WHISPER_SHARE = WHISPER_BYTES / (WHISPER_BYTES + YUENT_BYTES)
@@ -202,15 +209,18 @@ def zipformer_names(engines: list[str]) -> list[str]:
 def plan_names(engines: list[str]) -> list[str]:
     """Every step of the run in order, as the result key it is reported under.
 
-    The VAD, then each model, then the whisper pair: ``download-models`` walks
-    this list and reports each step under the same key.
+    The VAD, then each Zipformer, then the whisper pair, then the face model --
+    which is fetched whatever engines were asked for (Ruling R36), so it closes
+    every plan and the bar ends on it. ``download-models`` walks this list and
+    reports each step under the same key.
     """
     names = zipformer_names(engines)
     steps = [ZIPFORMER_STEPS[name] for name in names]
     if steps:
         steps = [VAD_STEP, *steps]
     if "whisper-turbo" in engines:
-        steps.extend(WHISPER_STEPS)
+        steps.append(WHISPER_STEP)
+    steps.append(YUENT_STEP)
     return steps
 
 
@@ -379,8 +389,10 @@ def run(
 
     ``engines`` (T16py) names what to fetch: ``whisper-turbo`` (the default,
     exactly the two models above) and/or the Zipformer engines, which add their
-    own folders and the shared Silero VAD; ``rover`` is both Zipformers. Only the
-    models of the engines that were asked for are in the result.
+    own folders and the shared Silero VAD; ``rover`` is both Zipformers. The face
+    model is fetched for every one of them (Ruling R36): the default install is
+    the 68M alone, and ``detectFaces`` has to work on it. Only the models of the
+    engines that were asked for are in the result, plus ``yunet``.
 
     The Zipformer plan itself lives in ``sherpa_models``: ``check`` and
     ``transcribe`` read the same folders, and one definition is what keeps setup
@@ -419,33 +431,52 @@ def run(
             result[key] = _step(lambda name=name: _download_zipformer(name, models_dir), key)
             beat.at(fraction=marks[key])
 
-        # The whisper pair is the run's own model, not one of several: a broken
-        # whisper download still fails the command (its own tests assert the raise)
-        # rather than being reported beside a Zipformer that did arrive. When it is
-        # asked for together with Zipformers the raise comes after they are done,
-        # so their files are on disk either way.
+        # Then the whisper pair, then the face model. Both go through `_step` like
+        # every Zipformer (fix round 2): a whisper that will not download is one
+        # failed entry in the result, not an exception that hides what did arrive,
+        # and a lost YuNet does not undo a 1.8 GB whisper that is already on disk.
         if "whisper-turbo" in engines:
-            folder = whisper_dir(models_dir)
-            if _whisper_present(folder):
-                io.log(f"using the whisper model already in {folder}")
-                whisper_downloaded = False
-            else:
-                _download_whisper(folder, repo)
-                whisper_downloaded = True
-            result["whisper"] = {"path": str(folder), "downloaded": whisper_downloaded, "failed": False}
+            result[WHISPER_STEP] = _step(
+                lambda: _download_whisper_step(whisper_dir(models_dir), repo), WHISPER_STEP
+            )
             beat.at(fraction=marks[WHISPER_STEP])
-            target = onnx_path(models_dir)
-            if _onnx_present(target):
-                io.log(f"using the face model already at {target}")
-                yunet_downloaded = False
-            else:
-                _download_onnx(target, beat, chunk_size, _span(marks, YUENT_STEP))
-                yunet_downloaded = True
-            result["yunet"] = {"path": str(target), "downloaded": yunet_downloaded, "failed": False}
-            beat.at(fraction=marks[YUENT_STEP])
+
+        # Ruling R36: the face model is fetched whatever engines were asked for. The
+        # default install is the 68M and the VAD, and the shorts pipeline counts
+        # faces on it; 232,589 B is nothing next to any model here.
+        result[YUENT_STEP] = _step(
+            lambda: _download_onnx_step(
+                onnx_path(models_dir), beat, chunk_size, _span(marks, YUENT_STEP)
+            ),
+            YUENT_STEP,
+        )
+        beat.at(fraction=marks[YUENT_STEP])
     beat.finish()
 
     return result
+
+
+def _download_whisper_step(folder: Path, repo: str) -> dict:
+    """The turbo folder: skipped when whole, fetched and judged otherwise."""
+    if _whisper_present(folder):
+        io.log(f"using the whisper model already in {folder}")
+        return {"path": str(folder), "downloaded": False}
+    _download_whisper(folder, repo)
+    return {"path": str(folder), "downloaded": True}
+
+
+def _download_onnx_step(
+    target: Path,
+    beat: io.Heartbeat,
+    chunk_size: int = CHUNK_SIZE,
+    span: tuple[float, float] = (WHISPER_SHARE, 1.0),
+) -> dict:
+    """The face model: skipped when whole, streamed and verified otherwise."""
+    if _onnx_present(target):
+        io.log(f"using the face model already at {target}")
+        return {"path": str(target), "downloaded": False}
+    _download_onnx(target, beat, chunk_size, span)
+    return {"path": str(target), "downloaded": True}
 
 
 def _span(marks: dict[str, float], step: str) -> tuple[float, float]:

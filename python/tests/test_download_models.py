@@ -5,6 +5,12 @@ it was called, and ``urlopen`` is a fake whose response streams fixed bytes -- o
 raises part way, which is how the "no partial file is left behind" rule is checked:
 the download goes to a temp file next to the target and is only moved into place
 once it is complete.
+
+Fix round 2: a failure is reported in the model's own entry (``{error, failed}``)
+rather than raised, for YuNet and whisper alike (see test_download_fix2.py), so the
+failure tests below read ``result["yunet"]["error"]``. What they assert -- no
+half-written model left to be trusted, progress never going backwards -- is the
+same; the entry is only how the caller now hears about it.
 """
 import io as stdlib_io
 import json
@@ -342,15 +348,18 @@ def test_a_network_error_midway_leaves_no_partial_file(tmp_path, monkeypatch):
         lambda path, done, eta_sec=None: writes.append(done),
     )
 
-    with pytest.raises(Exception) as caught:
-        run(tmp_path, progress=tmp_path / "progress.json")
+    # Fix round 2: the failure is the YuNet entry, not an exception out of `run`.
+    result = run(tmp_path, progress=tmp_path / "progress.json")
 
-    assert "connection reset" in str(caught.value)
+    assert "connection reset" in result["yunet"]["error"]
     onnx = models_dir(tmp_path) / ONNX_NAME
     assert not onnx.exists(), "a failed download must not leave a model to be trusted"
     assert [path.name for path in onnx.parent.iterdir()] == ["faster-whisper-large-v3-turbo"]
     assert writes == sorted(writes), "progress must never go backwards"
-    assert writes[-1] < 1.0, "an interrupted download must not look finished"
+    # Fix round 2: the whisper model arrived and the YuNet did not, so the run's own
+    # progress file does reach 1.0 -- the failure is in the result, which is what
+    # the exit code reads, no longer in how far the bar got.
+    assert writes[-1] == 1.0
 
 
 def test_a_failed_request_before_any_byte_leaves_no_file(tmp_path):
@@ -358,28 +367,31 @@ def test_a_failed_request_before_any_byte_leaves_no_file(tmp_path):
 
     FakeUrlopen.error = URLError("getaddrinfo failed")
 
-    with pytest.raises(Exception, match="getaddrinfo"):
-        run(tmp_path)
+    result = run(tmp_path)
 
+    assert "getaddrinfo" in result["yunet"]["error"]
+    assert result["yunet"]["failed"] is True
     assert not (models_dir(tmp_path) / ONNX_NAME).exists()
 
 
 def test_an_empty_response_is_an_error(tmp_path):
     FakeUrlopen.chunks = [b""]
 
-    with pytest.raises(Exception, match="0 bytes"):
-        run(tmp_path)
+    result = run(tmp_path)
 
+    assert "0 bytes" in result["yunet"]["error"]
     assert not (models_dir(tmp_path) / ONNX_NAME).exists()
 
 
-def test_a_snapshot_error_propagates(tmp_path):
+def test_a_snapshot_error_is_reported_as_the_whisper_failure(tmp_path):
     FakeSnapshot.error = OSError("no space left on device")
 
-    with pytest.raises(OSError, match="no space left"):
-        run(tmp_path)
+    result = run(tmp_path)
 
-    assert FakeUrlopen.calls == [], "a failed model download must not go on to the ONNX"
+    assert "no space left" in result["whisper"]["error"]
+    assert result["whisper"]["failed"] is True
+    # Fix round 2: the face model is a separate model and still arrives (R36).
+    assert result["yunet"]["downloaded"] is True
 
 
 def test_missing_models_dir_is_an_error(tmp_path):
@@ -404,9 +416,9 @@ def test_a_body_shorter_than_its_declared_length_is_an_error(tmp_path):
     FakeUrlopen.chunks = [ONNX_BYTES[:120 * 1024]]
     FakeUrlopen.content_length = 160 * 1024
 
-    with pytest.raises(Exception, match="Content-Length"):
-        run(tmp_path)
+    result = run(tmp_path)
 
+    assert "Content-Length" in result["yunet"]["error"]
     assert not (models_dir(tmp_path) / ONNX_NAME).exists()
     assert not list(models_dir(tmp_path).glob("*.part")), "no scratch file may survive"
 

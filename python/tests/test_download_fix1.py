@@ -321,8 +321,10 @@ def test_the_vad_is_downloaded_before_any_model(tmp_path):
 
     run(tmp_path, engines=["zipformer-68m", "zipformer-30m"])
 
+    # The VAD first, then the two models; the face model closes every run (R36).
     assert order[0] == VAD_URL
-    assert set(order[1:]) == {ZIPFORMER_30M_REPO, ZIPFORMER_68M_REPO}
+    assert set(order[1:3]) == {ZIPFORMER_30M_REPO, ZIPFORMER_68M_REPO}
+    assert order[-1] == download_models.ONNX_URL
 
 
 def test_a_failed_30m_still_fetches_the_68m_and_the_vad(tmp_path, monkeypatch):
@@ -502,7 +504,9 @@ def test_a_zipformer_only_run_never_jumps_to_ninety_percent(tmp_path, monkeypatc
 
     assert writes
     assert writes[-1] == 1.0
-    assert not [value for value in writes if 0.9 <= value < 1.0], writes
+    # The whisper mark is not in the plan, so 0.9 is no longer a step boundary: the
+    # 68M ends just under it and the face model (R36) takes the bar over the line.
+    assert 0.9 not in writes, writes
 
 
 def test_progress_is_split_by_the_bytes_each_download_brings(tmp_path):
