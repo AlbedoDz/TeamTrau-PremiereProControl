@@ -188,17 +188,31 @@ The skill teaches agents how to install the MCP, start and verify the CEP bridge
 
 ### Podcast to Shorts (optional ASR)
 
-The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`) uses a local Python sidecar for automated speech recognition (`large-v3-turbo` in `int8_float16` on NVIDIA GPU or `int8` on CPU) and animated caption rendering.
+The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`, `create_captions_from_transcript`) uses a local Python sidecar for automated speech recognition and animated caption rendering. The default engine, Zipformer-68M, runs on the CPU on every PC; the other engines are downloaded only when you choose and approve them.
 
-To install the sidecar and model weights:
+To install the sidecar and the default engine (about 150 MB, nothing else):
 
 ```bash
 premiere-pro-mcp --setup-asr
 ```
 
-- **Disk space:** Setup downloads about 1.8 GB (Python packages + the 1.6 GB large-v3-turbo model); on PCs with an NVIDIA GPU it also installs the CUDA libraries, about 3.8 GB in total into `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows). Without an NVIDIA GPU (including PCs with only an Intel/AMD integrated GPU) transcription runs on the CPU: about 0.7 minutes of processing per minute of audio on an 8-core CPU, roughly 1.4 minutes per minute on 2 cores (measured), about 1.9 GB RAM.
-- **GPU acceleration:** An NVIDIA GPU (`int8_float16`) is recommended for fast transcription (measured on a 9-minute Vietnamese podcast: ~51 s on an RTX 3070 using ~1.4 GB VRAM). CPU-only inference (`int8`) works automatically if CUDA is absent, but runs ~7× slower.
-- All other Premiere MCP tools continue to work without this setup.
+To add another engine, name it. The command shows the download size and license and asks for approval (use `--yes` when there is no terminal to answer in):
+
+```bash
+premiere-pro-mcp --setup-asr --engine whisper-turbo
+premiere-pro-mcp --setup-asr --engine zipformer-30m --yes --no-default
+```
+
+`--engine` makes that engine the default (saved in `config.json` in the data folder) unless you add `--no-default`. CUDA libraries are installed only for `whisper-turbo`, and only when `nvidia-smi` finds an NVIDIA GPU. A tool call can also pass `engine` to pick an installed engine for that call; a tool never downloads anything, it returns `asr.engine_not_installed` with the command to run.
+
+| Engine | Download | License | Speed (9 min of audio) | Notes |
+| --- | --- | --- | --- | --- |
+| `zipformer-68m` (default) | about 80 MB + 2 MB voice-activity model | Apache-2.0 | 22 s on the CPU | Installed by `--setup-asr`. No punctuation: captions break at pauses. |
+| `zipformer-30m` | about 30 MB | CC-BY-NC-ND-4.0 (non-commercial only) | CPU | Smaller and lower quality. |
+| `rover` | both Zipformers (about 112 MB) | includes the 30M model: non-commercial only | CPU, runs both models | Combines the two outputs. |
+| `whisper-turbo` | 1.6 GB model, plus about 2 GB CUDA libraries if an NVIDIA GPU is found | MIT | about 51 s on an RTX 3070; about 0.7 min per audio minute on an 8-core CPU | Adds punctuation. Best with a GPU. |
+
+Zipformer engines output lowercase words without punctuation; the server capitalises the start of each sentence and applies your `glossary` spellings. Data lives in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows). `premiere-pro-mcp asr-status` and `get_capabilities` report `defaultEngine` and which engines are installed. All other Premiere MCP tools continue to work without this setup.
 
 ## Advanced Setup and Verification
 
@@ -374,7 +388,7 @@ All `298` catalog tools have an implementation. `tools/list` advertises a small 
 | `get_mogrt_component` / `get_graphics_white_luminance` / `set_graphics_white_luminance` | Inspect Motion Graphics components and graphics white luminance. |
 | `build_motion_graphics_demo` | Create a complete demo sequence with generated assets, dissolves, and subtle animation. |
 | `assemble_product_spot` / `build_brand_spot_from_mogrt_and_assets` | Assemble real media into a directed product/brand edit with optional clip plans and MOGRT overlays. |
-| `transcribe_sequence` / `find_highlight_candidates` / `build_short` | Transcribe speech with faster-whisper, find highlight candidates with audio/visual signals, and assemble 9:16 vertical shorts with animated captions. |
+| `transcribe_sequence` / `find_highlight_candidates` / `build_short` | Transcribe speech (selectable engines, Zipformer-68M by default), find highlight candidates with audio/visual signals, and assemble 9:16 vertical shorts with animated captions. |
 | `auto_reframe_sequence` / `detect_scene_edits` / `scene_edit_detection` | Use Premiere-assisted reframing or scene-change detection where the host supports it. |
 | `get_workspaces` / `set_workspace` | Inspect and switch Premiere workspace layouts. |
 | `create_bars_and_tone` / `set_transcode_on_ingest` / `set_scratch_disk_path` | Generate utility media or manage ingest and scratch-disk behavior. |

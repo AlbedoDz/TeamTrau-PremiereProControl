@@ -15,6 +15,9 @@ jest.mock('../../analysis/sidecar.js', () => {
     runSidecar: jest.fn(),
   };
 });
+jest.mock('../../setup/asr.js', () => ({
+  asrStatus: jest.fn(),
+}));
 jest.mock('../../analysis/ffmpeg.js', () => {
   const actual = jest.requireActual('../../analysis/ffmpeg.js');
   return { ...actual, findFfTool: jest.fn(), runFf: jest.fn() };
@@ -22,13 +25,17 @@ jest.mock('../../analysis/ffmpeg.js', () => {
 
 import * as sidecar from '../../analysis/sidecar.js';
 import * as ffmpeg from '../../analysis/ffmpeg.js';
-import { ASR_MODEL, buildShortTiming, median, timelineLoudness } from '../../tools/domains/shorts.js';
+import { asrStatus } from '../../setup/asr.js';
+import { buildShortTiming, median, timelineLoudness } from '../../tools/domains/shorts.js';
 import { SAFE_AREA, safeFileName } from '../../analysis/captions.js';
 
 const sidecarPython = sidecar.sidecarPython as jest.Mock;
 const startJob = sidecar.startJob as jest.Mock;
 const jobStatus = sidecar.jobStatus as jest.Mock;
 const premiereMcpHome = sidecar.premiereMcpHome as jest.Mock;
+
+const asrStatusMock = asrStatus as jest.Mock;
+const allInstalled = { installed: true, defaultEngine: 'zipformer-68m', engines: { 'zipformer-68m': true, 'zipformer-30m': true, rover: true, 'whisper-turbo': true } };
 
 const runSidecar = sidecar.runSidecar as jest.Mock;
 const findFfTool = ffmpeg.findFfTool as jest.Mock;
@@ -59,6 +66,7 @@ describe('transcribe_sequence', () => {
     writeFileSync(fileB, 'y');
     premiereMcpHome.mockReset().mockReturnValue(home);
     sidecarPython.mockReset().mockResolvedValue('python');
+    asrStatusMock.mockReset().mockResolvedValue(allInstalled);
     startJob.mockReset();
     jobStatus.mockReset().mockResolvedValue(null);
     executeScript = jest.fn();
@@ -78,12 +86,72 @@ describe('transcribe_sequence', () => {
     const r = await tools.executeTool('transcribe_sequence', { glossary: ['Trau', 'MCP'] });
     expect(startJob).toHaveBeenCalledTimes(2);
     const [key, command, input] = startJob.mock.calls[0];
-    expect(key).toMatch(new RegExp(`^transcribe-v2\\|${fileA.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\|1:[\\d.]+\\|${ASR_MODEL}\\|Trau\\nMCP$`));
+    expect(key).toMatch(new RegExp(`^transcribe-v2\\|${fileA.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\|1:[\\d.]+\\|zipformer-68m\\|Trau\\nMCP$`));
     expect(command).toBe('transcribe');
-    expect(input).toMatchObject({ mediaPath: fileA, language: 'vi', glossary: ['Trau', 'MCP'], device: 'auto', model: ASR_MODEL });
+    expect(input).toMatchObject({ mediaPath: fileA, language: 'vi', glossary: ['Trau', 'MCP'], device: 'auto', engine: 'zipformer-68m', modelsDir: join(home, 'models') });
     expect(r).toMatchObject({ success: true, status: 'running', files: 2 });
     expect(r.progress).toBeCloseTo(0.75);
     expect(r.etaSec).toBe(30);
+  });
+
+  describe('speech engines', () => {
+    const done = (words: unknown[]) => ({ status: 'done', progress: 1, result: { device: 'cpu', words } });
+
+    beforeEach(() => {
+      executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA)]));
+      startJob.mockResolvedValue({ status: 'running', progress: 0 });
+    });
+
+    it('resolves the engine as tool arg > config > zipformer-68m and puts it in the job key', async () => {
+      await tools.executeTool('transcribe_sequence', {});
+      expect(startJob.mock.calls[0][0]).toContain('|zipformer-68m|');
+      expect(startJob.mock.calls[0][2]).toMatchObject({ engine: 'zipformer-68m', modelsDir: join(home, 'models') });
+
+      writeFileSync(join(home, 'config.json'), JSON.stringify({ asrEngine: 'whisper-turbo' }));
+      startJob.mockClear();
+      await tools.executeTool('transcribe_sequence', {});
+      expect(startJob.mock.calls[0][0]).toContain('|whisper-turbo|');
+      expect(startJob.mock.calls[0][2]).toMatchObject({ engine: 'whisper-turbo' });
+
+      startJob.mockClear();
+      await tools.executeTool('transcribe_sequence', { engine: 'rover' });
+      expect(startJob.mock.calls[0][0]).toContain('|rover|');
+      expect(startJob.mock.calls[0][2]).toMatchObject({ engine: 'rover' });
+    });
+
+    it.each(['transcribe_sequence', 'find_highlight_candidates', 'build_short'])('%s returns the missing-engine result without starting anything', async (tool) => {
+      asrStatusMock.mockResolvedValue({ ...allInstalled, engines: { ...allInstalled.engines, 'zipformer-30m': false } });
+      const r = await tools.executeTool(tool, { engine: 'zipformer-30m', startSentenceId: 0, endSentenceId: 0, name: 'S' });
+      expect(r).toEqual(expect.objectContaining({
+        success: false, retry: false, userActionRequired: true, errorCode: 'asr.engine_not_installed',
+        engine: 'zipformer-30m', downloadMb: 32, license: 'CC-BY-NC-ND-4.0',
+        command: 'premiere-pro-mcp --setup-asr --engine zipformer-30m',
+      }));
+      expect(r.nextStep).toContain('about 32 MB');
+      expect(startJob).not.toHaveBeenCalled();
+      expect(runSidecar).not.toHaveBeenCalled();
+    });
+
+    it('keeps the sidecar-missing result when the sidecar itself is absent', async () => {
+      sidecarPython.mockResolvedValue(null);
+      const r = await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo' });
+      expect(r.errorCode).toBe('asr.not_installed');
+    });
+
+    it('restores casing and the glossary for zipformer output only', async () => {
+      const words = [
+        { w: 'xin', start: 1, end: 1.3, p: 1 }, { w: 'chào', start: 1.3, end: 1.6, p: 1, segEnd: true },
+        { w: 'vietcetera', start: 3, end: 3.6, p: 1 },
+      ];
+      startJob.mockResolvedValue(done(words));
+      const z = await tools.executeTool('transcribe_sequence', { glossary: ['Vietcetera'] });
+      expect(JSON.parse(readFileSync(z.wordsFile, 'utf8')).map((x: { w: string }) => x.w)).toEqual(['Xin', 'chào', 'Vietcetera']);
+      expect(z.warnings.join(' ')).not.toContain('CPU fallback');
+
+      const w = await tools.executeTool('transcribe_sequence', { glossary: ['Vietcetera'], engine: 'whisper-turbo' });
+      expect(JSON.parse(readFileSync(w.wordsFile, 'utf8')).map((x: { w: string }) => x.w)).toEqual(['xin', 'chào', 'vietcetera']);
+      expect(w.warnings.join(' ')).toContain('CPU fallback');
+    });
   });
 
   it('returns paged sentences when every job is done', async () => {
@@ -100,7 +168,7 @@ describe('transcribe_sequence', () => {
         ],
       },
     });
-    const r = await tools.executeTool('transcribe_sequence', { pageSize: 1 });
+    const r = await tools.executeTool('transcribe_sequence', { pageSize: 1, engine: 'whisper-turbo' });
     expect(r).toMatchObject({ success: true, status: 'done', totalSentences: 2, totalWords: 4, page: 0, pageSize: 1 });
     expect(r.sentences).toHaveLength(1);
     expect(r.sentences[0].text).toBe('Xin chào.');
@@ -109,7 +177,7 @@ describe('transcribe_sequence', () => {
     const saved = JSON.parse(readFileSync(r.wordsFile, 'utf8'));
     expect(saved).toHaveLength(4);
     expect(r.wordsFile).toContain(join(home, 'renders'));
-    const second = await tools.executeTool('transcribe_sequence', { pageSize: 1, page: 1 });
+    const second = await tools.executeTool('transcribe_sequence', { pageSize: 1, page: 1, engine: 'whisper-turbo' });
     expect(second.sentences[0].text).toBe('Hôm nay.');
   });
 
@@ -168,6 +236,7 @@ describe('find_highlight_candidates', () => {
     writeFileSync(vidA, 'v');
     premiereMcpHome.mockReset().mockReturnValue(home);
     sidecarPython.mockReset().mockResolvedValue('python');
+    asrStatusMock.mockReset().mockResolvedValue(allInstalled);
     startJob.mockReset().mockResolvedValue(done);
     jobStatus.mockReset().mockResolvedValue(null);
     runSidecar.mockReset().mockResolvedValue({ samples: [] });
@@ -324,6 +393,7 @@ describe('build_short', () => {
     readbacks = [];
     premiereMcpHome.mockReset().mockReturnValue(home);
     sidecarPython.mockReset().mockResolvedValue('python');
+    asrStatusMock.mockReset().mockResolvedValue(allInstalled);
     startJob.mockReset().mockResolvedValue({ status: 'done', progress: 1, result: { words } });
     jobStatus.mockReset().mockResolvedValue(null);
     runSidecar.mockReset().mockImplementation(async (command: string, input: any) => {

@@ -7,6 +7,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
 import { premiereMcpHome } from '../../analysis/sidecar.js';
+import { ENGINE_IDS } from '../../analysis/asr-engines.js';
 import { safeFileName } from '../../analysis/captions.js';
 import { buildSubtitleCues, toSrt } from '../../analysis/subtitles.js';
 import { ensureBackup } from './editing.js';
@@ -18,6 +19,7 @@ interface Args {
   sequenceId?: string | undefined;
   dialogueTrackIndices?: number[] | undefined;
   glossary?: string[] | undefined;
+  engine?: string | undefined;
   startTime?: number | undefined;
   endTime?: number | undefined;
   maxCharsPerLine: number;
@@ -101,6 +103,7 @@ export const subtitlesTools: ToolModule[] = [
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as transcribe_sequence. Defaults to every audio track that has a clip with a media file.'),
       glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward; use the same list as transcribe_sequence.'),
+      engine: z.enum(ENGINE_IDS).optional().describe('Speech engine; use the same value as transcribe_sequence. Defaults to the configured engine, then zipformer-68m (about 80 MB, Apache-2.0). zipformer-30m and rover are non-commercial; whisper-turbo is 1.6 GB (MIT). An engine that is not installed is never downloaded here: the result asks the user to approve it.'),
       startTime: z.number().min(0).optional().describe('Only words starting at or after this sequence time in seconds. Caption times stay in sequence time.'),
       endTime: z.number().min(0).optional().describe('Only words starting before this sequence time in seconds.'),
       maxCharsPerLine: z.number().int().min(10).default(42).describe('Maximum characters per caption line (default 42).'),
