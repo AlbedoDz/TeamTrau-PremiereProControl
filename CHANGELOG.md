@@ -9,10 +9,11 @@ All notable changes are documented here. Releases use semantic versioning.
   - `transcribe_sequence` transcribes dialogue tracks using a local faster-whisper sidecar (`large-v3-turbo`, Vietnamese) with background jobs and disk caching.
   - `find_highlight_candidates` extracts 20–90 s highlight windows across sentence boundaries with speaking rate, loudness, pause, and multi-face signals.
   - `build_short` builds a 9:16 Auto Reframe sequence with pre-rendered ProRes 4444 alpha captions, loudness normalization, and QA checks (`dryRun` supported).
-  - ASR uses `large-v3-turbo` (`int8_float16` on NVIDIA GPU, `int8` on CPU); setup downloads ~2 GB in total and runs ~51 s on an RTX 3070 for 9 minutes (~7× slower on CPU).
+  - ASR uses `large-v3-turbo` (`int8_float16` on NVIDIA GPU, `int8` on CPU); setup downloads ~1.8 GB (~3.8 GB with an NVIDIA GPU) in total and runs ~51 s on an RTX 3070 for 9 minutes (~7× slower on CPU).
   - The `detectFaces` flag (off by default) on `find_highlight_candidates` and `build_short` is what enables face detection and its video decoding; decoding does not happen automatically when wide shots are present.
 - `create_captions_from_transcript` turns the transcript cached by `transcribe_sequence` into a UTF-8 SRT and a native, editable Premiere caption track for the whole episode (no extra speech recognition; `dryRun` supported).
-- `premiere-pro-mcp --setup-asr` sets up an isolated Python environment and Whisper `large-v3-turbo` weights (~2 GB total) with CUDA detection (`int8_float16`) and CPU fallback (`int8`).
+- `premiere-pro-mcp --setup-asr` sets up an isolated Python environment and Whisper `large-v3-turbo` weights (~1.8 GB (~3.8 GB with an NVIDIA GPU) total) with CUDA detection (`int8_float16`) and CPU fallback (`int8`).
+- `--setup-asr` installs the CUDA libraries only when `nvidia-smi` finds an NVIDIA GPU; PCs without one (or with only an integrated GPU) save about 2 GB and transcribe on the CPU.
 
 ## [1.4.0] - 2026-11-01
 

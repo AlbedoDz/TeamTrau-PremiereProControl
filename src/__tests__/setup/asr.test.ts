@@ -54,6 +54,8 @@ describe('setupAsr and asrStatus', () => {
   let pyLauncherSuccess: boolean;
   let failTarget: string | null;
   let failExitCode: number;
+  let nvidiaSmiExitCode: number;
+  let nvidiaSmiError: Error | null;
 
   afterAll(async () => {
     await rm(fakeHome, { recursive: true, force: true }).catch(() => undefined);
@@ -67,6 +69,8 @@ describe('setupAsr and asrStatus', () => {
     pyLauncherSuccess = true;
     failTarget = null;
     failExitCode = 1;
+    nvidiaSmiExitCode = 0;
+    nvidiaSmiError = null;
 
     mockSpawn.mockImplementation((cmd: string, args: string[]) => {
       spawned.push({ cmd, args: [...args] });
@@ -76,6 +80,16 @@ describe('setupAsr and asrStatus', () => {
           return makeFakeChild({ error: new Error('spawn uv ENOENT') });
         }
         return makeFakeChild({ exitCode: 0, stdout: 'uv 0.5.0\n' });
+      }
+
+      if (cmd === 'nvidia-smi') {
+        if (nvidiaSmiError) {
+          return makeFakeChild({ error: nvidiaSmiError });
+        }
+        if (nvidiaSmiExitCode !== 0) {
+          return makeFakeChild({ exitCode: nvidiaSmiExitCode, stderr: 'nvidia-smi error\n' });
+        }
+        return makeFakeChild({ exitCode: 0, stdout: 'nvidia-smi ok\n' });
       }
 
       if (failTarget && (cmd === failTarget || args.includes(failTarget))) {
@@ -159,30 +173,32 @@ describe('setupAsr and asrStatus', () => {
         cmd: 'uv',
         args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), '-r', expect.stringContaining('requirements.txt')],
       });
-      expect(spawned[3]).toEqual({
+      expect(spawned[3]).toEqual({ cmd: 'nvidia-smi', args: [] });
+      expect(spawned[4]).toEqual({
         cmd: 'uv',
         args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), '-r', expect.stringContaining('requirements-cuda.txt')],
       });
-      expect(spawned[4]).toEqual({
+      expect(spawned[5]).toEqual({
         cmd: 'uv',
         args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), expect.stringMatching(/python$/)],
       });
-      expect(spawned[5]).toEqual({
+      expect(spawned[6]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
         args: ['-m', 'premiere_mcp_sidecar', 'download-models', '--input', expect.any(String), '--output', expect.any(String)],
       });
-      expect(spawned[6]).toEqual({
+      expect(spawned[7]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
         args: ['-m', 'premiere_mcp_sidecar', 'check', '--input', expect.any(String), '--output', expect.any(String)],
       });
       expect(spawned[2].args[3]).toContain(fakeHome);
-      expect(spawned[3].args[3]).toContain(fakeHome);
       expect(spawned[4].args[3]).toContain(fakeHome);
-      expect(spawned[5].cmd).toContain(fakeHome);
+      expect(spawned[5].args[3]).toContain(fakeHome);
       expect(spawned[6].cmd).toContain(fakeHome);
+      expect(spawned[7].cmd).toContain(fakeHome);
       expect(spawned.every((s) => !JSON.stringify(s).includes('.premiere-mcp'))).toBe(true);
+      expect(logsWin).toContain('NVIDIA GPU found: installing CUDA libraries (about 2 GB).');
 
-      // On darwin, CUDA requirements file must NOT be installed
+      // On darwin, CUDA requirements file must NOT be installed and nvidia-smi never probed
       spawned = [];
       const logsDarwin: string[] = [];
       const codeDarwin = await setupAsr((l) => logsDarwin.push(l), {
@@ -194,6 +210,8 @@ describe('setupAsr and asrStatus', () => {
       expect(codeDarwin).toBe(0);
       const darwinHasCuda = spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')));
       expect(darwinHasCuda).toBe(false);
+      expect(spawned.some((s) => s.cmd === 'nvidia-smi')).toBe(false);
+      expect(logsDarwin.some((l) => l.includes('CUDA'))).toBe(false);
       expect(spawned).toHaveLength(6);
       expect(spawned[0].cmd).toBe('uv');
       expect(spawned[1]).toEqual({
@@ -218,7 +236,7 @@ describe('setupAsr and asrStatus', () => {
       expect(spawned[5].cmd).toMatch(/bin[\\/]python$/);
       expect(spawned.every((s) => !JSON.stringify(s).includes('.premiere-mcp'))).toBe(true);
 
-      // On linux, CUDA requirements file MUST be installed
+      // On linux, CUDA requirements file MUST be installed when nvidia-smi succeeds
       spawned = [];
       const logsLinux: string[] = [];
       const codeLinux = await setupAsr((l) => logsLinux.push(l), {
@@ -230,7 +248,8 @@ describe('setupAsr and asrStatus', () => {
       expect(codeLinux).toBe(0);
       const linuxHasCuda = spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')));
       expect(linuxHasCuda).toBe(true);
-      expect(spawned).toHaveLength(7);
+      expect(spawned.some((s) => s.cmd === 'nvidia-smi')).toBe(true);
+      expect(spawned).toHaveLength(8);
       expect(spawned[1]).toEqual({
         cmd: 'uv',
         args: ['venv', '-p', '3.12', join(fakeHome, 'venv')],
@@ -238,6 +257,55 @@ describe('setupAsr and asrStatus', () => {
       expect(spawned[2].args[3]).toMatch(/bin[\\/]python$/);
       expect(spawned[2].args[3]).toContain(fakeHome);
       expect(spawned.every((s) => !JSON.stringify(s).includes('.premiere-mcp'))).toBe(true);
+      expect(logsLinux).toContain('NVIDIA GPU found: installing CUDA libraries (about 2 GB).');
+    });
+
+    it('installs CUDA libraries when nvidia-smi succeeds', async () => {
+      nvidiaSmiExitCode = 0;
+      const logs: string[] = [];
+      const code = await setupAsr((l) => logs.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+      });
+
+      expect(code).toBe(0);
+      expect(spawned.some((s) => s.cmd === 'nvidia-smi')).toBe(true);
+      const hasCuda = spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')));
+      expect(hasCuda).toBe(true);
+      expect(logs).toContain('NVIDIA GPU found: installing CUDA libraries (about 2 GB).');
+    });
+
+    it('skips CUDA libraries when nvidia-smi fails', async () => {
+      nvidiaSmiExitCode = 1;
+      const logs: string[] = [];
+      const code = await setupAsr((l) => logs.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+      });
+
+      expect(code).toBe(0);
+      expect(spawned.some((s) => s.cmd === 'nvidia-smi')).toBe(true);
+      const hasCuda = spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')));
+      expect(hasCuda).toBe(false);
+      expect(logs).toContain('No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
+    });
+
+    it('skips CUDA libraries when nvidia-smi is missing', async () => {
+      nvidiaSmiError = Object.assign(new Error('spawn nvidia-smi ENOENT'), { code: 'ENOENT' });
+      const logs: string[] = [];
+      const code = await setupAsr((l) => logs.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+      });
+
+      expect(code).toBe(0);
+      expect(spawned.some((s) => s.cmd === 'nvidia-smi')).toBe(true);
+      const hasCuda = spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')));
+      expect(hasCuda).toBe(false);
+      expect(logs).toContain('No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
     });
 
     it('falls back to python -m venv and pip when uv is missing', async () => {
@@ -324,23 +392,24 @@ describe('setupAsr and asrStatus', () => {
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
         args: ['-m', 'pip', 'install', '-r', expect.stringContaining('requirements.txt')],
       });
-      expect(spawned[4]).toEqual({
+      expect(spawned[4]).toEqual({ cmd: 'nvidia-smi', args: [] });
+      expect(spawned[5]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
         args: ['-m', 'pip', 'install', '-r', expect.stringContaining('requirements-cuda.txt')],
       });
-      expect(spawned[5]).toEqual({
+      expect(spawned[6]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
         args: ['-m', 'pip', 'install', expect.stringMatching(/python$/)],
       });
-      expect(spawned[6].args).toContain('download-models');
-      expect(spawned[7].args).toContain('check');
+      expect(spawned[7].args).toContain('download-models');
+      expect(spawned[8].args).toContain('check');
       expect(spawned[3].cmd).toContain(fakeHome);
-      expect(spawned[4].cmd).toContain(fakeHome);
       expect(spawned[5].cmd).toContain(fakeHome);
       expect(spawned[6].cmd).toContain(fakeHome);
-      expect(spawned[6].cmd).toMatch(/Scripts[\\/]python\.exe$/);
       expect(spawned[7].cmd).toContain(fakeHome);
       expect(spawned[7].cmd).toMatch(/Scripts[\\/]python\.exe$/);
+      expect(spawned[8].cmd).toContain(fakeHome);
+      expect(spawned[8].cmd).toMatch(/Scripts[\\/]python\.exe$/);
       expect(spawned.every((s) => !JSON.stringify(s).includes('.premiere-mcp'))).toBe(true);
     });
 
@@ -436,7 +505,7 @@ describe('setupAsr and asrStatus', () => {
 
       expect(status.installed).toBe(false);
       expect(status.nextStep).toContain('premiere-pro-mcp --setup-asr');
-      expect(status.nextStep).toContain('large-v3-turbo');
+      expect(status.nextStep).toContain('1.8 GB');
       expect(status.cuda).toBeUndefined();
       expect(status.models).toBeUndefined();
     });

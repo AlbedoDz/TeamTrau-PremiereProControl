@@ -115,6 +115,29 @@ async function isUvAvailable(spawnFn: typeof spawn = spawn): Promise<boolean> {
   });
 }
 
+async function hasNvidiaGpu(spawnFn: typeof spawn = spawn): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (val: boolean) => {
+      if (!settled) {
+        settled = true;
+        resolve(val);
+      }
+    };
+    try {
+      const child = spawnFn('nvidia-smi', [], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.on('error', () => settle(false));
+      child.on('exit', (code) => settle(code === 0));
+      child.on('close', (code) => settle(code === 0));
+    } catch {
+      settle(false);
+    }
+  });
+}
+
 export async function setupAsr(
   log: (line: string) => void,
   options: SetupAsrOptions
@@ -132,7 +155,19 @@ export async function setupAsr(
 
   const reqTxt = join(pkgPythonDir, 'requirements.txt');
   const cudaTxt = join(pkgPythonDir, 'requirements-cuda.txt');
-  const isCudaPlatform = plat === 'win32' || plat === 'linux';
+  const shouldInstallCuda = async (): Promise<boolean> => {
+    if (plat !== 'win32' && plat !== 'linux') {
+      return false;
+    }
+    const gpu = await hasNvidiaGpu(spawnFn);
+    if (gpu) {
+      log('NVIDIA GPU found: installing CUDA libraries (about 2 GB).');
+      return true;
+    }
+    log('No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
+    return false;
+  };
+
 
   const venvExists = exists(py);
   if (venvExists) {
@@ -151,7 +186,7 @@ export async function setupAsr(
     code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', reqTxt], log, spawnFn);
     if (code !== 0) return code;
 
-    if (isCudaPlatform) {
+    if (await shouldInstallCuda()) {
       code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', cudaTxt], log, spawnFn);
       if (code !== 0) return code;
     }
@@ -181,7 +216,7 @@ export async function setupAsr(
     let code = await runCommand(py, ['-m', 'pip', 'install', '-r', reqTxt], log, spawnFn);
     if (code !== 0) return code;
 
-    if (isCudaPlatform) {
+    if (await shouldInstallCuda()) {
       code = await runCommand(py, ['-m', 'pip', 'install', '-r', cudaTxt], log, spawnFn);
       if (code !== 0) return code;
     }
@@ -271,7 +306,7 @@ export async function asrStatus(opts?: AsrStatusOptions): Promise<AsrStatus> {
       return {
         installed: false,
         nextStep:
-          'Run premiere-pro-mcp --setup-asr (about 2 GB download: Python packages and the large-v3-turbo model).',
+          'Run premiere-pro-mcp --setup-asr (about 1.8 GB download; about 3.8 GB on PCs with an NVIDIA GPU, which also get the CUDA libraries).',
       };
     }
 
