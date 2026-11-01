@@ -10,6 +10,13 @@ describe('buildSubtitleCues', () => {
     expect(cues[1]!.lines.join(' ')).toBe('Hôm nay');
   });
 
+  it('ends a cue at segEnd without punctuation', () => {
+    const w = seq('Xin chào các bạn');
+    w[1] = { ...w[1]!, segEnd: true } as typeof w[1];
+    const cues = buildSubtitleCues(w);
+    expect(cues.map((c) => c.lines.join(' '))).toEqual(['Xin chào', 'các bạn']);
+  });
+
   it('ends a cue at a pause longer than 0.6 s', () => {
     const a = seq('Xin chào');
     const b = seq('các bạn', 0.55 + 0.7);
