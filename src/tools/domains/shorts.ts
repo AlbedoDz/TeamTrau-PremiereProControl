@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
 import {
   jobStatus,
@@ -219,6 +219,7 @@ async function transcribeSequence(
 export async function timelineFaces(
   snapshot: SequenceSnapshot,
   range?: { start: number; end: number },
+  warnings?: string[],
 ): Promise<Array<{ t: number; count: number }>> {
   const video = snapshot.clips.filter((c) => c.trackType === 'video' && c.mediaPath);
   if (video.length === 0) return [];
@@ -228,10 +229,16 @@ export async function timelineFaces(
   for (const mediaPath of uniquePaths(clips, 'video')) {
     const mine = clips.filter((c) => c.mediaPath === mediaPath);
     const ranges = mine.map((c) => ({ start: c.inPoint, end: c.outPoint }));
-    const result = await cached(mediaPath, 'faces-yunet', ranges, () =>
-      runSidecar<{ samples?: Array<{ t: number; count: number }> }>('faces', {
-        mediaPath, modelPath: modelPaths().yunet, ranges, fps: 1,
-      }));
+    let result: { samples?: Array<{ t: number; count: number }> };
+    try {
+      result = await cached(mediaPath, 'faces-yunet', ranges, () =>
+        runSidecar<{ samples?: Array<{ t: number; count: number }> }>('faces', {
+          mediaPath, modelPath: modelPaths().yunet, ranges, fps: 1,
+        }));
+    } catch (error) {
+      warnings?.push(`Face detection unavailable for ${basename(mediaPath)}: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
     for (const sample of result.samples ?? []) {
       for (const clip of mine) {
         if (sample.t < clip.inPoint || sample.t >= clip.outPoint) continue;
@@ -246,16 +253,33 @@ export async function timelineFaces(
 }
 
 /** Short-term loudness (LUFS) of the dialogue audio files, on timeline time. */
-async function timelineLoudness(ffmpeg: string, clips: SequenceSnapshot['clips']): Promise<FrameSample[]> {
+export async function timelineLoudness(
+  ffmpeg: string,
+  clips: SequenceSnapshot['clips'],
+  warnings?: string[],
+): Promise<FrameSample[]> {
   const out: FrameSample[] = [];
   for (const mediaPath of uniquePaths(clips, 'audio')) {
-    const samples = await cached(mediaPath, 'ebur128-short', {}, async () => {
-      const run = await runFf(ffmpeg, [
-        '-hide_banner', '-nostats', '-i', mediaPath, '-map', '0:a:0',
-        '-af', 'ebur128=framelog=verbose', '-f', 'null', '-',
-      ]);
-      return parseShortTermLoudness(run.stderr);
-    });
+    let samples: FrameSample[];
+    try {
+      // Throw inside the compute so a failed run is never cached as an empty result.
+      samples = await cached(mediaPath, 'ebur128-short', {}, async () => {
+        const run = await runFf(ffmpeg, [
+          '-hide_banner', '-nostats', '-i', mediaPath, '-map', '0:a:0',
+          '-af', 'ebur128=framelog=verbose', '-f', 'null', '-',
+        ]);
+        if (run.code !== 0) {
+          const tail = run.stderr.trim().split(/\r?\n/).pop() ?? '';
+          throw new Error(`ffmpeg exited with code ${run.code}${tail ? `: ${tail}` : ''}`);
+        }
+        const parsed = parseShortTermLoudness(run.stderr);
+        if (parsed.length === 0) throw new Error('no loudness samples were produced (no audio stream or too short)');
+        return parsed;
+      });
+    } catch (error) {
+      warnings?.push(`Loudness unavailable for ${basename(mediaPath)}: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
     for (const clip of clips.filter((c) => c.mediaPath === mediaPath)) {
       for (const sample of samples) {
         if (sample.t < clip.inPoint || sample.t >= clip.outPoint) continue;
@@ -266,7 +290,7 @@ async function timelineLoudness(ffmpeg: string, clips: SequenceSnapshot['clips']
   return out.sort((a, b) => a.t - b.t);
 }
 
-const median = (values: number[]): number => {
+export const median = (values: number[]): number => {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
@@ -300,21 +324,25 @@ async function findHighlightCandidates(
   const windows = candidateWindows(loaded.sentences, args.minSec, args.maxSec);
   if (windows.length === 0) warnings.push(`No window of whole sentences fits ${args.minSec}-${args.maxSec} s.`);
 
-  const loudness = await timelineLoudness(ffmpeg, dialogue);
+  const loudness = await timelineLoudness(ffmpeg, dialogue, warnings);
   const medianLufs = median(loudness.map((s) => s.v));
-  const faces = args.detectFaces && windows.length > 0 ? await timelineFaces(snapshot) : [];
+  const faces = args.detectFaces && windows.length > 0 ? await timelineFaces(snapshot, undefined, warnings) : [];
   if (args.detectFaces && windows.length > 0 && faces.length === 0) warnings.push('No face samples were found; multiFaceRatio is 0.');
 
   const scored = scoreCandidates(windows.map((w) => ({
     ...w,
-    text: loaded.words.filter((x) => x.start >= w.start && x.start < w.end).map((x) => x.w).join(' '),
+    text: '',
     signals: signalsFor(w, loaded.words, loudness, medianLufs, faces),
   })));
+  const candidates = pickDiverse(scored, args.limit, loaded.endTime).map((c) => ({
+    ...c,
+    text: loaded.words.filter((x) => x.start >= c.start && x.start < c.end).map((x) => x.w).join(' '),
+  }));
   return {
     success: true,
     sequenceId: loaded.sequenceId,
     totalCandidates: windows.length,
-    candidates: pickDiverse(scored, args.limit, loaded.endTime),
+    candidates,
     detectFaces: args.detectFaces,
     warnings,
   };

@@ -22,7 +22,7 @@ jest.mock('../../analysis/ffmpeg.js', () => {
 
 import * as sidecar from '../../analysis/sidecar.js';
 import * as ffmpeg from '../../analysis/ffmpeg.js';
-import { ASR_MODEL } from '../../tools/domains/shorts.js';
+import { ASR_MODEL, median, timelineLoudness } from '../../tools/domains/shorts.js';
 
 const sidecarPython = sidecar.sidecarPython as jest.Mock;
 const startJob = sidecar.startJob as jest.Mock;
@@ -211,5 +211,46 @@ describe('find_highlight_candidates', () => {
     findFfTool.mockResolvedValue(null);
     const r = await tools.executeTool('find_highlight_candidates', {});
     expect(r).toMatchObject({ success: false, errorCode: 'ffmpeg.not_found' });
+  });
+
+  it('warns and still returns candidates when ffmpeg fails, without caching the failure', async () => {
+    runFf.mockResolvedValue({ code: 1, stdout: '', stderr: 'a.wav: Invalid data found' });
+    const r = await tools.executeTool('find_highlight_candidates', { minSec: 20, maxSec: 40 });
+    expect(r.success).toBe(true);
+    expect(r.candidates.length).toBeGreaterThan(0);
+    expect(r.warnings.join(' ')).toContain('Loudness unavailable for a.wav');
+    await tools.executeTool('find_highlight_candidates', { minSec: 20, maxSec: 40 });
+    expect(runFf).toHaveBeenCalledTimes(2);
+  });
+
+  it('warns and succeeds when the faces sidecar throws', async () => {
+    runSidecar.mockRejectedValue(new Error('boom'));
+    const r = await tools.executeTool('find_highlight_candidates', { detectFaces: true, minSec: 20, maxSec: 40 });
+    expect(r.success).toBe(true);
+    expect(r.warnings.join(' ')).toContain('Face detection unavailable for v.mp4: boom');
+  });
+
+  it('returns the install result when detectFaces is requested and the sidecar is missing', async () => {
+    sidecarPython.mockResolvedValue(null);
+    const r = await tools.executeTool('find_highlight_candidates', { detectFaces: true });
+    expect(r).toMatchObject({ success: false, errorCode: 'asr.not_installed' });
+  });
+
+  it('maps loudness per clip when one file is used twice with an offset', async () => {
+    runFf.mockResolvedValue({ code: 0, stdout: '', stderr: ebur(60) });
+    const two = [
+      { ...aclip('c1', 0, 0, fileA), end: 10, outPoint: 10 },
+      { ...aclip('c2', 0, 20, fileA), end: 30, inPoint: 30, outPoint: 40 },
+    ];
+    const out = await timelineLoudness('ffmpeg', two as never);
+    // c1 keeps source t 1..9 at timeline 1..9; c2 maps source t 30..39 to timeline 20..29.
+    expect(out.map((s) => s.t)).toEqual([...[1, 2, 3, 4, 5, 6, 7, 8, 9], ...[20, 21, 22, 23, 24, 25, 26, 27, 28, 29]].sort((a, b) => a - b));
+    expect(runFf).toHaveBeenCalledTimes(1);
+  });
+
+  it('median averages the two middle values for an even count', () => {
+    expect(median([4, 1, 3, 2])).toBe(2.5);
+    expect(median([3, 1, 2])).toBe(2);
+    expect(median([])).toBe(0);
   });
 });
