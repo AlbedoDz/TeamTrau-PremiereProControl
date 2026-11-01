@@ -44,6 +44,10 @@ describe('applyCaptionOverrides', () => {
       { w: 'x', start: 0, end: 0.3 }, { w: 'y', start: 0.3, end: 0.6 }, { w: 'z', start: 0.6, end: 0.9 }]);
   });
 
+  it('drops a group whose override text is empty or whitespace', () => {
+    expect(applyCaptionOverrides(base(), [{ start: 0, end: 0.9, text: '   ' }])).toEqual([]);
+  });
+
   it('leaves unmatched groups untouched', () => {
     const [g] = applyCaptionOverrides(base(), [{ start: 5, end: 6, text: 'no' }]);
     expect(g.text).toBe('a b c');
@@ -54,5 +58,19 @@ describe('safeFileName', () => {
   it('keeps Vietnamese letters and replaces path characters', () => {
     expect(safeFileName('Nữ quyền: 8/3?')).toBe('Nữ quyền- 8-3-');
     expect(safeFileName('')).toBe('short');
+  });
+
+  it('replaces backslashes', () => {
+    expect(safeFileName('a\\b')).toBe('a-b');
+  });
+
+  it('avoids Windows-unsafe names', () => {
+    expect(safeFileName('..')).toBe('short');
+    expect(safeFileName(' name. ')).toBe('name');
+    expect(safeFileName('CON')).toBe('short');
+    expect(safeFileName('con.txt')).toBe('short');
+    expect(safeFileName('lpt9')).toBe('short');
+    expect(safeFileName('a'.repeat(150))).toHaveLength(100);
+    expect(Array.from(safeFileName('😀'.repeat(150)))).toHaveLength(100);
   });
 });

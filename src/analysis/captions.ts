@@ -61,10 +61,12 @@ export function applyCaptionOverrides(
   groups: CaptionGroup[],
   overrides: Array<{ start: number; end: number; text: string }>,
 ): CaptionGroup[] {
-  return groups.map((g) => {
+  const out: CaptionGroup[] = [];
+  for (const g of groups) {
     const o = overrides.find((x) => Math.abs(x.start - g.start) <= TIME_TOLERANCE && Math.abs(x.end - g.end) <= TIME_TOLERANCE);
-    if (!o) return g;
+    if (!o) { out.push(g); continue; }
     const tokens = o.text.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) continue; // emptied caption: drop the group
     let newWords: CaptionGroup['words'];
     if (tokens.length === g.words.length) {
       newWords = tokens.map((w, i) => ({ w, start: g.words[i]?.start ?? g.start, end: g.words[i]?.end ?? g.end }));
@@ -76,12 +78,21 @@ export function applyCaptionOverrides(
         end: round3(i === tokens.length - 1 ? g.end : g.start + (i + 1) * step),
       }));
     }
-    return { start: g.start, end: g.end, text: tokens.join(' '), words: newWords };
-  });
+    out.push({ start: g.start, end: g.end, text: tokens.join(' '), words: newWords });
+  }
+  return out;
 }
 
-/** Keep letters (including Vietnamese) and replace path-hostile characters with "-". */
+const RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+const MAX_NAME_LENGTH = 100;
+
+/**
+ * Keep letters (including Vietnamese), replace path-hostile characters with "-",
+ * and avoid names Windows rejects: edge dots/spaces, device names, over-long names.
+ */
 export function safeFileName(name: string): string {
-  const cleaned = name.replace(/[\/:*?"<>|\u0000-\u001f]/g, '-').trim();
-  return cleaned === '' ? 'short' : cleaned;
+  // eslint-disable-next-line no-control-regex
+  let cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/^[\s.]+|[\s.]+$/g, '');
+  cleaned = Array.from(cleaned).slice(0, MAX_NAME_LENGTH).join('').replace(/[\s.]+$/g, '');
+  return cleaned === '' || RESERVED_NAME.test(cleaned) ? 'short' : cleaned;
 }
