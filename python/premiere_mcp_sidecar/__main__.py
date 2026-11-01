@@ -41,9 +41,16 @@ def run_faces(payload: dict) -> dict:
     return faces.run(payload, payload.get("progressPath"))
 
 
+def run_download_models(payload: dict) -> dict:
+    from . import download_models
+
+    return download_models.run(payload, payload.get("progressPath"))
+
+
 COMMANDS = {
     "captions": run_captions,
     "check": run_check,
+    "download-models": run_download_models,
     "faces": run_faces,
     "transcribe": run_transcribe,
 }

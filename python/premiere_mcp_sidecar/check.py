@@ -11,7 +11,17 @@ import shutil
 import sys
 from pathlib import Path
 
-WHISPER_MODELS_DIR = "whisper"
+from .download_models import (
+    MIN_ONNX_BYTES,
+    ONNX_NAME,
+    WHISPER_DIR_NAME,
+    WHISPER_REQUIRED_FILES,
+)
+
+# Ruling R22: the model download-models writes and the server runs. The folder name
+# is also what `modelPaths().whisper` points at, so both sides agree by construction.
+WHISPER_MODEL_DIR = WHISPER_DIR_NAME
+WHISPER_WEIGHTS = WHISPER_REQUIRED_FILES[0]
 
 
 def data_home() -> Path:
@@ -39,14 +49,19 @@ def _cuda_ok() -> bool:
 
 
 def _whisper_model_ok(models_dir: Path) -> bool:
-    """A model counts as present when a snapshot folder holds its ``model.bin`` weights."""
-    root = models_dir / WHISPER_MODELS_DIR
-    return root.is_dir() and any(path.name == "model.bin" for path in root.rglob("*"))
+    """The turbo folder holds the weights the server loads.
+
+    Checked by exact path rather than by searching: a leftover large-v3 download
+    from an older setup must not make the turbo model look installed, or the first
+    transcription would fail on a model that was never fetched.
+    """
+    weights = models_dir / WHISPER_MODEL_DIR / WHISPER_WEIGHTS
+    return weights.is_file() and weights.stat().st_size > 0
 
 
 def _yunet_model_ok(models_dir: Path) -> bool:
-    root = models_dir / "yunet"
-    return root.is_dir() and any(root.glob("*.onnx"))
+    target = models_dir / ONNX_NAME
+    return target.is_file() and target.stat().st_size > MIN_ONNX_BYTES
 
 
 def run() -> dict:
