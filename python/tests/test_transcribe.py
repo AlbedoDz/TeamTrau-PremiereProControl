@@ -108,6 +108,7 @@ def spec(tmp_path, **overrides):
         "language": "vi",
         "glossary": ["Vietcetera", "Trưng Trắc"],
         "device": "auto",
+        "engine": "whisper-turbo",
     }
     base.update(overrides)
     return base
@@ -382,7 +383,7 @@ def test_cli_runs_transcribe(tmp_path, monkeypatch):
     media = make_wav(tmp_path / "talk.wav", 3)
     spec_path.write_text(json.dumps({
         "mediaPath": str(media), "modelDir": "models/turbo", "model": "large-v3-turbo",
-        "language": "vi", "glossary": [], "device": "cpu",
+        "language": "vi", "glossary": [], "device": "cpu", "engine": "whisper-turbo",
     }), encoding="utf-8")
     out = tmp_path / "out.json"
     progress = tmp_path / "progress.json"
@@ -490,6 +491,8 @@ def _fake_windows_site(monkeypatch, site):
 
     monkeypatch.setattr(transcribe, "windows", lambda: True)
     monkeypatch.setitem(sys.modules, "site", FakeSite)
+    # The code also looks under sys.prefix/Lib/site-packages: keep the real venv out of it.
+    monkeypatch.setattr(sys, "prefix", str(site.parent / "no-such-prefix"))
     monkeypatch.setattr(transcribe.os, "add_dll_directory", added.append, raising=False)
     return added
 

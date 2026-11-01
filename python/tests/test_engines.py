@@ -210,7 +210,7 @@ def test_an_unknown_engine_is_refused(tmp_path):
         transcribe.run({"mediaPath": str(tmp_path / "talk.wav"), "engine": "zipformer"}, None)
 
 
-def test_whisper_is_still_the_default_engine(tmp_path, monkeypatch):
+def test_whisper_runs_when_named(tmp_path, monkeypatch):
     model = type("FakeWhisperModel", (), {
         "__init__": lambda self, path, **kw: None,
         "transcribe": lambda self, audio, **kw: (iter([]), type("Info", (), {"duration": 1.0})()),
@@ -221,7 +221,7 @@ def test_whisper_is_still_the_default_engine(tmp_path, monkeypatch):
     (tmp_path / "talk.wav").write_bytes(b"RIFF")
 
     result = transcribe.run(
-        {"mediaPath": str(tmp_path / "talk.wav"), "modelDir": str(tmp_path / "turbo")}, None
+        {"mediaPath": str(tmp_path / "talk.wav"), "modelDir": str(tmp_path / "turbo"), "engine": "whisper-turbo"}, None
     )
 
     # Fix round 1 (B8): the whisper result is exactly what it was before the

@@ -17,7 +17,7 @@ Use this skill to convert an edited 16:9 podcast sequence (20–90 minutes, mult
 
 The transcription, visual analysis, and caption rendering pipeline uses a local Python sidecar (selectable speech engines, optional OpenCV YuNet for face detection, and Pillow/ffmpeg for ProRes 4444 alpha caption video generation).
 
-1. Install the sidecar and the default engine (Zipformer-68M, about 150 MB, CPU, no GPU needed):
+1. Install the sidecar and the default engine (Zipformer-68M, about 300 MB, CPU, no GPU needed):
    ```bash
    premiere-pro-mcp --setup-asr
    ```

@@ -204,25 +204,30 @@ describe('setupAsr and asrStatus', () => {
       });
       expect(spawned[3]).toEqual({
         cmd: 'uv',
-        args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), '-r', expect.stringContaining('requirements-cuda.txt')],
+        args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), '-r', expect.stringContaining('requirements-whisper.txt')],
       });
       expect(spawned[4]).toEqual({
         cmd: 'uv',
-        args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), expect.stringMatching(/python$/)],
+        args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), '-r', expect.stringContaining('requirements-cuda.txt')],
       });
       expect(spawned[5]).toEqual({
+        cmd: 'uv',
+        args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), expect.stringMatching(/python$/)],
+      });
+      expect(spawned[6]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
         args: ['-m', 'premiere_mcp_sidecar', 'download-models', '--input', expect.any(String), '--output', expect.any(String)],
       });
-      expect(spawned[6]).toEqual({
+      expect(spawned[7]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
         args: ['-m', 'premiere_mcp_sidecar', 'check', '--input', expect.any(String), '--output', expect.any(String)],
       });
       expect(spawned[2].args[3]).toContain(fakeHome);
       expect(spawned[3].args[3]).toContain(fakeHome);
       expect(spawned[4].args[3]).toContain(fakeHome);
-      expect(spawned[5].cmd).toContain(fakeHome);
+      expect(spawned[5].args[3]).toContain(fakeHome);
       expect(spawned[6].cmd).toContain(fakeHome);
+      expect(spawned[7].cmd).toContain(fakeHome);
       expect(spawned.every((s) => !JSON.stringify(s).includes('.premiere-mcp'))).toBe(true);
       expect(logsWin).toContain('NVIDIA GPU found: installing CUDA libraries (about 2 GB).');
 
@@ -279,7 +284,7 @@ describe('setupAsr and asrStatus', () => {
       const linuxHasCuda = spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')));
       expect(linuxHasCuda).toBe(true);
       expect(spawned.some((s) => s.cmd === 'nvidia-smi')).toBe(true);
-      expect(spawned).toHaveLength(8);
+      expect(spawned).toHaveLength(9);
       expect(spawned[0].cmd).toBe('nvidia-smi');
       spawned = spawned.slice(1);
       expect(spawned[1]).toEqual({
@@ -456,21 +461,25 @@ describe('setupAsr and asrStatus', () => {
       });
       expect(spawned[4]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
-        args: ['-m', 'pip', 'install', '-r', expect.stringContaining('requirements-cuda.txt')],
+        args: ['-m', 'pip', 'install', '-r', expect.stringContaining('requirements-whisper.txt')],
       });
       expect(spawned[5]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
+        args: ['-m', 'pip', 'install', '-r', expect.stringContaining('requirements-cuda.txt')],
+      });
+      expect(spawned[6]).toEqual({
+        cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
         args: ['-m', 'pip', 'install', expect.stringMatching(/python$/)],
       });
-      expect(spawned[6].args).toContain('download-models');
-      expect(spawned[7].args).toContain('check');
-      expect(spawned[3].cmd).toContain(fakeHome);
+      expect(spawned[7].args).toContain('download-models');
+      expect(spawned[8].args).toContain('check');
       expect(spawned[4].cmd).toContain(fakeHome);
       expect(spawned[5].cmd).toContain(fakeHome);
       expect(spawned[6].cmd).toContain(fakeHome);
-      expect(spawned[6].cmd).toMatch(/Scripts[\\/]python\.exe$/);
       expect(spawned[7].cmd).toContain(fakeHome);
       expect(spawned[7].cmd).toMatch(/Scripts[\\/]python\.exe$/);
+      expect(spawned[8].cmd).toContain(fakeHome);
+      expect(spawned[8].cmd).toMatch(/Scripts[\\/]python\.exe$/);
       expect(spawned.every((s) => !JSON.stringify(s).includes('.premiere-mcp'))).toBe(true);
     });
 
@@ -571,6 +580,23 @@ describe('setupAsr and asrStatus', () => {
         expect(spawned.some((s) => s.cmd === 'nvidia-smi')).toBe(false);
         expect(spawned.some((s) => s.args.some((a) => a.includes('requirements-cuda.txt')))).toBe(false);
         expect(readConfig()).toEqual({ asrEngine: 'zipformer-68m' });
+      });
+
+      it('default setup does not install the whisper extra; --engine whisper-turbo --yes does', async () => {
+        const whisperInstall = () => spawned.some((s) => s.args.some((a) => a.includes('requirements-whisper.txt')));
+        expect(await setupAsr(() => undefined, base)).toBe(0);
+        expect(whisperInstall()).toBe(false);
+        expect(spawned.some((s) => s.args.some((a) => a.includes('requirements.txt')))).toBe(true);
+
+        spawned = [];
+        expect(await setupAsr(() => undefined, { ...base, engine: 'zipformer-30m', yes: true })).toBe(0);
+        expect(whisperInstall()).toBe(false);
+
+        spawned = [];
+        const logs: string[] = [];
+        expect(await setupAsr((l) => logs.push(l), { ...base, engine: 'whisper-turbo', yes: true })).toBe(0);
+        expect(whisperInstall()).toBe(true);
+        expect(logs.join(' ')).toContain('190 MB of Python packages');
       });
 
       it('default setup keeps an engine the user already chose', async () => {

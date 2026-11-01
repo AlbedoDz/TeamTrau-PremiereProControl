@@ -20,6 +20,21 @@ import numpy as np
 
 SAMPLE_RATE = 16000
 
+# The ffmpeg binary the TypeScript server resolved (``ffmpegPath`` in a command's input).
+# Absent, the bare name is looked up on PATH as before.
+_ffmpeg: str | None = None
+
+
+def set_ffmpeg(path: str | os.PathLike[str] | None) -> None:
+    """Remember the ffmpeg binary for this process; ``None`` or empty goes back to PATH."""
+    global _ffmpeg
+    _ffmpeg = str(path) if path else None
+
+
+def ffmpeg_bin() -> str:
+    """The ffmpeg executable to run: the path the server gave, else ``ffmpeg`` from PATH."""
+    return _ffmpeg or "ffmpeg"
+
 # How often long commands write progress.json while one step blocks (Ruling R19).
 # Well inside the runner's ten-minute staleness window, so a slow model never
 # makes the job look dead, and far below 30 s so a minute-long step still reports.
@@ -181,7 +196,7 @@ def pcm16k(
     ``decode_audio``: the bundled PyAV build fails on some containers with a
     ``metadata_errors`` error. ``start``/``end`` are seconds on the source.
     """
-    args = ["ffmpeg", "-nostdin", "-v", "error"]
+    args = [ffmpeg_bin(), "-nostdin", "-v", "error"]
     if start is not None:
         args += ["-ss", f"{float(start):.6f}"]
     if end is not None:

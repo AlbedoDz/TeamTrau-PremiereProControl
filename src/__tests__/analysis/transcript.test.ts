@@ -122,4 +122,12 @@ describe('clipFingerprint', () => {
     expect(clipFingerprint([a, b])).toBe(clipFingerprint([b, a, clip({ id: 'v', trackType: 'video' })]));
     expect(clipFingerprint([a])).not.toBe(clipFingerprint([b]));
   });
+
+  it('covers the engine and the glossary', () => {
+    const a = clip({ id: 'A' });
+    expect(clipFingerprint([a], 'zipformer-68m')).not.toBe(clipFingerprint([a], 'rover'));
+    expect(clipFingerprint([a], 'zipformer-68m')).not.toBe(clipFingerprint([a]));
+    expect(clipFingerprint([a], 'whisper-turbo', ['Trau'])).not.toBe(clipFingerprint([a], 'whisper-turbo', ['MCP']));
+    expect(clipFingerprint([a], 'whisper-turbo', ['b', 'a'])).toBe(clipFingerprint([a], 'whisper-turbo', ['a', 'b', 'a']));
+  });
 });

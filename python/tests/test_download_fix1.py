@@ -175,7 +175,8 @@ def fakes(monkeypatch):
 
 
 def run(tmp_path, **overrides):
-    spec = {"modelsDir": str(tmp_path / "models")}
+    # The no-engines default is the Zipformer-68M; these tests are about the whisper download.
+    spec = {"modelsDir": str(tmp_path / "models"), "engines": ["whisper-turbo"]}
     spec.update(overrides)
     return download_models.run(spec, None)
 

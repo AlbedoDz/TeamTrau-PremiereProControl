@@ -184,11 +184,21 @@ export async function loadTranscript(
     before.forEach((job, i) => {
       if (job?.status === 'failed') failures.push(`${paths[i]}: ${job.error ?? 'unknown error'}`);
     });
-    jobs = await Promise.all(paths.map((mediaPath, i) => startJob(
-      keys[i]!,
-      'transcribe',
-      { mediaPath, modelDir: modelPaths().whisper, modelsDir: join(premiereMcpHome(), 'models'), language: 'vi', glossary: glossaries[i]!, device: 'auto', engine },
-    )));
+    // One decode and one model in memory at a time: a file's job starts only when no earlier file
+    // of this request is still running. Done or failed earlier jobs do not block.
+    jobs = [];
+    for (let i = 0; i < paths.length; i++) {
+      const wouldSpawn = !before[i] || before[i]!.status === 'failed';
+      if (wouldSpawn && jobs.some((job) => job.status === 'running')) {
+        jobs.push({ status: 'running', progress: 0 });
+        continue;
+      }
+      jobs.push(await startJob(
+        keys[i]!,
+        'transcribe',
+        { mediaPath: paths[i]!, modelDir: modelPaths().whisper, modelsDir: join(premiereMcpHome(), 'models'), language: 'vi', glossary: glossaries[i]!, device: 'auto', engine },
+      ));
+    }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -200,7 +210,7 @@ export async function loadTranscript(
       success: false,
       error: failures.join('\n'),
       retry: true,
-      nextStep: 'Call transcribe_sequence again to retry; the failed file(s) were restarted.',
+      nextStep: 'Call transcribe_sequence again to retry; the failed file(s) are restarted, one file at a time.',
     } as never;
   }
 
@@ -237,7 +247,7 @@ export async function loadTranscript(
   return {
     status: 'done',
     sequenceId: snapshot.sequenceId,
-    fingerprint: clipFingerprint(clips),
+    fingerprint: clipFingerprint(clips, engine, sendsGlossary ? glossaries.flat() : []),
     dialogueTrackIndices: indices,
     words,
     sentences: splitSentences(words),
@@ -264,7 +274,10 @@ async function transcribeSequence(
   await mkdir(renders, { recursive: true });
   const safeId = loaded.sequenceId.replace(/[^\w.-]/g, '_');
   const wordsFile = join(renders, `transcript-${safeId}-${loaded.fingerprint}.json`);
-  await writeFile(wordsFile, JSON.stringify(loaded.words));
+  const wordsJson = JSON.stringify(loaded.words);
+  let unchanged = false;
+  try { unchanged = (await readFile(wordsFile, 'utf8')) === wordsJson; } catch { /* not there yet */ }
+  if (!unchanged) await writeFile(wordsFile, wordsJson);
   const from = args.page * args.pageSize;
   return {
     success: true,
@@ -485,8 +498,13 @@ const reframeScript = (sequenceId: string, start: number, end: number, name: str
   try {
     var seq = __findSequence(${JSON.stringify(sequenceId)});
     if (!seq) return JSON.stringify({ success: false, error: "Sequence not found: " + ${JSON.stringify(sequenceId)} });
-    var prevIn = null, prevOut = null;
+    var prevIn = null, prevOut = null, hadMarks = true, seqEnd = null;
     try { prevIn = seq.getInPointAsTime().ticks; prevOut = seq.getOutPointAsTime().ticks; } catch (eRead) {}
+    // Premiere reports an unmarked sequence as in = start (0) and out = end of the sequence.
+    try {
+      seqEnd = Number(seq.end);
+      if (prevIn !== null && prevOut !== null && Number(prevIn) === 0 && Number(prevOut) === seqEnd) hadMarks = false;
+    } catch (eEnd) {}
     var sub = null, r = null, err = null, deleted = false;
     try {
       seq.setInPoint(__secondsToTicks(${start}));
@@ -497,8 +515,17 @@ const reframeScript = (sequenceId: string, start: number, end: number, name: str
     } catch (e1) { err = e1.toString(); }
     if (sub) { try { deleted = app.project.deleteSequence(sub) !== false; } catch (eDel) {} }
     try {
-      if (prevIn !== null) seq.setInPoint(prevIn);
-      if (prevOut !== null) seq.setOutPoint(prevOut);
+      if (hadMarks) {
+        if (prevIn !== null) seq.setInPoint(prevIn);
+        if (prevOut !== null) seq.setOutPoint(prevOut);
+      } else if (typeof seq.clearInPoint === "function" && typeof seq.clearOutPoint === "function") {
+        seq.clearInPoint();
+        seq.clearOutPoint();
+      } else {
+        // No clear call in this Premiere: the full range is what "no marks" means to every operation.
+        seq.setInPoint(0);
+        seq.setOutPoint(seq.end);
+      }
     } catch (eRestore) {}
     if (err) return JSON.stringify({ success: false, error: err });
     if (!r) return JSON.stringify({ success: false, error: "autoReframeSequence returned no sequence" });
@@ -815,7 +842,7 @@ export const shortsTools: ToolModule[] = [
       glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward, e.g. guest names or brands.'),
       engine: ENGINE_SCHEMA,
       page: z.number().int().min(0).default(0).describe('Sentence page to return (default 0).'),
-      pageSize: z.number().int().min(1).default(200).describe('Sentences per page (default 200).'),
+      pageSize: z.number().int().min(1).max(500).default(200).describe('Sentences per page (default 200).'),
     }),
     run: (ctx, args) => transcribeSequence(ctx, args),
   },

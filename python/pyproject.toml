@@ -5,16 +5,10 @@ description = "Python sidecar for the Adobe Premiere Pro MCP server: ASR, face s
 requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 dependencies = [
-    "faster-whisper==1.2.1",
-    "ctranslate2==4.8.4",
-    # Pinned only so faster-whisper's PyAV import works; audio is decoded with the
-    # ffmpeg binary, not faster_whisper.decode_audio (PyAV 19 breaks on some files).
-    "av==19.0.2",
     "numpy>=2,<3",
     "pillow>=11",
     "opencv-python-headless>=4.10",
     "huggingface_hub>=0.25",
-    "pytest>=8",
     # CPU-friendly Zipformer engines: sherpa-onnx runs the transducer, sentencepiece
     # rebuilds the 30M tokens.txt from its bpe.model at download time.
     "sherpa-onnx>=2.0",
@@ -22,6 +16,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional whisper-turbo engine; only `--setup-asr --engine whisper-turbo` installs it.
+whisper = [
+    "faster-whisper==1.2.1",
+    "ctranslate2==4.8.4",
+    # Pinned only so faster-whisper's PyAV import works; audio is decoded with the
+    # ffmpeg binary, not faster_whisper.decode_audio (PyAV 19 breaks on some files).
+    "av==19.0.2",
+]
+dev = ["pytest>=8"]
 cuda = [
     "nvidia-cublas-cu12==12.9.2.10",
     "nvidia-cudnn-cu12==9.27.0.42",

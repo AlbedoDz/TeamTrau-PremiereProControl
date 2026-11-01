@@ -116,7 +116,7 @@ def ffmpeg_args(
     scale_width: int = SCALE_WIDTH,
 ) -> list[str]:
     """One pass over ``[start, end)``: keyframes only, scaled, BMPs on stdout."""
-    args = ["ffmpeg", "-nostdin", "-v", LOG_LEVEL]
+    args = [io.ffmpeg_bin(), "-nostdin", "-v", LOG_LEVEL]
     if hwaccel:
         args += ["-hwaccel", "cuda"]
     args += [
@@ -409,6 +409,7 @@ def count_faces(yunet, frame: np.ndarray) -> int:
 
 def run(spec: dict, progress_path: str | os.PathLike[str] | None = None) -> dict:
     """``{samples: [{t, count}]}`` with ``t`` in file seconds, sorted, one per second."""
+    io.set_ffmpeg(spec.get("ffmpegPath"))
     media_path = spec.get("mediaPath")
     if not media_path:
         raise ValueError("faces needs mediaPath")

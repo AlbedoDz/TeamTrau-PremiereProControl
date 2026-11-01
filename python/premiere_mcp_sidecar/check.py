@@ -6,6 +6,7 @@ The TypeScript server asks this before a heavy command so it can return
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import sys
@@ -39,6 +40,9 @@ def data_home() -> Path:
 
 
 def _faster_whisper_ok() -> bool:
+    # The whisper extra is optional: do not import (or crash on) packages that are absent.
+    if importlib.util.find_spec("faster_whisper") is None or importlib.util.find_spec("ctranslate2") is None:
+        return False
     try:
         import faster_whisper  # noqa: F401
     except Exception:
@@ -93,7 +97,7 @@ def _zipformer_model_ok(models_dir: Path, name: str) -> bool:
     return not sherpa_models.zipformer_missing(sherpa_models.folder(models_dir, name), name)
 
 
-def run() -> dict:
+def run(ffmpeg_path: str | None = None) -> dict:
     """``{python, fasterWhisper, cuda, sherpaOnnx, models: {...}, ffmpeg}``."""
     models_dir = data_home() / "models"
     return {
@@ -108,5 +112,5 @@ def run() -> dict:
             "zipformer30m": _zipformer_model_ok(models_dir, sherpa_models.ZIPFORMER_30M_DIR),
             "vad": sherpa_models.vad_ok(models_dir),
         },
-        "ffmpeg": shutil.which("ffmpeg") is not None,
+        "ffmpeg": bool(ffmpeg_path and Path(ffmpeg_path).is_file()) or shutil.which("ffmpeg") is not None,
     }

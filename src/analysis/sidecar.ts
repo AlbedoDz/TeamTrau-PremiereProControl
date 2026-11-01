@@ -9,10 +9,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, openSync, statSync, writeFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
-import { ENGINES, downloadMb, type EngineId } from './asr-engines.js';
+import { findFfTool } from './ffmpeg.js';
+import { ENGINES, DEFAULT_INSTALL_MB, WHISPER_PACKAGES_MB, downloadMb, type EngineId } from './asr-engines.js';
 
 export interface JobState {
   status: 'running' | 'done' | 'failed';
@@ -62,14 +63,14 @@ export function sidecarMissingResult(tool: string): Record<string, unknown> {
     errorCode: 'asr.not_installed',
     error: `The speech and face analysis sidecar is not installed, and ${tool} needs it.`,
     command: SETUP_COMMAND,
-    nextStep: `The analysis sidecar is not installed. Run this in a terminal on this machine (it downloads about 150 MB to several hundred MB: the Python packages and the 80 MB Zipformer-68M model; larger models are optional), then retry ${tool} once: ${SETUP_COMMAND}`,
+    nextStep: `The analysis sidecar is not installed. Run this in a terminal on this machine (it downloads about ${DEFAULT_INSTALL_MB} MB: the Python packages and the 80 MB Zipformer-68M model; larger models are optional), then retry ${tool} once: ${SETUP_COMMAND}`,
   };
 }
 
 /** The chosen engine's models are not installed. Nothing is downloaded: the user must approve it first. */
 export function engineMissingResult(tool: string, engine: EngineId): Record<string, unknown> {
   const info = ENGINES[engine];
-  const mb = downloadMb(engine);
+  const mb = downloadMb(engine) + (engine === 'whisper-turbo' ? WHISPER_PACKAGES_MB : 0);
   const cuda = info.needsCuda ? ' (plus about 2 GB of CUDA libraries if an NVIDIA GPU is found)' : '';
   return {
     success: false,
@@ -135,16 +136,55 @@ function killTree(proc: ChildProcess): void {
   setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* already gone */ } }, KILL_GRACE_MS).unref();
 }
 
+/** Input for a sidecar process: the caller's fields plus the ffmpeg binary this server resolved. */
+async function withFfmpeg(input: object): Promise<object> {
+  if ((input as { ffmpegPath?: unknown }).ffmpegPath) return input;
+  let ffmpegPath: string | null = null;
+  try { ffmpegPath = await findFfTool('ffmpeg'); } catch { /* the sidecar falls back to PATH */ }
+  return ffmpegPath ? { ...input, ffmpegPath } : input;
+}
+
+const RUN_DIR_MAX_AGE_MS = 24 * 3600_000;
+const STALE_DIR_MAX_AGE_MS = 7 * 24 * 3600_000;
+let sweptHome: string | null = null;
+
+/**
+ * Best-effort cleanup of leftovers under jobs/: `run-*` dirs of crashed synchronous runs older than
+ * a day and `.stale-*` job dirs (moved aside while their pid was alive) older than a week.
+ * Never throws; runs once per process and data home.
+ */
+export async function sweepJobDirs(now = Date.now()): Promise<void> {
+  try {
+    const jobs = join(premiereMcpHome(), 'jobs');
+    for (const name of await readdir(jobs)) {
+      const limit = name.startsWith('run-') ? RUN_DIR_MAX_AGE_MS : name.includes('.stale-') ? STALE_DIR_MAX_AGE_MS : 0;
+      if (!limit) continue;
+      try {
+        const info = await stat(join(jobs, name));
+        if (now - info.mtimeMs > limit) await rm(join(jobs, name), { recursive: true, force: true });
+      } catch { /* in use or already gone */ }
+    }
+  } catch { /* no jobs folder yet */ }
+}
+
+async function sweepOnce(): Promise<void> {
+  const home = premiereMcpHome();
+  if (sweptHome === home) return;
+  sweptHome = home;
+  await sweepJobDirs();
+}
+
 /** Run a sidecar command and wait for it. Failures throw SidecarError with the stderr tail. */
 export async function runSidecar<T>(command: string, input: object, timeoutMs = 600_000): Promise<T> {
   const python = await sidecarPython();
   if (!python) throw new SidecarError(`The analysis sidecar is not installed. Run: ${SETUP_COMMAND}`);
   const runs = join(premiereMcpHome(), 'jobs');
   await mkdir(runs, { recursive: true });
+  await sweepOnce();
   const dir = await mkdtemp(join(runs, 'run-'));
   try {
     const files = { input: join(dir, 'input.json'), output: join(dir, 'output.json') };
-    await writeJsonAtomic(files.input, input);
+    await writeJsonAtomic(files.input, await withFfmpeg(input));
     const { code, stderr, timedOut } = await new Promise<{ code: number | null; stderr: string; timedOut: boolean }>((resolve, reject) => {
       const proc = spawn(python, sidecarArgs(command, files), { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
       let stderrText = '';
@@ -298,6 +338,7 @@ async function startJobOnce(key: string, command: string, input: object): Promis
     } catch { /* another process replaced it first */ }
   }
   await mkdir(join(premiereMcpHome(), 'jobs'), { recursive: true });
+  await sweepOnce();
   try {
     await mkdir(dir); // non-recursive: acts as the lock
   } catch (error) {
@@ -307,7 +348,7 @@ async function startJobOnce(key: string, command: string, input: object): Promis
     throw error;
   }
   const files = { input: join(dir, 'input.json'), output: join(dir, 'output.json'), progress: join(dir, 'progress.json') };
-  await writeJsonAtomic(files.input, input);
+  await writeJsonAtomic(files.input, await withFfmpeg(input));
 
   const recordSpawnError = (message: string): void => {
     try {

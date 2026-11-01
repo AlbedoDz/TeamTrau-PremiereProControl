@@ -308,6 +308,7 @@ def _place(source: Path, target: Path) -> None:
 
 def render(spec: dict) -> dict:
     """Render ``spec["groups"]`` to ``spec["outPath"]`` and return ``{path, frames}``."""
+    io.set_ffmpeg(spec.get("ffmpegPath"))
     groups = sorted(spec["groups"], key=lambda group: group["start"])
     style = spec.get("style", "clean")
     if style not in STYLES:
@@ -365,7 +366,7 @@ def render(spec: dict) -> dict:
 
         run = subprocess.run(
             [
-                "ffmpeg", "-nostdin", "-v", "error", "-y",
+                io.ffmpeg_bin(), "-nostdin", "-v", "error", "-y",
                 "-framerate", framerate(fps),
                 "-i", str(scratch / "%06d.png"),
                 "-c:v", "prores_ks", "-profile:v", "4",

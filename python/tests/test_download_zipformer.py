@@ -165,7 +165,8 @@ def fakes(monkeypatch):
 
 
 def run(tmp_path, **overrides):
-    spec = {"modelsDir": str(tmp_path / "models")}
+    # The no-engines default is the Zipformer-68M; these tests are about the whisper download.
+    spec = {"modelsDir": str(tmp_path / "models"), "engines": ["whisper-turbo"]}
     spec.update(overrides)
     return download_models.run(spec, None)
 
@@ -207,8 +208,9 @@ def test_whisper_still_fetches_whisper_and_yunet_only(tmp_path):
     assert set(result) == {"whisper", "yunet"}
 
 
-def test_the_default_engines_are_whisper_alone(tmp_path):
-    assert download_models.engines_of({}) == ["whisper-turbo"]
+def test_the_default_engines_are_the_zipformer_68m_alone(tmp_path):
+    """Matches the server's default engine: whisper is only fetched when named."""
+    assert download_models.engines_of({}) == ["zipformer-68m"]
 
 
 def test_a_rover_run_fills_the_same_folders_as_the_two_engines(tmp_path):

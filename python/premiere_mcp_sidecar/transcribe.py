@@ -8,8 +8,9 @@ CPU, the decoding options); the glossary is what turns the podcast's proper noun
 
 Four engines, ``engine`` in the input (T16py):
 
-* ``whisper-turbo`` (the default, and byte-for-byte the behaviour above);
-* ``zipformer-68m`` / ``zipformer-30m``: sherpa-onnx int8 transducers that run on
+* ``whisper-turbo`` (optional: needs the faster-whisper packages, installed only by
+  ``--setup-asr --engine whisper-turbo``);
+* ``zipformer-68m`` (the default) / ``zipformer-30m``: sherpa-onnx int8 transducers that run on
   the CPU at a fraction of the size, for the PCs without an NVIDIA GPU. Silero
   VAD splits the audio into speech chunks, each chunk is decoded on its own, and
   the tokens are rebuilt into words;
@@ -238,6 +239,7 @@ def _transcribe(model, audio, glossary: list[str], progress: io.Heartbeat) -> tu
 def run(spec: dict, progress_path: str | os.PathLike[str] | None = None) -> dict:
     """``{words: [{w, start, end, p}], device, computeType, engine, durationSec}``."""
     engine = engine_of(spec)
+    io.set_ffmpeg(spec.get("ffmpegPath"))
     media_path = spec.get("mediaPath")
     if not media_path:
         raise ValueError("transcribe needs mediaPath")
@@ -249,8 +251,8 @@ def run(spec: dict, progress_path: str | os.PathLike[str] | None = None) -> dict
 
 
 def engine_of(spec: dict) -> str:
-    """The requested engine, ``whisper-turbo`` when the input names none."""
-    engine = str(spec.get("engine") or WHISPER_ENGINE)
+    """The requested engine, ``zipformer-68m`` (the server default) when the input names none."""
+    engine = str(spec.get("engine") or ZIPFORMER_68M_ENGINE)
     if engine not in ENGINES:
         raise ValueError(f"unknown engine {engine!r}; expected one of {', '.join(ENGINES)}")
     return engine

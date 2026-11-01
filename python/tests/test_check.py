@@ -160,7 +160,7 @@ def test_what_download_models_writes_is_what_check_finds(tmp_path, monkeypatch):
 
     monkeypatch.setattr(download_models, "snapshot_download", snapshot)
     monkeypatch.setattr(download_models, "urlopen", lambda url, timeout=None: Response())
-    download_models.run({"modelsDir": str(models)}, None)
+    download_models.run({"modelsDir": str(models), "engines": ["whisper-turbo"]}, None)
 
     report = check.run()
     assert report["models"] == {

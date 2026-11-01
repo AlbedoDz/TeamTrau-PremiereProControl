@@ -24,7 +24,7 @@ def run_captions(payload: dict) -> dict:
 
 
 def run_check(payload: dict) -> dict:
-    return check.run()
+    return check.run(payload.get("ffmpegPath"))
 
 
 def run_transcribe(payload: dict) -> dict:

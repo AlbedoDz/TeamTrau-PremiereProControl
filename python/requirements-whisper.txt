@@ -1,0 +1,7 @@
+# Optional whisper-turbo engine (faster-whisper). Installed only on explicit consent:
+#   premiere-pro-mcp --setup-asr --engine whisper-turbo
+faster-whisper==1.2.1
+ctranslate2==4.8.4
+# Pinned only so faster-whisper's PyAV import works; audio is decoded with the
+# ffmpeg binary, not faster_whisper.decode_audio (PyAV 19 breaks on some files).
+av==19.0.2
