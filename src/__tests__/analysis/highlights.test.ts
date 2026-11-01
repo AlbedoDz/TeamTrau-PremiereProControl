@@ -273,6 +273,11 @@ describe('pickDiverse', () => {
 });
 
 describe('parseShortTermLoudness', () => {
+  it('parses a real ffmpeg 8.1 verbose line (S has no space)', () => {
+    const line = '[Parsed_ebur128_0 @ 000001a81418e440] t: 0.0999773  TARGET:-23 LUFS    M:-120.7 S:-120.7     I: -70.0 LUFS       LRA:   0.0 LU';
+    expect(parseShortTermLoudness(line)).toEqual([{ t: 0.0999773, v: -120.7 }]);
+  });
+
   it('parseShortTermLoudness reads t and S', () => {
     // với một dòng ebur128 thật có S: -18.3 → { t, v: -18.3 }
     const realStderr = `

@@ -1,5 +1,5 @@
 import { PremiereProTools } from '../../tools/index.js';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -86,7 +86,7 @@ describe('transcribe_sequence', () => {
     const r = await tools.executeTool('transcribe_sequence', { glossary: ['Trau', 'MCP'] });
     expect(startJob).toHaveBeenCalledTimes(2);
     const [key, command, input] = startJob.mock.calls[0];
-    expect(key).toMatch(new RegExp(`^transcribe-v2\\|${fileA.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\|1:[\\d.]+\\|zipformer-68m\\|Trau\\nMCP$`));
+    expect(key).toMatch(new RegExp(`^transcribe-v2\\|${fileA.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\|1:[\\d.]+\\|zipformer-68m\\|$`));
     expect(command).toBe('transcribe');
     expect(input).toMatchObject({ mediaPath: fileA, language: 'vi', glossary: ['Trau', 'MCP'], device: 'auto', engine: 'zipformer-68m', modelsDir: join(home, 'models') });
     expect(r).toMatchObject({ success: true, status: 'running', files: 2 });
@@ -151,6 +151,68 @@ describe('transcribe_sequence', () => {
       const w = await tools.executeTool('transcribe_sequence', { glossary: ['Vietcetera'], engine: 'whisper-turbo' });
       expect(JSON.parse(readFileSync(w.wordsFile, 'utf8')).map((x: { w: string }) => x.w)).toEqual(['xin', 'chào', 'vietcetera']);
       expect(w.warnings.join(' ')).toContain('CPU fallback');
+    });
+  });
+
+  describe('transcript cache key and glossary', () => {
+    beforeEach(() => {
+      executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA)]));
+      startJob.mockResolvedValue({ status: 'running', progress: 0 });
+    });
+
+    it('zipformer key is identical with and without a glossary', async () => {
+      await tools.executeTool('transcribe_sequence', { glossary: ['Trau'] });
+      await tools.executeTool('transcribe_sequence', {});
+      expect(startJob.mock.calls[0][0]).toBe(startJob.mock.calls[1][0]);
+    });
+
+    it('applies the casing glossary of the current call to a cached zipformer job', async () => {
+      startJob.mockResolvedValue({ status: 'done', progress: 1, result: { words: [{ w: 'xin', start: 0.5, end: 0.9, p: 1 }, { w: 'vietcetera', start: 1, end: 1.5, p: 1 }] } });
+      const a = await tools.executeTool('transcribe_sequence', {});
+      expect(JSON.parse(readFileSync(a.wordsFile, 'utf8'))[1].w).toBe('vietcetera');
+      const b = await tools.executeTool('transcribe_sequence', { glossary: ['Vietcetera'] });
+      expect(JSON.parse(readFileSync(b.wordsFile, 'utf8'))[1].w).toBe('Vietcetera');
+    });
+
+    it('whisper reuses the finished job of the last glossary when none is passed', async () => {
+      await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo', glossary: ['Trau'] });
+      const firstKey = startJob.mock.calls[0][0] as string;
+      jobStatus.mockImplementation(async (key: string) => (key === firstKey ? { status: 'done', progress: 1, result: { words: [] } } : null));
+      startJob.mockClear();
+      await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo' });
+      expect(startJob.mock.calls[0][0]).toBe(firstKey);
+      expect(startJob.mock.calls[0][2]).toMatchObject({ glossary: ['Trau'] });
+    });
+  });
+
+  describe('glossary index', () => {
+    beforeEach(() => {
+      executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA)]));
+      startJob.mockResolvedValue({ status: 'running', progress: 0 });
+    });
+    const indexFile = () => join(home, 'jobs', 'glossary-index.json');
+
+    it('an explicit empty glossary does not reuse the last whisper job', async () => {
+      await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo', glossary: ['Trau'] });
+      const firstKey = startJob.mock.calls[0][0] as string;
+      jobStatus.mockImplementation(async (key: string) => (key === firstKey ? { status: 'done', progress: 1, result: { words: [] } } : null));
+      startJob.mockClear();
+      await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo', glossary: [] });
+      expect(startJob.mock.calls[0][0]).not.toBe(firstKey);
+    });
+
+    it('drops entries whose media is gone and caps the index at 200', async () => {
+      const stale: Record<string, string[]> = { [`${join(home, 'gone.wav')}|1:1|whisper-turbo`]: ['x'] };
+      for (let i = 0; i < 250; i++) stale[`${fileB}|1:${i}|whisper-turbo`] = [`g${i}`];
+      mkdirSync(join(home, 'jobs'), { recursive: true });
+      writeFileSync(indexFile(), JSON.stringify(stale));
+      await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo', glossary: ['Trau'] });
+      const saved = JSON.parse(readFileSync(indexFile(), 'utf8')) as Record<string, string[]>;
+      const ids = Object.keys(saved);
+      expect(ids).toHaveLength(200);
+      expect(ids.some((id) => id.includes('gone.wav'))).toBe(false);
+      expect(ids.some((id) => id.includes('|1:0|'))).toBe(false);
+      expect(ids[ids.length - 1]).toContain(fileA);
     });
   });
 
@@ -264,7 +326,9 @@ describe('find_highlight_candidates', () => {
     expect(c.signals).toMatchObject({ multiFaceRatio: 0 });
     expect(typeof c.rawScore).toBe('number');
     expect(runFf).toHaveBeenCalledTimes(1);
-    expect(runFf.mock.calls[0][1]).toEqual(expect.arrayContaining(['-hide_banner', '-nostats', '-i', fileA, '-map', '0:a:0', '-af', 'ebur128=framelog=verbose']));
+    expect(runFf.mock.calls[0][1]).toEqual(expect.arrayContaining(['-hide_banner', '-nostats', '-v', 'verbose', '-i', fileA, '-map', '0:a:0', '-af', 'ebur128=framelog=verbose']));
+    const args = runFf.mock.calls[0][1] as string[];
+    expect(args[args.indexOf('-v') + 1]).toBe('verbose');
     expect(runSidecar).not.toHaveBeenCalled();
   });
 

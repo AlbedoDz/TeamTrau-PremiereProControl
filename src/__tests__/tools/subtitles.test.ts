@@ -28,6 +28,7 @@ describe('create_captions_from_transcript', () => {
   let home: string;
   let scripts: string[];
   let captionResult: Record<string, unknown>;
+  let binExists = false;
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'premiere-mcp-home-'));
@@ -47,6 +48,7 @@ describe('create_captions_from_transcript', () => {
       },
     });
     scripts = [];
+    binExists = false;
     captionResult = { success: true, message: 'Caption track created' };
     executeScript = jest.fn(async (script: string) => {
       scripts.push(script);
@@ -56,6 +58,8 @@ describe('create_captions_from_transcript', () => {
           clips: [{ id: 'c1', trackType: 'audio', trackIndex: 0, start: 0, end: 10, inPoint: 0, outPoint: 10, mediaPath: media }],
         };
       }
+      if (script.includes('found.type === ProjectItemType.BIN') && script.includes('exists: false')) return { success: true, exists: binExists };
+      if (script.includes('parentBin.createBin')) return { success: true, binName: 'Captions' };
       if (script.includes('p.save()')) return { success: true, path: join(home, 'p.prproj') };
       if (script.includes('sequence.createCaptionTrack')) return captionResult;
       return { success: true };
@@ -100,6 +104,21 @@ describe('create_captions_from_transcript', () => {
     const create = scripts.find((s) => s.includes('sequence.createCaptionTrack'))!;
     expect(create).toContain('"item1"');
     expect(create).toContain('var startAtTime = 0;');
+  });
+
+  it('creates the Captions bin before importing when it is missing', async () => {
+    await tools.executeTool('create_captions_from_transcript', {});
+    const created = scripts.findIndex((s) => s.includes('parentBin.createBin'));
+    expect(created).toBeGreaterThanOrEqual(0);
+    expect(importMedia).toHaveBeenCalledTimes(1);
+    expect(importMedia.mock.invocationCallOrder[0]).toBeGreaterThan(executeScript.mock.invocationCallOrder[created]!);
+  });
+
+  it('does not create the Captions bin again when it exists', async () => {
+    binExists = true;
+    await tools.executeTool('create_captions_from_transcript', {});
+    expect(scripts.some((s) => s.includes('parentBin.createBin'))).toBe(false);
+    expect(importMedia).toHaveBeenCalledWith(expect.any(String), 'Captions');
   });
 
   it('honours startTime/endTime and an explicit outputPath', async () => {

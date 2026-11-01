@@ -7,7 +7,7 @@
  * outlives an MCP restart and can be polled by key afterwards.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, openSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
@@ -114,7 +114,7 @@ function sidecarArgs(command: string, files: { input: string; output: string; pr
 
 /** Write via a temp file and rename so a reader never sees a half-written file. */
 export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   await writeFile(tmp, JSON.stringify(value));
   await rename(tmp, path);
 }

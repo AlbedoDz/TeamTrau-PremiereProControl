@@ -14,6 +14,7 @@ import { ensureBackup } from './editing.js';
 import { importMedia } from './media.js';
 import { createCaptionTrack } from './sequence.js';
 import { loadTranscript } from './shorts.js';
+import { ensureRootBin } from './project.js';
 
 interface Args {
   sequenceId?: string | undefined;
@@ -71,6 +72,8 @@ async function createCaptionsFromTranscript(ctx: ToolContext, args: Args): Promi
     backupPath = backup.path;
 
     step = 'import_srt';
+    const bin = await ensureRootBin(ctx, 'Captions');
+    if (!bin.success) return fail(step, bin.error ?? 'The Captions bin could not be created.');
     const imported = await importMedia(ctx, srtPath, 'Captions');
     if (!imported?.success || !imported.id) return fail(step, imported?.error ?? 'The SRT file was not imported.');
 
