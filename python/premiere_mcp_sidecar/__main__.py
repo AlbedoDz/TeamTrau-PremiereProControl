@@ -12,10 +12,14 @@ import argparse
 import sys
 import traceback
 
-from . import captions, check, io
+from . import check, io
 
 
 def run_captions(payload: dict) -> dict:
+    # Imported here, not at module level: `check` has to work on a machine where
+    # the render stack (Pillow) was never installed.
+    from . import captions
+
     return captions.render(payload)
 
 

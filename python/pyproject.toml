@@ -34,3 +34,7 @@ packages = ["premiere_mcp_sidecar"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The package is not pip-installed (the full dependency set would pull whisper
+# here), so tests import it from this directory even when pytest is run from the
+# repo root.
+pythonpath = ["."]
