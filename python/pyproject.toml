@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2,<3",
     "pillow>=11",
     "opencv-python-headless>=4.10",
+    "huggingface_hub>=0.25",
     "pytest>=8",
 ]
 
@@ -28,9 +29,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["premiere_mcp_sidecar"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"premiere_mcp_sidecar/fonts" = "premiere_mcp_sidecar/fonts"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
