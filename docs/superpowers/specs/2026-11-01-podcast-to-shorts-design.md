@@ -147,6 +147,12 @@ Lỗi ở bước 3–7 → dừng, giữ những gì đã tạo để người 
 - Premiere trên Windows đọc alpha của ProRes 4444 `.mov`. Phương án dự phòng: chuỗi PNG.
 - Session phát hành 1.4.0 vẫn làm việc trên cùng thư mục → triển khai trong git worktree riêng.
 
+### Kết quả dò trên Premiere 25.6.3 (Windows, 2026-11-01, Project-Temp)
+
+- **Alpha:** Premiere đọc đúng alpha của ProRes 4444 (`prores_ks -profile:v 4 -pix_fmt yuva444p10le -alpha_bits 16`). Metadata `Column.Intrinsic.VideoInfo` là `1080 x 1920 (1,0), Straight Alpha`, giống ảnh PNG RGBA đối chứng; PNG-in-MOV và QuickTime Animation cũng vậy. `FootageInterpretation.alphaUsage` là `0` cho mọi file, kể cả PNG có alpha, nên không dùng được để kiểm tra. ffprobe báo file ProRes 4444 là `yuva444p12le` (phía giải mã). `export_frame` lỗi `Unknown error exception` trên bản này, nên không kiểm tra được bằng ảnh xuất.
+- **Auto Reframe:** `Sequence.autoReframeSequence(9, 16, "default", name, false)` trả về sequence mới ngay (≈ 0,4 s). **Kích thước theo chiều cao nguồn**: nguồn 3840×2160 cho ra **1215×2160**, không phải 1080×1920. Khung đi theo chủ thể nằm trong effect **"Auto Reframe"** được thêm vào clip (`Generated Keyframes`, 42 keyframe cho 20 s), còn `Motion.Position` không đổi. Vài giây sau lần gọi đã có keyframe.
+- **Hệ quả cho `build_short`:** render caption theo kích thước thật của sequence sau reframe (đọc `frameSizeHorizontal/Vertical`), vùng an toàn tính theo tỉ lệ; `verified` kiểm tra tỉ lệ 9:16 (±1 px) chứ không kiểm tra cứng 1080×1920; bước đọc lại chờ đến khi effect "Auto Reframe" có keyframe `Generated Keyframes` (tối đa 30 s, đọc mỗi 2 s), quá hạn thì cảnh báo, không fail.
+
 ## 11. Ngoài phạm vi
 
 Zipformer, crop theo khuôn mặt, diarization, B-roll, nhạc nền (đã có `auto_duck_music`), export tự động, thư viện template motion (sub-project B).
