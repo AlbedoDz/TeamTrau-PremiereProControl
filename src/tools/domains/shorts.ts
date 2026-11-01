@@ -184,11 +184,21 @@ export async function loadTranscript(
     before.forEach((job, i) => {
       if (job?.status === 'failed') failures.push(`${paths[i]}: ${job.error ?? 'unknown error'}`);
     });
-    jobs = await Promise.all(paths.map((mediaPath, i) => startJob(
-      keys[i]!,
-      'transcribe',
-      { mediaPath, modelDir: modelPaths().whisper, modelsDir: join(premiereMcpHome(), 'models'), language: 'vi', glossary: glossaries[i]!, device: 'auto', engine },
-    )));
+    // One decode and one model in memory at a time: a file's job starts only when no earlier file
+    // of this request is still running. Done or failed earlier jobs do not block.
+    jobs = [];
+    for (let i = 0; i < paths.length; i++) {
+      const wouldSpawn = !before[i] || before[i]!.status === 'failed';
+      if (wouldSpawn && jobs.some((job) => job.status === 'running')) {
+        jobs.push({ status: 'running', progress: 0 });
+        continue;
+      }
+      jobs.push(await startJob(
+        keys[i]!,
+        'transcribe',
+        { mediaPath: paths[i]!, modelDir: modelPaths().whisper, modelsDir: join(premiereMcpHome(), 'models'), language: 'vi', glossary: glossaries[i]!, device: 'auto', engine },
+      ));
+    }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -200,7 +210,7 @@ export async function loadTranscript(
       success: false,
       error: failures.join('\n'),
       retry: true,
-      nextStep: 'Call transcribe_sequence again to retry; the failed file(s) were restarted.',
+      nextStep: 'Call transcribe_sequence again to retry; the failed file(s) are restarted, one file at a time.',
     } as never;
   }
 

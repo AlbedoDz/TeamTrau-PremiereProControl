@@ -82,16 +82,52 @@ describe('transcribe_sequence', () => {
 
   it('starts one job per unique audio file and reports running', async () => {
     executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA), aclip('c2', 0, 10, fileA), aclip('c3', 1, 0, fileB)]));
-    startJob.mockResolvedValueOnce({ status: 'running', progress: 0.5, etaSec: 30 }).mockResolvedValueOnce({ status: 'done', progress: 1, result: { words: [] } });
+    startJob.mockResolvedValueOnce({ status: 'running', progress: 0.5, etaSec: 30 });
     const r = await tools.executeTool('transcribe_sequence', { glossary: ['Trau', 'MCP'] });
-    expect(startJob).toHaveBeenCalledTimes(2);
+    // The second file waits for the first: one decode and one model at a time.
+    expect(startJob).toHaveBeenCalledTimes(1);
     const [key, command, input] = startJob.mock.calls[0];
     expect(key).toMatch(new RegExp(`^transcribe-v2\\|${fileA.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\|1:[\\d.]+\\|zipformer-68m\\|$`));
     expect(command).toBe('transcribe');
     expect(input).toMatchObject({ mediaPath: fileA, language: 'vi', glossary: ['Trau', 'MCP'], device: 'auto', engine: 'zipformer-68m', modelsDir: join(home, 'models') });
     expect(r).toMatchObject({ success: true, status: 'running', files: 2 });
-    expect(r.progress).toBeCloseTo(0.75);
+    expect(r.progress).toBeCloseTo(0.25);
     expect(r.etaSec).toBe(30);
+  });
+
+  it('runs the files of a request one at a time: the next starts only after the earlier one is done', async () => {
+    const fileC = join(home, 'c.wav');
+    writeFileSync(fileC, 'z');
+    executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA), aclip('c2', 1, 0, fileB), aclip('c3', 2, 0, fileC)]));
+    const states = new Map<string, any>();
+    startJob.mockImplementation(async (key: string, _c: string, input: any) => {
+      const state = states.get(input.mediaPath) ?? { status: 'running', progress: 0 };
+      states.set(input.mediaPath, state);
+      return state;
+    });
+    jobStatus.mockImplementation(async (key: string) => {
+      for (const [path, state] of states) if (key.includes(path)) return state;
+      return null;
+    });
+    const started = () => startJob.mock.calls.map((c) => c[2].mediaPath);
+
+    const first = await tools.executeTool('transcribe_sequence', {});
+    expect(first).toMatchObject({ status: 'running', files: 3 });
+    expect(started()).toEqual([fileA]);
+
+    await tools.executeTool('transcribe_sequence', {});
+    expect(started().filter((p) => p === fileB)).toHaveLength(0);
+
+    states.set(fileA, { status: 'done', progress: 1, result: { words: [] } });
+    startJob.mockClear();
+    const third = await tools.executeTool('transcribe_sequence', {});
+    expect(started()).toEqual([fileA, fileB]);
+    expect(third.progress).toBeCloseTo(1 / 3);
+
+    states.set(fileB, { status: 'done', progress: 1, result: { words: [] } });
+    startJob.mockClear();
+    await tools.executeTool('transcribe_sequence', {});
+    expect(started()).toEqual([fileA, fileB, fileC]);
   });
 
   describe('speech engines', () => {
@@ -259,8 +295,9 @@ describe('transcribe_sequence', () => {
     expect(r).toMatchObject({ success: false, retry: true });
     expect(r.error).toBe(`${fileA}: ffmpeg exploded`);
     expect(r.nextStep).toContain('restarted');
-    expect(startJob).toHaveBeenCalledTimes(2);
-    expect(startJob.mock.calls.some(([key]) => String(key).includes(fileA))).toBe(true);
+    // fileA is restarted first; fileB waits for it (one file at a time).
+    expect(startJob).toHaveBeenCalledTimes(1);
+    expect(String(startJob.mock.calls[0]![0])).toContain(fileA);
   });
 
   it('errors before starting any job when a media file does not exist', async () => {
