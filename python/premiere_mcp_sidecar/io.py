@@ -300,6 +300,17 @@ class Heartbeat:
         with self._lock:
             self._done = max(self._done, other.done)
 
+    def fraction(self, first: float, span: float) -> "_Band":
+        """A view of this heartbeat covering ``span`` of the bar from ``first``.
+
+        For a step that runs more than once over the same media, like ROVER's two
+        passes: each pass reports its own share, so the bar walks 0 → 0.5 → 1.0
+        once instead of both passes claiming the whole file's progress. The band
+        maps a media position to ``first + span * position`` and falls through to
+        ``at(fraction=...)``, so nothing about the heartbeat itself changes.
+        """
+        return _Band(self, first, span)
+
     def _loop(self) -> None:
         while not self._stop.wait(self.interval):
             try:
@@ -321,6 +332,28 @@ class Heartbeat:
         if self._thread is not None:
             self._thread.join(timeout=self.interval + 1.0)
         return None
+
+
+class _Band:
+    """One pass's share of a heartbeat's bar (see :meth:`Heartbeat.fraction`).
+
+    ``at(seconds=...)`` uses the heartbeat's own media total and rescales it into
+    the band, so a pass over the same file reports ``first`` at its start and
+    ``first + span`` at its end; ``at(fraction=...)`` is passed through unchanged.
+    The same surface as ``Heartbeat``, so callers do not care which they hold.
+    """
+
+    def __init__(self, beat: "Heartbeat", first: float, span: float) -> None:
+        self._beat = beat
+        self.first = first
+        self.span = span
+
+    def at(self, seconds: float | None = None, fraction: float | None = None) -> None:
+        if fraction is not None:
+            self._beat.at(fraction=self.first + self.span * float(fraction))
+        elif seconds is not None and self._beat.total_sec:
+            position = min(1.0, max(0.0, float(seconds) / self._beat.total_sec))
+            self._beat.at(fraction=self.first + self.span * position)
 
 
 def _eta_seconds(done: float, elapsed: float, total_sec: float | None) -> float | None:
