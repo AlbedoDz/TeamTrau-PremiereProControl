@@ -452,7 +452,7 @@ async function getCapabilities(ctx: ToolContext, checkConnection = false): Promi
     analysis: {
       ffmpeg: Boolean(await findFfTool('ffmpeg')),
       ffprobe: Boolean(await findFfTool('ffprobe')),
-      asr: await asrStatus(),
+      asr: await asrStatus({ timeoutMs: 10_000 }),
       note: 'Silence, dead-segment, loudness and media-preflight tools analyse files with ffmpeg/ffprobe; without them they return an install nextStep.'
     },
     liveConnection,

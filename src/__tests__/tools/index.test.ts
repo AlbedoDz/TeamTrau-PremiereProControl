@@ -119,10 +119,12 @@ describe('PremiereProTools', () => {
   });
 
   describe('executeTool()', () => {
-    it('get_capabilities includes asr status', async () => {
-      (asrStatus as jest.Mock).mockResolvedValue({ installed: false, nextStep: 'x' });
-      const result = (await tools.executeTool('get_capabilities', {})) as any;
-      expect(result.analysis.asr).toEqual({ installed: false, nextStep: 'x' });
+    // Duplicate 'get_capabilities includes asr status' test removed; kept more complete test at line 643
+    (() => {
+
+
+
+
     });
     describe('marker colours', () => {
       // Premiere's setColorByIndex() order, verified against 26.0.2 by writing
@@ -639,6 +641,7 @@ describe('PremiereProTools', () => {
       expect(result.liveConnection.result).toEqual({ success: true, status: 'connected' });
       expect(mockBridge.executeScript).toHaveBeenCalledTimes(1);
     });
+
 
     it('get_capabilities includes asr status', async () => {
       (asrStatus as jest.Mock).mockResolvedValueOnce({

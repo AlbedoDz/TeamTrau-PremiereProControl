@@ -14,6 +14,11 @@ export interface AsrStatus {
   nextStep?: string;
 }
 
+export interface AsrStatusOptions {
+  timeoutMs?: number;
+  maxAgeMs?: number;
+}
+
 export interface SetupAsrOptions {
   pkgPythonDir: string;
   spawnFn?: typeof spawn;
@@ -154,6 +159,11 @@ export async function setupAsr(
       if (pyCode === 0) {
         venvCode = 0;
       }
+    } else {
+      const py3Code = await runCommand('python3', ['-m', 'venv', venvDir], log, spawnFn);
+      if (py3Code === 0) {
+        venvCode = 0;
+      }
     }
     if (venvCode !== 0) {
       venvCode = await runCommand('python', ['-m', 'venv', venvDir], log, spawnFn);
@@ -220,30 +230,54 @@ export async function setupAsr(
   }
 }
 
-export async function asrStatus(): Promise<AsrStatus> {
+interface CachedAsrStatus {
+  result: AsrStatus;
+  timestamp: number;
+}
+
+let cachedStatus: CachedAsrStatus | null = null;
+
+export function resetAsrStatusCache(): void {
+  cachedStatus = null;
+}
+
+export async function asrStatus(opts?: { timeoutMs?: number; maxAgeMs?: number }): Promise<AsrStatus> {
+  const maxAgeMs = opts?.maxAgeMs ?? 60_000;
+  const timeoutMs = opts?.timeoutMs ?? 60_000;
+
+  const now = Date.now();
+  if (maxAgeMs > 0 && cachedStatus && now - cachedStatus.timestamp < maxAgeMs) {
+    return cachedStatus.result;
+  }
+
   const python = await sidecarPython();
   if (!python) {
-    return {
+    const result: AsrStatus = {
       installed: false,
       nextStep:
         'Run premiere-pro-mcp --setup-asr (about 2 GB download: Python packages and the large-v3-turbo model).',
     };
+    cachedStatus = { result, timestamp: Date.now() };
+    return result;
   }
 
   try {
     const report = await runSidecar<{
       cuda?: boolean;
       models?: { whisper: boolean; yunet: boolean };
-    }>('check', {}, 60_000);
+    }>('check', {}, timeoutMs);
 
     const result: AsrStatus = { installed: true };
     if (report?.cuda !== undefined) result.cuda = Boolean(report.cuda);
     if (report?.models !== undefined) result.models = report.models;
+    cachedStatus = { result, timestamp: Date.now() };
     return result;
   } catch (error: unknown) {
-    return {
+    const result: AsrStatus = {
       installed: true,
       nextStep: error instanceof Error ? error.message : String(error),
     };
+    cachedStatus = { result, timestamp: Date.now() };
+    return result;
   }
 }

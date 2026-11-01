@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rm } from 'node:fs/promises';
-import { setupAsr, asrStatus } from '../../setup/asr.js';
+import { setupAsr, asrStatus, resetAsrStatusCache } from '../../setup/asr.js';
 import * as sidecar from '../../analysis/sidecar.js';
 
 jest.mock('node:child_process');
@@ -61,6 +61,7 @@ describe('setupAsr and asrStatus', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    resetAsrStatusCache();
     spawned = [];
     uvAvailable = true;
     pyLauncherSuccess = true;
@@ -207,7 +208,7 @@ describe('setupAsr and asrStatus', () => {
       expect(codeDarwin).toBe(0);
       expect(spawned[0]).toEqual({ cmd: 'uv', args: ['--version'] });
       expect(spawned[1]).toEqual({
-        cmd: 'python',
+        cmd: 'python3',
         args: ['-m', 'venv', join(fakeHome, 'venv')],
       });
       expect(spawned[2]).toEqual({
@@ -227,6 +228,33 @@ describe('setupAsr and asrStatus', () => {
       expect(spawned[5].cmd).toContain(fakeHome);
       expect(spawned[5].cmd).toMatch(/bin[\\/]python$/);
       expect(spawned.every((s) => !JSON.stringify(s).includes('.premiere-mcp'))).toBe(true);
+
+      // On non-win32 when python3 fails, fall back to python -m venv
+      spawned = [];
+      failTarget = 'python3';
+      failExitCode = 1;
+      const logsDarwinFallback: string[] = [];
+      const codeDarwinFallback = await setupAsr((l) => logsDarwinFallback.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'darwin',
+        home: fakeHome,
+      });
+
+      expect(codeDarwinFallback).toBe(0);
+      expect(spawned[0]).toEqual({ cmd: 'uv', args: ['--version'] });
+      expect(spawned[1]).toEqual({
+        cmd: 'python3',
+        args: ['-m', 'venv', join(fakeHome, 'venv')],
+      });
+      expect(spawned[2]).toEqual({
+        cmd: 'python',
+        args: ['-m', 'venv', join(fakeHome, 'venv')],
+      });
+      expect(spawned[3]).toEqual({
+        cmd: expect.stringMatching(/bin[\\/]python$/),
+        args: ['-m', 'pip', 'install', '-r', expect.stringContaining('requirements.txt')],
+      });
+      failTarget = null;
 
       // On Windows when py -3.12 fails, fall back to python -m venv
       spawned = [];
@@ -350,6 +378,73 @@ describe('setupAsr and asrStatus', () => {
         installed: true,
         nextStep: 'Model weights corrupted',
       });
+    });
+
+    it('runs sidecar once when called twice within maxAge', async () => {
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\\premiere-mcp\\venv\\Scripts\\python.exe');
+      (sidecar.runSidecar as jest.Mock).mockResolvedValue({
+        cuda: true,
+        models: { whisper: true, yunet: true },
+      });
+
+      const first = await asrStatus();
+      const second = await asrStatus();
+
+      expect(first).toEqual({
+        installed: true,
+        cuda: true,
+        models: { whisper: true, yunet: true },
+      });
+      expect(second).toEqual(first);
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs sidecar again after maxAge expires using maxAgeMs: 0', async () => {
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\\premiere-mcp\\venv\\Scripts\\python.exe');
+      (sidecar.runSidecar as jest.Mock).mockResolvedValue({
+        cuda: true,
+        models: { whisper: true, yunet: true },
+      });
+
+      const first = await asrStatus();
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+
+      const second = await asrStatus({ maxAgeMs: 0 });
+      expect(second).toEqual(first);
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(2);
+    });
+
+    it('memoises error and timeout results like any other result', async () => {
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\\premiere-mcp\\venv\\Scripts\\python.exe');
+      (sidecar.runSidecar as jest.Mock).mockRejectedValue(new Error('Sidecar timeout after 10000ms'));
+
+      const first = await asrStatus({ timeoutMs: 10_000 });
+      expect(first).toEqual({
+        installed: true,
+        nextStep: 'Sidecar timeout after 10000ms',
+      });
+      expect(sidecar.runSidecar).toHaveBeenCalledWith('check', {}, 10_000);
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+
+      const second = await asrStatus();
+      expect(second).toEqual(first);
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears cache when resetAsrStatusCache is called', async () => {
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\\premiere-mcp\\venv\\Scripts\\python.exe');
+      (sidecar.runSidecar as jest.Mock).mockResolvedValue({
+        cuda: false,
+        models: { whisper: true, yunet: true },
+      });
+
+      await asrStatus();
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+
+      resetAsrStatusCache();
+
+      await asrStatus();
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(2);
     });
   });
 });

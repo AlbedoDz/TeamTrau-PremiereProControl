@@ -61,7 +61,7 @@ export function sidecarMissingResult(tool: string): Record<string, unknown> {
     errorCode: 'asr.not_installed',
     error: `The speech and face analysis sidecar is not installed, and ${tool} needs it.`,
     command: SETUP_COMMAND,
-    nextStep: `The analysis sidecar is not installed. Run this in a terminal on this machine (it downloads about 3 GB of models and Python packages, so allow roughly 3 GB of free disk), then retry ${tool} once: ${SETUP_COMMAND}`,
+    nextStep: `The analysis sidecar is not installed. Run this in a terminal on this machine (it downloads about 2 GB of models and Python packages, so allow roughly 2 GB of free disk), then retry ${tool} once: ${SETUP_COMMAND}`,
   };
 }
 
