@@ -96,6 +96,10 @@ The installer configures Claude Desktop on macOS and Claude Desktop plus GitHub 
 
 To opt out of anonymous usage telemetry, add `"env": { "PREMIERE_MCP_TELEMETRY": "0" }` to that server entry. See [Telemetry](#telemetry).
 
+### Share with another computer
+
+`npm run share:package` builds `release-artifacts/TeamTrau-PremiereProControl-<version>-share.zip`: the package, a Windows and a macOS installer, and a Vietnamese install guide ([share/HUONG-DAN.md](share/HUONG-DAN.md)). Send that zip; the other computer needs Node.js 20+, Premiere Pro, and optionally ffmpeg.
+
 ### Install from source
 
 Use source setup when developing the MCP, modifying the CEP panel, or troubleshooting a package install:
