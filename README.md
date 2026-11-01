@@ -4,7 +4,7 @@
 
 **Operate local Adobe Premiere Pro projects through MCP.**
 
-295 Premiere tools behind `search_tools` / `invoke_tool`, 13 context resources, and 10 guided prompts for Codex, Claude Code, Claude Desktop, and other MCP clients. CEP is the supported production bridge; UXP remains experimental.
+298 Premiere tools behind `search_tools` / `invoke_tool`, 13 context resources, and 10 guided prompts for Codex, Claude Code, Claude Desktop, and other MCP clients. CEP is the supported production bridge; UXP remains experimental.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-5fd3c6.svg)](LICENSE.md)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933.svg)](https://nodejs.org/)
@@ -128,14 +128,14 @@ This repository is currently validated for:
 
 Current catalog status as of August 31, 2026:
 
-- `295` catalog tools (`search_tools`, `get_tool_schema`, `invoke_tool`, plus 292 Premiere operations)
+- `298` catalog tools (`search_tools`, `get_tool_schema`, `invoke_tool`, plus 295 Premiere operations)
 - `tools/list` advertises the small always-on set by default (`search_tools`, `get_tool_schema`, `invoke_tool`, `verify_premiere_connection`, `list_sequences`). Set `PREMIERE_MCP_TOOLSET=full` to list every tool, which is what Claude Code native tool search indexes
 - coverage spans project setup, media ingest, bins, sequences, timeline editing, transitions, effects, keyframes, captions, markers, metadata, proxies, multicam, color, audio, exports, and higher-level assembly workflows
 - the catalog includes practical agent workflows such as product-spot assembly, motion-graphics demos, timeline razoring, caption reads, audio ducking, scene edit detection, EDL import, export readiness validation, and linked audio/video operations
 
 Most recent completed local live validation:
 
-- `295` catalog tools; `get_capabilities` reports `catalog.advertised` vs `catalog.tools`, local installation, and optional live connection state. `verify_premiere_connection` is the canonical read-only bridge and host readiness check
+- `298` catalog tools; `get_capabilities` reports `catalog.advertised` vs `catalog.tools`, local installation, and optional live connection state. `verify_premiere_connection` is the canonical read-only bridge and host readiness check
 - `0` known parked or placeholder tools are advertised
 - `import_ae_comps` is intentionally not advertised because Premiere returned `false` for real `.aep` fixtures in this environment and a generic `.aep` import can wedge the CEP bridge
 
@@ -166,6 +166,7 @@ High-level workflow tools included:
 - `build_motion_graphics_demo`
 - `assemble_product_spot`
 - `build_brand_spot_from_mogrt_and_assets`
+- `transcribe_sequence` / `find_highlight_candidates` / `build_short` (podcast to 9:16 vertical shorts)
 
 `assemble_product_spot` and `build_brand_spot_from_mogrt_and_assets` now support an optional `clipPlan` argument so an LLM can direct per-clip timing, track placement, transitions, motion, trims, effects, and color adjustments instead of relying on fixed template defaults.
 
@@ -183,7 +184,21 @@ Or install directly from the skill path:
 npx skills add https://github.com/AlbedoDz/TeamTrau-PremiereProControl/tree/main/skills/premiere-pro-mcp
 ```
 
-The skill teaches agents how to install the MCP, start and verify the CEP bridge, use the Premiere tools safely, import real media before editing, prefer sequence-aware operations, and run diagnostics when something fails.
+The skill teaches agents how to install the MCP, start and verify the CEP bridge, use the Premiere tools safely, import real media before editing, prefer sequence-aware operations, and run diagnostics when something fails. For extracting 9:16 vertical shorts with animated captions from podcast timelines, use the companion skill `skills/podcast-to-shorts`.
+
+### Podcast to Shorts (optional ASR)
+
+The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`) uses a local Python sidecar for automated speech recognition (`large-v3-turbo` in `int8_float16` on NVIDIA GPU or `int8` on CPU) and animated caption rendering.
+
+To install the sidecar and model weights:
+
+```bash
+premiere-pro-mcp --setup-asr
+```
+
+- **Disk space:** Setup downloads about 2 GB in total (Python packages + 1.6 GB model) into `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows).
+- **GPU acceleration:** An NVIDIA GPU (`int8_float16`) is recommended for fast transcription (measured on a 9-minute Vietnamese podcast: ~51 s on an RTX 3070 using ~1.4 GB VRAM). CPU-only inference (`int8`) works automatically if CUDA is absent, but runs ~7× slower.
+- All other Premiere MCP tools continue to work without this setup.
 
 ## Advanced Setup and Verification
 
@@ -235,7 +250,7 @@ For a real-host sweep, use a disposable Premiere project and run `node scripts/l
 
 ## Tools
 
-All `295` catalog tools have an implementation. `tools/list` advertises a small always-on set so hosts that dump every MCP schema do not spend the context window on unused Premiere operations (Anthropic tool-search / MCP progressive discovery). Call `search_tools` (BM25 `query` or regex `pattern`), optionally `get_tool_schema`, then `invoke_tool`. Set `PREMIERE_MCP_TOOLSET=full` to restore a flat 295-tool list. This catalog explains the editing surface in human terms. Start with `verify_premiere_connection`, then inspect the project before asking an agent to mutate it.
+All `298` catalog tools have an implementation. `tools/list` advertises a small always-on set so hosts that dump every MCP schema do not spend the context window on unused Premiere operations (Anthropic tool-search / MCP progressive discovery). Call `search_tools` (BM25 `query` or regex `pattern`), optionally `get_tool_schema`, then `invoke_tool`. Set `PREMIERE_MCP_TOOLSET=full` to restore a flat 298-tool list. This catalog explains the editing surface in human terms. Start with `verify_premiere_connection`, then inspect the project before asking an agent to mutate it.
 
 ### Discovery and project inspection
 
@@ -359,6 +374,7 @@ All `295` catalog tools have an implementation. `tools/list` advertises a small 
 | `get_mogrt_component` / `get_graphics_white_luminance` / `set_graphics_white_luminance` | Inspect Motion Graphics components and graphics white luminance. |
 | `build_motion_graphics_demo` | Create a complete demo sequence with generated assets, dissolves, and subtle animation. |
 | `assemble_product_spot` / `build_brand_spot_from_mogrt_and_assets` | Assemble real media into a directed product/brand edit with optional clip plans and MOGRT overlays. |
+| `transcribe_sequence` / `find_highlight_candidates` / `build_short` | Transcribe speech with faster-whisper, find highlight candidates with audio/visual signals, and assemble 9:16 vertical shorts with animated captions. |
 | `auto_reframe_sequence` / `detect_scene_edits` / `scene_edit_detection` | Use Premiere-assisted reframing or scene-change detection where the host supports it. |
 | `get_workspaces` / `set_workspace` | Inspect and switch Premiere workspace layouts. |
 | `create_bars_and_tone` / `set_transcode_on_ingest` / `set_scratch_disk_path` | Generate utility media or manage ingest and scratch-disk behavior. |

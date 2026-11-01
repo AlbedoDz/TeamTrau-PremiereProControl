@@ -92,6 +92,7 @@ For deeper validation in a disposable project, create a test sequence with `crea
 - Build a plan in concrete Premiere operations before changing anything.
 - For rough cuts, import media first, then use `create_sequence_from_clips` so Premiere derives settings without a native dialog. Use `create_sequence` only with a real `.sqpreset`; use `duplicate_sequence` with `clearContents=true` when an existing sequence defines the intended settings.
 - For product or brand spots, prefer `assemble_product_spot` or `build_brand_spot_from_mogrt_and_assets` when the user's request fits those workflows.
+- For turning edited podcast sequences into 9:16 vertical shorts, reels, or highlights with animated captions, use the `podcast-to-shorts` skill.
 - For black-and-white looks, use `apply_effect` with `Black & White` rather than generic saturation-only changes.
 - For timeline cuts, prefer sequence-aware tools and include `sequenceId` when available.
 - Export only after confirming output path, format/preset, and overwrite behavior.

@@ -2,6 +2,16 @@
 
 All notable changes are documented here. Releases use semantic versioning.
 
+## [Unreleased]
+
+- Podcast to 9:16 vertical shorts:
+  - `transcribe_sequence` transcribes dialogue tracks using a local faster-whisper sidecar (`large-v3-turbo`, Vietnamese) with background jobs and disk caching.
+  - `find_highlight_candidates` extracts 20–90 s highlight windows across sentence boundaries with speaking rate, loudness, pause, and multi-face signals.
+  - `build_short` builds a 9:16 Auto Reframe sequence with pre-rendered ProRes 4444 alpha captions, loudness normalization, and QA checks (`dryRun` supported).
+  - ASR uses `large-v3-turbo` (`int8_float16` on NVIDIA GPU, `int8` on CPU); setup downloads ~2 GB in total and runs ~51 s on an RTX 3070 for 9 minutes (~7× slower on CPU).
+  - The `detectFaces` flag (off by default) on `find_highlight_candidates` and `build_short` is what enables face detection and its video decoding; decoding does not happen automatically when wide shots are present.
+- `premiere-pro-mcp --setup-asr` sets up an isolated Python environment and Whisper `large-v3-turbo` weights (~2 GB total) with CUDA detection (`int8_float16`) and CPU fallback (`int8`).
+
 ## [1.4.0] - 2026-11-01
 
 - New editing helpers:
