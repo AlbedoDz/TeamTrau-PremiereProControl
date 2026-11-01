@@ -79,7 +79,7 @@ describe('classifyToolError', () => {
     expect(classifyToolError('ExtendScript execution timed out after 45000ms')).toBe('timeout');
     expect(classifyToolError("Invalid arguments for tool 'add_marker'")).toBe('validation');
     expect(classifyToolError('Bridge is not connected')).toBe('connection');
-    expect(classifyToolError('MCP Bridge is not running. Click Start Bridge.')).toBe('connection');
+    expect(classifyToolError('The TeamTrau PremiereProControl panel is not running. Click Start Bridge.')).toBe('connection');
     expect(classifyToolError("Tool 'nope' not found")).toBe('not_found');
     expect(classifyToolError('evalScript failed')).toBe('evalscript');
     expect(classifyToolError('add_text_overlay cannot create titles from text alone. needs a .mogrt')).toBe(
@@ -142,7 +142,7 @@ describe('summarizeToolFailure', () => {
         success: false,
         status: 'bridge_unavailable',
         retry: false,
-        error: 'MCP Bridge is not running. Open Premiere Pro, then click Start Bridge.',
+        error: 'The TeamTrau PremiereProControl panel is not running. Open Premiere Pro, then click Start Bridge.',
       }).errorCode,
     ).toBe('bridge.panel_absent');
     expect(

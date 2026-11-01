@@ -448,7 +448,7 @@
     };
 
     MCPPremiereBridge.prototype.init = function() {
-        this.log('Initializing MCP Bridge (CEP)...', 'info');
+        this.log('Initializing TeamTrau PremiereProControl...', 'info');
 
         // Check host environment
         try {
@@ -905,7 +905,7 @@
         var hostEnvironment = null;
         var report = {
             generatedAt: new Date().toISOString(),
-            panel: 'MCP Bridge (CEP)',
+            panel: 'TeamTrau PremiereProControl',
             tempDirectory: this.getTempDirectory(),
             hostEnvironment: null,
             checks: []

@@ -14,7 +14,7 @@ Then do this once inside Premiere Pro:
 
 1. Open `Premiere Pro > Preferences > Plugins` and enable **UXP Plugins > Enable developer mode**.
 2. Restart Premiere Pro if the setting was changed.
-3. Open `Window > Extensions > MCP Bridge (CEP)`.
+3. Open `Window > Extensions > TeamTrau PremiereProControl`.
 4. Set `Temp Directory` to `/tmp/premiere-mcp-bridge`.
 5. Click `Save Configuration`.
 6. Click `Start Bridge`.
@@ -43,7 +43,7 @@ npm run setup:win
 
 Then do this once inside Premiere Pro:
 
-1. Open `Window > Extensions > MCP Bridge (CEP)`.
+1. Open `Window > Extensions > TeamTrau PremiereProControl`.
 2. Set `Temp Directory` to `%TEMP%\premiere-mcp-bridge`.
 3. Click `Save Configuration`.
 4. Click `Start Bridge`.

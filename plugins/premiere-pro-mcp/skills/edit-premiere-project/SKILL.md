@@ -9,7 +9,7 @@ Operate Premiere through the `premiere-pro` MCP tools. Preserve the user's proje
 
 ## Establish A Live Session
 
-1. Call `verify_premiere_connection` before editing. If it fails, stop and ask the user to start `Window > Extensions > MCP Bridge (CEP)` in Premiere.
+1. Call `verify_premiere_connection` before editing. If it fails, stop and ask the user to start `Window > Extensions > TeamTrau PremiereProControl` in Premiere.
 2. Discover editing tools with `search_tools` (BM25 query or regex pattern), then `invoke_tool`. `get_capabilities` reports catalog.advertised vs catalog.tools.
 3. Inspect the active project, sequence, tracks, and media before making an edit.
 
@@ -32,4 +32,4 @@ premiere-pro-mcp --install-cep
 premiere-pro-mcp --doctor
 ```
 
-Restart Premiere Pro, open `Window > Extensions > MCP Bridge (CEP)`, start the bridge, then run `verify_premiere_connection`.
+Restart Premiere Pro, open `Window > Extensions > TeamTrau PremiereProControl`, start the bridge, then run `verify_premiere_connection`.

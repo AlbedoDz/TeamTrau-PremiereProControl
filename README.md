@@ -35,7 +35,7 @@ premiere-pro-mcp --doctor
 
 `--install-cep` installs the CEP bridge, enables the required Adobe CEP debug setting, prepares the bridge directory, and configures supported local MCP clients. `--doctor` verifies the server build, CEP installation, bridge directory, debug setting, and client configuration.
 
-Then restart Premiere Pro, open `Window > Extensions > MCP Bridge (CEP)`, set the bridge directory shown by the installer, and start the bridge.
+Then restart Premiere Pro, open `Window > Extensions > TeamTrau PremiereProControl`, set the bridge directory shown by the installer, and start the bridge.
 
 Requirements:
 
@@ -54,7 +54,7 @@ codex plugin marketplace add .
 codex plugin add premiere-pro-mcp@adobe-premiere-pro-mcp
 ```
 
-The plugin still requires the local CEP bridge. Run `premiere-pro-mcp --install-cep`, restart Premiere, start `Window > Extensions > MCP Bridge (CEP)`, then ask Codex to run `get_capabilities` followed by `verify_premiere_connection`.
+The plugin still requires the local CEP bridge. Run `premiere-pro-mcp --install-cep`, restart Premiere, start `Window > Extensions > TeamTrau PremiereProControl`, then ask Codex to run `get_capabilities` followed by `verify_premiere_connection`.
 
 ### Claude Code plugin
 
@@ -71,7 +71,7 @@ Install and start the CEP bridge with the same steps as above before using the p
 
 Each GitHub release includes an `.mcpb` bundle for Claude Desktop. Download the matching `adobe-premiere-pro-mcp-<version>.mcpb` asset and open it in Claude Desktop to install the local MCP server. Its first launch installs the bundled CEP bridge for the current user.
 
-Restart Premiere Pro, open `Window > Extensions > MCP Bridge (CEP)`, set the bridge directory, and start the bridge. Then ask Claude:
+Restart Premiere Pro, open `Window > Extensions > TeamTrau PremiereProControl`, set the bridge directory, and start the bridge. Then ask Claude:
 
 > Run `verify_premiere_connection`. Make no changes.
 
@@ -207,7 +207,7 @@ For source installs, client-specific MCP configuration, Windows installer flags,
 The short version:
 
 1. Install with `npm install -g adobe-premiere-pro-mcp`, then run `premiere-pro-mcp --install-cep`.
-2. Restart Premiere Pro and your MCP client, then start `Window > Extensions > MCP Bridge (CEP)`.
+2. Restart Premiere Pro and your MCP client, then start `Window > Extensions > TeamTrau PremiereProControl`.
 3. Run `premiere-pro-mcp --doctor`, then ask the client to call `verify_premiere_connection` without making changes.
 
 For manual registration in any MCP client, use the global command after npm installation:
@@ -405,7 +405,7 @@ Each event is an install id, OS, and package version. Current clients send at mo
 
 Opt out in any of these ways:
 
-- Uncheck **Share anonymous usage data** in `Window > Extensions > MCP Bridge (CEP)`
+- Uncheck **Share anonymous usage data** in `Window > Extensions > TeamTrau PremiereProControl`
 - Set `"telemetry": false` in `~/.premiere-mcp-bridge/config.json`
 - Set `PREMIERE_MCP_TELEMETRY=0` in the MCP server environment
 - Set `DO_NOT_TRACK=1`
@@ -421,7 +421,7 @@ When a newer package is on npm, the MCP Bridge panel shows **Update now** and **
 If the tools are visible but calls fail:
 
 1. Confirm Premiere Pro is open with a project loaded.
-2. Open `Window > Extensions > MCP Bridge (CEP)`.
+2. Open `Window > Extensions > TeamTrau PremiereProControl`.
 3. Confirm the temp directory is exactly `/tmp/premiere-mcp-bridge`.
 4. Click `Start Bridge`.
 5. If you updated the bridge code, right-click the panel and choose `Reload`.

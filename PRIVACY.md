@@ -33,7 +33,7 @@ Events are sent to a Cloudflare Worker operated for this project and stored in C
 
 Telemetry is on unless you turn it off in any of these ways:
 
-1. Uncheck **Share anonymous usage data** in `Window > Extensions > MCP Bridge (CEP)` and save, or
+1. Uncheck **Share anonymous usage data** in `Window > Extensions > TeamTrau PremiereProControl` and save, or
 2. Set `telemetry` to `false` in `~/.premiere-mcp-bridge/config.json`, or
 3. Set `PREMIERE_MCP_TELEMETRY=0` in the MCP server environment, or
 4. Set `DO_NOT_TRACK=1`

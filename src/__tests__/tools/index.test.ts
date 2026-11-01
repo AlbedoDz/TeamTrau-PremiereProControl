@@ -678,7 +678,7 @@ describe('PremiereProTools', () => {
 
     it('tells the caller not to sit and retry when the bridge is down', async () => {
       mockBridge.executeScript.mockRejectedValue(
-        new Error('MCP Bridge is not running. Open Premiere Pro, choose Window > Extensions > MCP Bridge, then click Start Bridge.'),
+        new Error('The TeamTrau PremiereProControl panel is not running. Open Premiere Pro, choose Window > Extensions > TeamTrau PremiereProControl, then click Start Bridge.'),
       );
 
       const result = await tools.executeTool('list_project_items', {});

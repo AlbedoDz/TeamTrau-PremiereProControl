@@ -131,7 +131,7 @@ $cepLog = Join-Path $env:APPDATA 'Adobe\CEP\logs\CEP12-PPRO.log'
 if (Test-Path -LiteralPath $cepLog) {
     $signatureHit = Select-String -LiteralPath $cepLog -Pattern 'Signature verification failed for extension com.mcp.premiere.cepbridge.panel' -SimpleMatch -ErrorAction SilentlyContinue | Select-Object -Last 1
     if ($signatureHit) {
-        Fail 'CEP rejected the unsigned MCP Bridge panel (Signature verification failed). Quit Premiere completely, re-run setup:win, then relaunch Premiere before opening Window > Extensions > MCP Bridge.'
+        Fail 'CEP rejected the unsigned TeamTrau PremiereProControl panel (Signature verification failed). Quit Premiere completely, re-run setup:win, then relaunch Premiere before opening Window > Extensions > TeamTrau PremiereProControl.'
     }
 }
 
