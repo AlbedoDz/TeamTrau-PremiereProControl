@@ -25,12 +25,25 @@ ONNX_NAME = "face_detection_yunet_2023mar.onnx"
 # Comfortably over the 100 KB floor the command checks for.
 ONNX_BYTES = b"\x08" * (120 * 1024)
 
+# The whole turbo folder, as the coordinator found it after a real download.
+WHISPER_FILES = ("config.json", "model.bin", "preprocessor_config.json", "tokenizer.json", "vocabulary.json")
+
+
+def write_turbo_snapshot(folder):
+    """Every file the real repo puts in the folder, with weights over 100 MB."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in WHISPER_FILES:
+        (folder / name).write_bytes(b"weights" if name == "model.bin" else b"{}")
+    with open(folder / "model.bin", "r+b") as handle:
+        handle.truncate(download_models.MIN_WHISPER_BYTES + 1)
+    return folder
+
 
 class FakeSnapshot:
     """Stands in for ``huggingface_hub.snapshot_download``; writes the given files."""
 
     calls = []
-    files = ("model.bin", "config.json", "vocabulary.txt")
+    files = WHISPER_FILES
     error = None
 
     @classmethod
@@ -43,10 +56,15 @@ class FakeSnapshot:
         })
         if cls.error is not None:
             raise cls.error
+        # Written in the order the given list names, then the rest of the real
+        # folder filled in: a fake that leaves out a file must be distinguishable
+        # from one that writes them all.
         folder = Path(local_dir)
         folder.mkdir(parents=True, exist_ok=True)
         for name in cls.files:
-            (folder / name).write_bytes(b"weights")
+            (folder / name).write_bytes(b"weights" if name == "model.bin" else b"{}")
+        with open(folder / "model.bin", "r+b") as handle:
+            handle.truncate(download_models.MIN_WHISPER_BYTES + 1)
         return str(folder)
 
 
@@ -107,7 +125,7 @@ class FakeUrlopen:
 @pytest.fixture(autouse=True)
 def fakes(monkeypatch):
     FakeSnapshot.calls = []
-    FakeSnapshot.files = ("model.bin", "config.json", "vocabulary.txt")
+    FakeSnapshot.files = WHISPER_FILES
     FakeSnapshot.error = None
     FakeUrlopen.calls = []
     FakeUrlopen.chunks = [ONNX_BYTES]
@@ -173,15 +191,70 @@ def test_a_second_run_downloads_nothing(tmp_path):
 
 
 def test_a_half_written_whisper_folder_is_downloaded_again(tmp_path):
-    """Only model.bin and config.json together count: one alone is a broken copy."""
+    """Weights, config and vocabulary together count: one alone is a broken copy."""
     folder = models_dir(tmp_path) / "faster-whisper-large-v3-turbo"
     folder.mkdir(parents=True)
+    (folder / "model.bin").write_bytes(b"weights")
+    with open(folder / "model.bin", "r+b") as handle:
+        handle.truncate(download_models.MIN_WHISPER_BYTES + 1)
+
+    result = run(tmp_path)
+
+    assert len(FakeSnapshot.calls) == 1
+    assert result["whisper"]["downloaded"] is True
+
+
+@pytest.mark.parametrize("missing", WHISPER_FILES)
+def test_a_folder_missing_any_single_file_is_downloaded_again(tmp_path, missing):
+    """snapshot_download fetches in parallel: an interrupted run leaves a gap.
+
+    model.bin + config.json used to be enough, so a folder that lost its tokenizer
+    was skipped as complete, `check` said installed, and the first transcription
+    failed offline. Every file of the real repo is now required.
+    """
+    folder = write_turbo_snapshot(models_dir(tmp_path) / "faster-whisper-large-v3-turbo")
+    (folder / missing).unlink()
+
+    result = run(tmp_path)
+
+    assert len(FakeSnapshot.calls) == 1, f"a folder without {missing} must be fetched again"
+    assert result["whisper"]["downloaded"] is True
+
+
+def test_a_folder_with_model_bin_and_config_but_no_tokenizer_is_downloaded_again(tmp_path):
+    """The exact finding: no tokenizer.json, so the folder is not a model."""
+    folder = models_dir(tmp_path) / "faster-whisper-large-v3-turbo"
+    folder.mkdir(parents=True)
+    for name in ("model.bin", "config.json", "preprocessor_config.json", "vocabulary.json"):
+        (folder / name).write_bytes(b"{}")
+    (folder / "model.bin").write_bytes(b"weights")
+    with open(folder / "model.bin", "r+b") as handle:
+        handle.truncate(download_models.MIN_WHISPER_BYTES + 1)
+
+    result = run(tmp_path)
+
+    assert len(FakeSnapshot.calls) == 1
+    assert result["whisper"]["downloaded"] is True
+    assert (folder / "tokenizer.json").is_file()
+
+
+def test_a_weight_file_under_a_hundred_megabytes_is_downloaded_again(tmp_path):
+    """A truncated model.bin is not a model, however many small files surround it."""
+    folder = write_turbo_snapshot(models_dir(tmp_path) / "faster-whisper-large-v3-turbo")
     (folder / "model.bin").write_bytes(b"weights")
 
     result = run(tmp_path)
 
     assert len(FakeSnapshot.calls) == 1
     assert result["whisper"]["downloaded"] is True
+    assert (folder / "model.bin").stat().st_size > download_models.MIN_WHISPER_BYTES
+
+
+def test_the_required_whisper_files_are_the_whole_turbo_folder():
+    assert download_models.WHISPER_REQUIRED_FILES == (
+        "config.json", "model.bin", "preprocessor_config.json", "tokenizer.json", "vocabulary.json",
+    )
+    assert download_models.MIN_WHISPER_BYTES == 100 * 1024 * 1024
 
 
 def test_a_truncated_onnx_is_downloaded_again(tmp_path):
@@ -412,14 +485,14 @@ def test_the_onnx_floor_is_a_hundred_kilobytes():
     assert download_models.ALLOW_PATTERNS == ["*.json", "*.bin", "*.txt"]
 
 
-def test_a_response_without_content_length_still_streams(tmp_path):
+def test_a_response_without_content_length_still_streams(tmp_path, monkeypatch):
     class NoLength(FakeResponse):
         def __init__(self, chunks):
             super().__init__(chunks)
             self.headers = {}
 
-    FakeUrlopen_chunks = [ONNX_BYTES[:20 * 1024], ONNX_BYTES[20 * 1024:]]
-    download_models.urlopen = lambda url, timeout=None: NoLength(FakeUrlopen_chunks)
+    chunks = [ONNX_BYTES[:20 * 1024], ONNX_BYTES[20 * 1024:]]
+    monkeypatch.setattr(download_models, "urlopen", lambda url, timeout=None: NoLength(chunks))
 
     result = download_models.run({"modelsDir": str(models_dir(tmp_path))}, None)
 

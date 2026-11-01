@@ -13,15 +13,19 @@ from pathlib import Path
 
 from .download_models import (
     MIN_ONNX_BYTES,
+    MIN_WHISPER_BYTES,
     ONNX_NAME,
     WHISPER_DIR_NAME,
     WHISPER_REQUIRED_FILES,
+    _whisper_missing,
 )
 
 # Ruling R22: the model download-models writes and the server runs. The folder name
 # is also what `modelPaths().whisper` points at, so both sides agree by construction.
 WHISPER_MODEL_DIR = WHISPER_DIR_NAME
-WHISPER_WEIGHTS = WHISPER_REQUIRED_FILES[0]
+WHISPER_WEIGHTS = WHISPER_REQUIRED_FILES[1]
+# The same floor the downloader applies before it calls a folder complete.
+WHISPER_MIN_WEIGHT_BYTES = MIN_WHISPER_BYTES
 
 
 def data_home() -> Path:
@@ -49,14 +53,16 @@ def _cuda_ok() -> bool:
 
 
 def _whisper_model_ok(models_dir: Path) -> bool:
-    """The turbo folder holds the weights the server loads.
+    """The turbo folder is complete enough for ``WhisperModel`` to load offline.
 
     Checked by exact path rather than by searching: a leftover large-v3 download
     from an older setup must not make the turbo model look installed, or the first
-    transcription would fail on a model that was never fetched.
+    transcription would fail on a model that was never fetched. And all five files
+    must be there -- ``snapshot_download`` fetches in parallel, so an interrupted
+    run used to leave model.bin + config.json behind, which was reported as
+    installed and then failed on the missing tokenizer at the first transcription.
     """
-    weights = models_dir / WHISPER_MODEL_DIR / WHISPER_WEIGHTS
-    return weights.is_file() and weights.stat().st_size > 0
+    return not _whisper_missing(models_dir / WHISPER_MODEL_DIR)
 
 
 def _yunet_model_ok(models_dir: Path) -> bool:

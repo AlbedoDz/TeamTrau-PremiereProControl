@@ -56,8 +56,26 @@ CHUNK_SIZE = 256 * 1024
 # Share of the bar the whisper download owns; the ONNX gets the rest.
 WHISPER_SHARE = 0.9
 
-# A model folder is only usable with both the weights and the config next to them.
-WHISPER_REQUIRED_FILES = ("model.bin", "config.json")
+# The file whose size tells a whole model from a truncated one (`check` reads too).
+WHISPER_WEIGHTS = "model.bin"
+
+# Every file the turbo folder needs, as a real download leaves it: the weights,
+# the two configs, the tokenizer and the vocabulary. Checking only model.bin and
+# config.json was not enough -- snapshot_download fetches in parallel, so an
+# interrupted run can leave those two and be missing the tokenizer; the next run
+# then skipped the folder as complete, `check` called it installed, and the first
+# transcription failed offline. There is no marker file that says the snapshot is
+# whole, so the file list is the marker.
+WHISPER_REQUIRED_FILES = (
+    "config.json",
+    "model.bin",
+    "preprocessor_config.json",
+    "tokenizer.json",
+    "vocabulary.json",
+)
+# large-v3-turbo is ~1.6 GB; a model.bin under 100 MB is a truncated download, not
+# a model, and must be fetched again.
+MIN_WHISPER_BYTES = 100 * 1024 * 1024
 
 
 def progress_interval() -> float:
@@ -88,8 +106,20 @@ def onnx_path(models_dir: Path) -> Path:
 
 
 def _whisper_present(folder: Path) -> bool:
-    """The weights and the config are both there: a partial copy does not count."""
-    return all((folder / name).is_file() for name in WHISPER_REQUIRED_FILES)
+    """The whole turbo set is there and the weights are whole: a partial copy does not count."""
+    return not _whisper_missing(folder)
+
+
+def _whisper_missing(folder: Path) -> list[str]:
+    """What ``folder`` still lacks, in the order of ``WHISPER_REQUIRED_FILES``.
+
+    An empty list means the model is complete: every required file is present and
+    ``model.bin`` is over ``MIN_WHISPER_BYTES``.
+    """
+    missing = [name for name in WHISPER_REQUIRED_FILES if not (folder / name).is_file()]
+    if not missing and (folder / WHISPER_WEIGHTS).stat().st_size <= MIN_WHISPER_BYTES:
+        missing.append(f"{WHISPER_WEIGHTS} under {MIN_WHISPER_BYTES} bytes")
+    return missing
 
 
 def _onnx_present(target: Path) -> bool:
@@ -105,9 +135,11 @@ def _download_whisper(folder: Path, repo: str) -> None:
     io.log(f"downloading {repo} to {folder}")
     snapshot = _snapshot_download()
     snapshot(repo_id=repo, local_dir=str(folder), allow_patterns=ALLOW_PATTERNS)
-    missing = [name for name in WHISPER_REQUIRED_FILES if not (folder / name).is_file()]
+    # A parallel fetch that was interrupted can come back without an error and
+    # without every file, so the folder is judged here, not by the call's success.
+    missing = _whisper_missing(folder)
     if missing:
-        raise RuntimeError(f"{repo} is missing {', '.join(missing)} after the download")
+        raise RuntimeError(f"{repo} is still missing {', '.join(missing)} after the download")
 
 
 def _download_onnx(target: Path, beat: io.Heartbeat, chunk_size: int = CHUNK_SIZE) -> None:

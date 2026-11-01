@@ -9,9 +9,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from premiere_mcp_sidecar import check
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+# The whole turbo folder, as a real download leaves it.
+WHISPER_FILES = ("config.json", "model.bin", "preprocessor_config.json", "tokenizer.json", "vocabulary.json")
 
 
 def home(tmp_path, monkeypatch):
@@ -19,17 +24,73 @@ def home(tmp_path, monkeypatch):
     return tmp_path / "models"
 
 
+def write_turbo(models, skip=()):
+    """A complete turbo model except for ``skip``; model.bin is over 100 MB."""
+    turbo = models / "faster-whisper-large-v3-turbo"
+    turbo.mkdir(parents=True, exist_ok=True)
+    for name in WHISPER_FILES:
+        if name in skip:
+            continue
+        (turbo / name).write_bytes(b"{}")
+    if "model.bin" not in skip:
+        (turbo / "model.bin").write_bytes(b"weights")
+        with open(turbo / "model.bin", "r+b") as handle:
+            handle.truncate(check.WHISPER_MIN_WEIGHT_BYTES + 1)
+    return turbo
+
+
 def test_the_turbo_folder_is_the_whisper_model(tmp_path, monkeypatch):
     """Ruling R22: the downloaded model is faster-whisper-large-v3-turbo."""
     models = home(tmp_path, monkeypatch)
-    turbo = models / "faster-whisper-large-v3-turbo"
-    turbo.mkdir(parents=True)
-    (turbo / "model.bin").write_bytes(b"weights")
-    (turbo / "config.json").write_text("{}", encoding="utf-8")
+    write_turbo(models)
 
     report = check.run()
 
     assert report["models"]["whisper"] is True
+
+
+@pytest.mark.parametrize("missing", WHISPER_FILES)
+def test_a_turbo_folder_missing_a_file_is_not_installed(tmp_path, monkeypatch, missing):
+    """A snapshot cut short by a parallel fetch has a gap: not a model."""
+    models = home(tmp_path, monkeypatch)
+    write_turbo(models, skip=(missing,))
+
+    assert check.run()["models"]["whisper"] is False
+
+
+def test_a_turbo_folder_without_a_tokenizer_is_not_installed(tmp_path, monkeypatch):
+    """model.bin + config.json only: the finding that started this.
+
+    `check` said installed, so setup skipped the download and the first
+    transcription failed on the missing tokenizer.
+    """
+    models = home(tmp_path, monkeypatch)
+    turbo = models / "faster-whisper-large-v3-turbo"
+    turbo.mkdir(parents=True)
+    (turbo / "model.bin").write_bytes(b"weights")
+    with open(turbo / "model.bin", "r+b") as handle:
+        handle.truncate(check.WHISPER_MIN_WEIGHT_BYTES + 1)
+    (turbo / "config.json").write_text("{}", encoding="utf-8")
+
+    assert check.run()["models"]["whisper"] is False
+
+
+def test_weights_under_a_hundred_megabytes_are_not_installed(tmp_path, monkeypatch):
+    """Every small file present but a stub model.bin: a failed download, not a model."""
+    models = home(tmp_path, monkeypatch)
+    turbo = write_turbo(models)
+    (turbo / "model.bin").write_bytes(b"weights")
+
+    assert check.run()["models"]["whisper"] is False
+
+
+def test_every_present_file_yields_whisper_false_for_a_missing_model(tmp_path, monkeypatch):
+    """One message, one verdict: a folder with only a config is empty as far as setup is concerned."""
+    models = home(tmp_path, monkeypatch)
+    (models / "faster-whisper-large-v3-turbo").mkdir(parents=True)
+    (models / "faster-whisper-large-v3-turbo" / "config.json").write_text("{}", encoding="utf-8")
+
+    assert check.run()["models"]["whisper"] is False
 
 
 def test_an_empty_turbo_folder_is_not_a_model(tmp_path, monkeypatch):
@@ -74,10 +135,7 @@ def test_what_download_models_writes_is_what_check_finds(tmp_path, monkeypatch):
     models = home(tmp_path, monkeypatch)
 
     def snapshot(repo_id, local_dir, allow_patterns=None, **kwargs):
-        folder = Path(local_dir)
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / "model.bin").write_bytes(b"weights")
-        (folder / "config.json").write_text("{}", encoding="utf-8")
+        folder = write_turbo(models)
         return str(folder)
 
     class Response:
@@ -103,9 +161,7 @@ def test_what_download_models_writes_is_what_check_finds(tmp_path, monkeypatch):
 
 def test_cli_reports_the_models(tmp_path):
     env = {"PREMIERE_MCP_HOME": str(tmp_path), "PYTHONPATH": str(PACKAGE_ROOT)}
-    turbo = tmp_path / "models" / "faster-whisper-large-v3-turbo"
-    turbo.mkdir(parents=True)
-    (turbo / "model.bin").write_bytes(b"weights")
+    write_turbo(tmp_path / "models")
     out = tmp_path / "out.json"
 
     completed = subprocess.run(
