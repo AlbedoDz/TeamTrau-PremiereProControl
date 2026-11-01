@@ -107,6 +107,20 @@ npm run setup:mac # macOS
 
 On Windows, use `npm run setup:win` from PowerShell after `npm install` and `npm run build`.
 
+### Podcast to Shorts (optional ASR)
+
+The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`) uses a local Python sidecar for automated speech recognition and animated caption rendering.
+
+To install the sidecar and model weights:
+
+```bash
+premiere-pro-mcp --setup-asr
+```
+
+- **Disk space:** Requires ~3 GB of free disk space in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows).
+- **GPU acceleration:** An NVIDIA GPU (CUDA) is recommended for fast transcription (~15 minutes for a 60-minute sequence). If CUDA is absent, inference automatically falls back to CPU (`int8`), which is about 3–4x slower.
+- All other Premiere MCP tools continue to work without this setup.
+
 ---
 
 ![Current MCP Bridge (CEP) panel](images/demo.png)
@@ -166,6 +180,7 @@ High-level workflow tools included:
 - `build_motion_graphics_demo`
 - `assemble_product_spot`
 - `build_brand_spot_from_mogrt_and_assets`
+- `transcribe_sequence` / `find_highlight_candidates` / `build_short` (podcast to 9:16 vertical shorts)
 
 `assemble_product_spot` and `build_brand_spot_from_mogrt_and_assets` now support an optional `clipPlan` argument so an LLM can direct per-clip timing, track placement, transitions, motion, trims, effects, and color adjustments instead of relying on fixed template defaults.
 
@@ -183,7 +198,7 @@ Or install directly from the skill path:
 npx skills add https://github.com/AlbedoDz/TeamTrau-PremiereProControl/tree/main/skills/premiere-pro-mcp
 ```
 
-The skill teaches agents how to install the MCP, start and verify the CEP bridge, use the Premiere tools safely, import real media before editing, prefer sequence-aware operations, and run diagnostics when something fails.
+The skill teaches agents how to install the MCP, start and verify the CEP bridge, use the Premiere tools safely, import real media before editing, prefer sequence-aware operations, and run diagnostics when something fails. For extracting 9:16 vertical shorts with animated captions from podcast timelines, use the companion skill `skills/podcast-to-shorts`.
 
 ## Advanced Setup and Verification
 
@@ -359,6 +374,7 @@ All `295` catalog tools have an implementation. `tools/list` advertises a small 
 | `get_mogrt_component` / `get_graphics_white_luminance` / `set_graphics_white_luminance` | Inspect Motion Graphics components and graphics white luminance. |
 | `build_motion_graphics_demo` | Create a complete demo sequence with generated assets, dissolves, and subtle animation. |
 | `assemble_product_spot` / `build_brand_spot_from_mogrt_and_assets` | Assemble real media into a directed product/brand edit with optional clip plans and MOGRT overlays. |
+| `transcribe_sequence` / `find_highlight_candidates` / `build_short` | Transcribe speech with faster-whisper, find highlight candidates with audio/visual signals, and assemble 9:16 vertical shorts with animated captions. |
 | `auto_reframe_sequence` / `detect_scene_edits` / `scene_edit_detection` | Use Premiere-assisted reframing or scene-change detection where the host supports it. |
 | `get_workspaces` / `set_workspace` | Inspect and switch Premiere workspace layouts. |
 | `create_bars_and_tone` / `set_transcode_on_ingest` / `set_scratch_disk_path` | Generate utility media or manage ingest and scratch-disk behavior. |

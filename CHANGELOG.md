@@ -2,6 +2,15 @@
 
 All notable changes are documented here. Releases use semantic versioning.
 
+## [Unreleased]
+
+- Podcast to 9:16 vertical shorts with automated speech recognition and dynamic captions:
+  - `transcribe_sequence` transcribes speech on dialogue tracks with a local faster-whisper sidecar (`large-v3`, Vietnamese, word timestamps). Files transcribe as background jobs with progress reporting and disk caching; overlapping multi-mic clips are deduplicated, and an optional glossary populates initial prompts for proper-noun accuracy.
+  - `find_highlight_candidates` finds self-contained highlight windows (20–90 seconds) across sentence boundaries and computes ranking signals: speaking rate, relative loudness (EBU R128), questions, exclamations, filler words, pause duration, and multi-face visual ratios.
+  - `build_short` builds a complete 9:16 short sequence: pre-renders word-timed animated captions into an alpha ProRes 4444 `.mov` within safe margins (styles: `clean`, `pop`, `karaoke`), cuts a subsequence, runs Premiere's Auto Reframe to 9:16, places captions on a top track, normalises loudness to a target LUFS (default -14), runs `qa_sequence`, and places warning markers on multi-face shots. `dryRun: true` returns planned caption groupings for user review and text corrections before modifying the project.
+- ASR sidecar environment setup:
+  - `premiere-pro-mcp --setup-asr` prepares an isolated Python virtual environment in `~/.premiere-mcp` (Windows: `%USERPROFILE%\.premiere-mcp`) and downloads Whisper `large-v3` weights (~3 GB disk required). Uses NVIDIA GPU with CUDA if present, falling back to CPU (`int8`, approx. 3–4x slower) when CUDA is missing. Missing sidecars return `asr.not_installed` with setup instructions without affecting other MCP tools.
+
 ## [1.4.0] - 2026-11-01
 
 - New editing helpers:
