@@ -35,7 +35,7 @@ export function AboutPage() {
         What it covers
       </h2>
       <p>
-        The catalog is 283 tools: timeline edits, effects and color, media and
+        The catalog is 295 tools: timeline edits, effects and color, media and
         bins, audio and captions, export, and discovery. CEP is the production
         bridge. UXP is an experimental preview and is not installed by the CLI.
       </p>

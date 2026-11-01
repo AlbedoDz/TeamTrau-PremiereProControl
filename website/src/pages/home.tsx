@@ -25,7 +25,7 @@ import { AGENT_PROMPT, NPM, REPO } from "@/lib/snippets"
 
 const STATIC_STATS = [
   ["1.3.0", "npm latest"],
-  ["283", "Tools"],
+  ["295", "Tools"],
 ] as const
 
 const CAPABILITIES = [
@@ -71,7 +71,7 @@ export function HomePage() {
           <Badge variant="secondary">Original open-source project</Badge>
           <Badge variant="outline">MIT</Badge>
           <Badge variant="outline">CEP production</Badge>
-          <Badge variant="outline">283 tools</Badge>
+          <Badge variant="outline">295 tools</Badge>
         </div>
 
         <h1 className="mt-6 max-w-3xl text-5xl font-semibold tracking-tight text-balance drop-shadow-[0_8px_40px_oklch(0.2_0.04_180)] sm:text-7xl">
@@ -81,7 +81,7 @@ export function HomePage() {
           </span>
         </h1>
         <p className="mt-5 max-w-2xl text-lg text-muted-foreground text-pretty">
-          The original local MCP server for Adobe Premiere Pro. 283 tools talk
+          The original local MCP server for Adobe Premiere Pro. 295 tools talk
           to Premiere through a CEP file bridge on the same machine. Claude,
           Cursor, Codex, and Claude Code stay local. Footage never leaves disk.
         </p>
@@ -197,7 +197,7 @@ export function HomePage() {
 
         <section className="mt-16">
           <h2 className="text-2xl font-semibold tracking-tight">
-            What the 283 tools cover
+            What the 295 tools cover
           </h2>
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             {CAPABILITIES.map(([title, body]) => (

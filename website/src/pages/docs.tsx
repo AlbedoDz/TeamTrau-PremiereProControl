@@ -205,7 +205,7 @@ export function DocsPage() {
               Tool catalog
             </h2>
             <p className="mt-3 text-sm text-muted-foreground">
-              283 catalog tools: three discovery tools plus 280 Premiere
+              295 catalog tools: three discovery tools plus 292 Premiere
               operations. <code>tools/list</code> advertises{" "}
               <code>search_tools</code>, <code>get_tool_schema</code>,{" "}
               <code>invoke_tool</code>, <code>verify_premiere_connection</code>,

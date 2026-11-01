@@ -2,7 +2,7 @@
 
 All notable changes are documented here. Releases use semantic versioning.
 
-## [Unreleased]
+## [1.4.0] - 2026-11-01
 
 - New editing helpers:
   - `auto_duck_music` finds speech on the named dialogue tracks (ffmpeg) and writes volume keyframes that lower the named music tracks under it, then bring them back.
