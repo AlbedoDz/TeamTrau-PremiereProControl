@@ -25,7 +25,7 @@ setTimeout(finish, input.delayMs || 0);
 describe('sidecar runner', () => {
   let home: string;
   let spawnCount: number;
-  let spawnMode: 'normal' | 'hang' | 'noPid' | 'errorEvent';
+  let spawnMode: 'normal' | 'hang' | 'noPid' | 'errorEvent' | 'lateStderr';
   let hangKill: jest.Mock;
   let taskkillArgs: string[][];
 
@@ -51,6 +51,14 @@ describe('sidecar runner', () => {
               child.kill = hangKill;
               child.unref = () => undefined;
               child.pid = spawnMode === 'hang' ? 424242 : undefined;
+              if (spawnMode === 'lateStderr') {
+                setImmediate(() => {
+                  child.emit('exit', 1);
+                  child.stderr.write('late stderr: model missing');
+                  child.stderr.end();
+                  child.emit('close', 1);
+                });
+              }
               if (spawnMode === 'errorEvent') setImmediate(() => child.emit('error', new Error('spawn ENOENT')));
               return child;
             }
@@ -249,5 +257,15 @@ describe('sidecar runner', () => {
     await startJob('khóa tiếng Việt', 'transcribe', input);
     await waitFor(async () => (await jobStatus('khóa tiếng Việt'))?.status === 'done');
     expect(((await jobStatus('khóa tiếng Việt'))!.result as any).echo).toEqual(input);
+  });
+
+  it('keeps stderr that arrives after the exit event in the error tail', async () => {
+    installVenv();
+    spawnMode = 'lateStderr';
+    const { runSidecar, SidecarError } = load();
+    const err = await runSidecar('faces', {}).catch((e) => e);
+    expect(err).toBeInstanceOf(SidecarError);
+    expect(err.stderrTail).toContain('late stderr: model missing');
+    expect(err.message).toContain('late stderr');
   });
 });

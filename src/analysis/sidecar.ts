@@ -101,6 +101,7 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 const NO_PID_GRACE_MS = 10_000;
 const STALE_MS = 10 * 60_000;
 const KILL_GRACE_MS = 2_000;
+const STDERR_DRAIN_MS = 500;
 
 /** Kill a child and its descendants: taskkill /T on Windows, SIGTERM then SIGKILL elsewhere. */
 function killTree(proc: ChildProcess): void {
@@ -142,7 +143,15 @@ export async function runSidecar<T>(command: string, input: object, timeoutMs = 
         clearTimeout(timer);
         reject(new SidecarError(`Could not start the sidecar: ${error.message}`));
       });
-      proc.on('exit', (exitCode) => settle(false, exitCode));
+      proc.on('exit', (exitCode) => {
+        // Let buffered stderr drain (capped) so the failure tail is not lost.
+        const stream = proc.stderr;
+        if (!stream || stream.destroyed || stream.readableEnded) return settle(false, exitCode);
+        const drained = (): void => settle(false, exitCode);
+        stream.once('close', drained);
+        stream.once('end', drained);
+        setTimeout(drained, STDERR_DRAIN_MS).unref();
+      });
     });
     if (timedOut) throw new SidecarError(`The sidecar command ${command} timed out after ${timeoutMs} ms.`, stderr);
     const output = await readJson(files.output);
