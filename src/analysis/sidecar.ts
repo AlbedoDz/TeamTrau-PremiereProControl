@@ -62,7 +62,7 @@ export function sidecarMissingResult(tool: string): Record<string, unknown> {
     errorCode: 'asr.not_installed',
     error: `The speech and face analysis sidecar is not installed, and ${tool} needs it.`,
     command: SETUP_COMMAND,
-    nextStep: `The analysis sidecar is not installed. Run this in a terminal on this machine (it downloads about 1.8 GB, or about 3.8 GB with an NVIDIA GPU), then retry ${tool} once: ${SETUP_COMMAND}`,
+    nextStep: `The analysis sidecar is not installed. Run this in a terminal on this machine (it downloads about 150 MB to several hundred MB: the Python packages and the 80 MB Zipformer-68M model; larger models are optional), then retry ${tool} once: ${SETUP_COMMAND}`,
   };
 }
 
@@ -79,7 +79,7 @@ export function engineMissingResult(tool: string, engine: EngineId): Record<stri
     errorCode: 'asr.engine_not_installed',
     error: `The speech engine ${engine} is not installed, and ${tool} needs it.`,
     engine,
-    downloadMb: mb,
+    approxDownloadMb: mb,
     license: info.license,
     command: `${SETUP_COMMAND} --engine ${engine}`,
     nextStep: `Ask the user to approve a download of about ${mb} MB${cuda} (${info.license}), then run the command in a terminal.`,

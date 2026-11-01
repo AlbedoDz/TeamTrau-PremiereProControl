@@ -668,8 +668,8 @@ describe('setupAsr and asrStatus', () => {
     it('reports defaultEngine and which engines are installed', async () => {
       (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\premiere-mcp\venv\Scripts\python.exe');
       (sidecar.runSidecar as jest.Mock).mockResolvedValue({
-        cuda: false, zipformer68m: true, zipformer30m: false, vad: true, sherpaOnnx: true, fasterWhisper: true,
-        models: { whisper: false, yunet: true },
+        cuda: false, sherpaOnnx: true, fasterWhisper: true,
+        models: { whisper: false, yunet: true, zipformer68m: true, zipformer30m: false, vad: true },
       });
       const status = await asrStatus();
       expect(status.defaultEngine).toBe('zipformer-68m');

@@ -124,7 +124,7 @@ describe('transcribe_sequence', () => {
       const r = await tools.executeTool(tool, { engine: 'zipformer-30m', startSentenceId: 0, endSentenceId: 0, name: 'S' });
       expect(r).toEqual(expect.objectContaining({
         success: false, retry: false, userActionRequired: true, errorCode: 'asr.engine_not_installed',
-        engine: 'zipformer-30m', downloadMb: 32, license: 'CC-BY-NC-ND-4.0',
+        engine: 'zipformer-30m', approxDownloadMb: 32, license: 'CC-BY-NC-ND-4.0',
         command: 'premiere-pro-mcp --setup-asr --engine zipformer-30m',
       }));
       expect(r.nextStep).toContain('about 32 MB');

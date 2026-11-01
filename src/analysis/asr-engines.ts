@@ -53,21 +53,18 @@ export function downloadMb(id: EngineId): number {
 }
 
 export interface CheckReport {
-  zipformer68m?: boolean;
-  zipformer30m?: boolean;
-  vad?: boolean;
   sherpaOnnx?: boolean;
   fasterWhisper?: boolean;
-  models?: { whisper?: boolean; yunet?: boolean };
+  models?: { whisper?: boolean; yunet?: boolean; zipformer68m?: boolean; zipformer30m?: boolean; vad?: boolean };
 }
 
 /** True when every model the engine needs is reported present by the sidecar check. */
 export function engineInstalled(id: EngineId, report: CheckReport | undefined): boolean {
   if (!report) return false;
   const flags: Record<string, boolean | undefined> = {
-    zipformer68m: report.zipformer68m,
-    zipformer30m: report.zipformer30m,
-    vad: report.vad,
+    zipformer68m: report.models?.zipformer68m,
+    zipformer30m: report.models?.zipformer30m,
+    vad: report.models?.vad,
     sherpaOnnx: report.sherpaOnnx,
     fasterWhisper: report.fasterWhisper,
     whisper: report.models?.whisper,

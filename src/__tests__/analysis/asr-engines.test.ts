@@ -22,14 +22,14 @@ describe('engine table', () => {
   });
 
   it('decides installed from the check report', () => {
-    const report = { zipformer68m: true, zipformer30m: false, vad: true, sherpaOnnx: true, fasterWhisper: true, models: { whisper: false, yunet: true } };
+    const report = { fasterWhisper: true, cuda: false, sherpaOnnx: true, models: { whisper: false, yunet: true, zipformer68m: true, zipformer30m: false, vad: true } };
     expect(engineInstalled('zipformer-68m', report)).toBe(true);
     expect(engineInstalled('zipformer-30m', report)).toBe(false);
     expect(engineInstalled('rover', report)).toBe(false);
     expect(engineInstalled('whisper-turbo', report)).toBe(false);
-    expect(engineInstalled('zipformer-68m', { ...report, vad: false })).toBe(false);
-    expect(engineInstalled('rover', { ...report, zipformer30m: true })).toBe(true);
-    expect(engineInstalled('whisper-turbo', { ...report, models: { whisper: true, yunet: true } })).toBe(true);
+    expect(engineInstalled('zipformer-68m', { ...report, models: { ...report.models, vad: false } })).toBe(false);
+    expect(engineInstalled('rover', { ...report, models: { ...report.models, zipformer30m: true } })).toBe(true);
+    expect(engineInstalled('whisper-turbo', { ...report, models: { ...report.models, whisper: true } })).toBe(true);
   });
 });
 
