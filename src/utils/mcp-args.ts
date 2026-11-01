@@ -130,3 +130,37 @@ export function canonicalizeMcpArgs(args: Record<string, unknown>): Record<strin
   }
   return out;
 }
+
+type ZodIssueLike = { code?: unknown; expected?: unknown; path?: unknown };
+
+/**
+ * Fallback for numbers and booleans the key allowlist does not know about
+ * (search_tools `limit`, a nested `sourceInPoint`). Driven by the schema's own
+ * verdict: a value is converted only where Zod reported that it expected a
+ * number or boolean, so string fields — numeric-looking GUIDs included — are
+ * never touched. Returns a converted copy, or null when nothing was coercible.
+ */
+export function coerceArgsFromIssues(
+  args: Record<string, unknown>,
+  issues: readonly ZodIssueLike[],
+): Record<string, unknown> | null {
+  let copy: Record<string, unknown> | null = null;
+  for (const issue of issues) {
+    if (issue.code !== 'invalid_type' || !Array.isArray(issue.path) || issue.path.length === 0) continue;
+    const path = issue.path as Array<string | number>;
+    const raw = path.reduce<unknown>(
+      (node, key) => (node && typeof node === 'object' ? (node as Record<string, unknown>)[key] : undefined),
+      copy ?? args,
+    );
+    let value: unknown = raw;
+    if (issue.expected === 'number') value = coerceNumericString(raw);
+    else if (issue.expected === 'boolean' && (raw === 'true' || raw === 'false')) value = raw === 'true';
+    if (value === raw) continue;
+
+    copy ??= structuredClone(args);
+    let parent: Record<string, unknown> = copy;
+    for (const key of path.slice(0, -1)) parent = parent[key] as Record<string, unknown>;
+    parent[path[path.length - 1]!] = value;
+  }
+  return copy;
+}
