@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+*.tsbuildinfo
+
+# Logs and temp
+*.log
+.DS_Store
+*.backup
+.mcpb-staging/
+release-artifacts/
+*.p12
+*.zxp
+
+# Worktrees
+.worktrees/
+
+# Cloudflare
+.wrangler/
