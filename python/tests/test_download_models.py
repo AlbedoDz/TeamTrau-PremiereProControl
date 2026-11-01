@@ -155,7 +155,9 @@ def test_downloads_the_turbo_repo_into_its_own_folder(tmp_path):
     assert Path(call["localDir"]) == whisper
     # Weights and config only: no README, no images, no safetensors copy.
     assert call["allowPatterns"] == ["*.json", "*.bin", "*.txt"]
-    assert result["whisper"] == {"path": str(whisper), "downloaded": True}
+    # Fix round 1: every model entry carries ``failed`` so a caller can test one
+    # key on all of them; the failures are also listed at the result top level.
+    assert result["whisper"] == {"path": str(whisper), "downloaded": True, "failed": False}
     assert (whisper / "model.bin").is_file()
     assert (whisper / "config.json").is_file()
 
@@ -172,7 +174,7 @@ def test_downloads_the_yunet_onnx_next_to_the_model_folder(tmp_path):
     onnx = models_dir(tmp_path) / ONNX_NAME
     assert FakeUrlopen.calls[0]["url"] == ONNX_URL
     assert onnx.read_bytes() == ONNX_BYTES
-    assert result["yunet"] == {"path": str(onnx), "downloaded": True}
+    assert result["yunet"] == {"path": str(onnx), "downloaded": True, "failed": False}
 
 
 def test_a_second_run_downloads_nothing(tmp_path):
@@ -184,9 +186,10 @@ def test_a_second_run_downloads_nothing(tmp_path):
     assert len(FakeUrlopen.calls) == 1
     assert result["whisper"] == {
         "path": str(models_dir(tmp_path) / "faster-whisper-large-v3-turbo"), "downloaded": False,
+        "failed": False,
     }
     assert result["yunet"] == {
-        "path": str(models_dir(tmp_path) / ONNX_NAME), "downloaded": False,
+        "path": str(models_dir(tmp_path) / ONNX_NAME), "downloaded": False, "failed": False,
     }
 
 

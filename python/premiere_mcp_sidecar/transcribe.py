@@ -81,6 +81,10 @@ MAX_THREADS = 4
 # (a long unbroken talk would otherwise be one decode of minutes).
 MIN_SILENCE_SEC = 0.5
 MAX_SPEECH_SEC = 20.0
+# How much audio the VAD is handed per `accept_waveform`: 512 samples (32 ms) is
+# one Silero window, so the detector fires as soon as a chunk closes and its
+# buffer never holds more than the chunk in progress (see `speech_chunks`).
+VAD_WINDOW = 512
 # A caption needs a visible span; sherpa timestamps can put two words on one token.
 MIN_WORD_SEC = 0.04
 # sherpa's ``▁`` is the sentencepiece word boundary; some builds emit a space.
@@ -299,11 +303,15 @@ def _run_whisper(spec: dict, progress_path: str | os.PathLike[str] | None) -> di
             io.log(f"CUDA failed ({exc}); falling back to the CPU with {CPU_COMPUTE_TYPE}")
             continue
         progress.finish()
+        # Fix round 1 (B8): no ``engine`` key -- the whisper result is exactly what
+        # it was before the Zipformers existed, so an existing caller that compared
+        # the whole object (or passed it on unchanged) sees no difference. Only a
+        # Zipformer result names its engine, and a caller knows which one it asked
+        # for.
         return {
             "words": words,
             "device": device,
             "computeType": options["compute_type"],
-            "engine": WHISPER_ENGINE,
             "durationSec": round(duration, 3),
         }
     raise RuntimeError(f"could not load the model in {model_dir}: {last_error}")
@@ -360,23 +368,40 @@ def _build_recognizer(model_file: dict[str, str], sherpa):
 def speech_chunks(sherpa, audio, vad_model: Path) -> list[tuple[float, float]]:
     """Split ``audio`` into speech spans ``(start, end)`` in seconds, with Silero VAD.
 
-    The whole decoded array is fed in one call: the VAD keeps a rolling buffer and
-    queues finished chunks as it goes, so reading the queue afterwards sees every
-    chunk, including any still open at the end after the flush.
+    The audio is fed in :data:`VAD_WINDOW`-sample windows and the finished-chunk
+    queue is drained after every window (fix round 1). One ``accept_waveform`` of
+    the whole file was wrong two ways: the detector's buffer is
+    ``buffer_size_in_seconds`` long, so a real episode overflowed it -- sherpa
+    logs ``circular-buffer.cc:Push: Overflow!`` and copies the buffer, doubling
+    the memory of a 9-minute file at once -- and on the live 2-minute clip the
+    one-shot call produced a single bogus 8 s span where windows produced seven
+    real ones. Feeding in windows also means only the current window and the
+    pending chunk are in memory, whatever the length of the file.
 
-    A segment's ``start`` is a sample index (sherpa's own field), which is why the
-    spans can be placed on the file's own timeline at all.
+    ``flush`` at the end closes the chunk still open when the audio stops, and the
+    queue is drained once more so that chunk is not lost.
+
+    A segment's ``start`` is a sample index on the **whole file** even when the
+    audio arrived in pieces (checked on the live clip: the spans of a windowed run
+    are the same as the offsets built from them), which is why the spans can be
+    placed on the file's own timeline at all.
     """
     detector = sherpa.VoiceActivityDetector(_vad_config(sherpa, vad_model), buffer_size_in_seconds=60)
-    detector.accept_waveform(np.asarray(audio, dtype=np.float32))
-    detector.flush()
-    spans: list[tuple[float, float]] = []
     rate = io.SAMPLE_RATE
-    while not detector.empty():
-        segment = detector.front
-        start = segment.start / rate
-        spans.append((start, start + len(segment.samples) / rate))
-        detector.pop()
+    spans: list[tuple[float, float]] = []
+
+    def drain() -> None:
+        while not detector.empty():
+            segment = detector.front
+            start = segment.start / rate
+            spans.append((start, start + len(segment.samples) / rate))
+            detector.pop()
+
+    for offset in range(0, len(audio), VAD_WINDOW):
+        detector.accept_waveform(np.asarray(audio[offset:offset + VAD_WINDOW], dtype=np.float32))
+        drain()
+    detector.flush()
+    drain()
     return spans
 
 
@@ -388,6 +413,15 @@ def _decode_chunk(recognizer, samples) -> list[dict]:
     the word they belong to. ``ys_log_probs`` is where per-token log-probabilities
     would be, but sherpa-onnx 2.0.1 leaves it empty, so ``p`` is 1.0 unless a
     future build fills it.
+
+    A token that is **only** the marker (``"▁"``, or a lone space) carries no
+    piece of its own, but it still says where the next word begins (fix round 1).
+    The old loop skipped it, so the token after it was glued onto the previous
+    word and the new word lost its start time: ``["▁XIN", "▁", "CHÀO"]`` came out
+    as one word "xinchào". Now the marker arms ``pending`` and the next piece
+    starts a word timed at **that piece's** token time -- the marker's own
+    timestamp is the one place the boundary is known, and the piece that follows
+    is when it is actually spoken.
     """
     stream = recognizer.create_stream()
     stream.accept_waveform(io.SAMPLE_RATE, np.asarray(samples, dtype=np.float32))
@@ -399,12 +433,17 @@ def _decode_chunk(recognizer, samples) -> list[dict]:
 
     words: list[dict] = []
     current: dict | None = None
+    # Set by a bare marker: the next piece is the first of a new word.
+    pending = False
     for index, token in enumerate(tokens):
         start = float(stamps[index]) if index < len(stamps) else 0.0
-        begins = any(token.startswith(marker) for marker in WORD_START_MARKERS)
+        begins = pending or any(token.startswith(marker) for marker in WORD_START_MARKERS)
         piece = token.lstrip("".join(WORD_START_MARKERS))
         if not piece:
+            # A bare marker: nothing to append, but the next piece starts a word.
+            pending = True
             continue
+        pending = False
         # Kept as the log-probability: _finish_words averages them before exp, so a
         # word made of several pieces is scored once, not once per piece.
         log_probability = float(log_probs[index]) if index < len(log_probs) else 0.0
@@ -479,12 +518,15 @@ def _run_zipformer(engine: str, spec: dict, progress_path: str | os.PathLike[str
         spans = speech_chunks(sherpa, audio, sherpa_models.vad_path(models_dir))
         if engine == ROVER_ENGINE:
             # The two models judge the same chunks: the combination in _rover_words
-            # only makes sense on identical spans. Only the first pass reports
-            # progress; the second would record the same positions again.
+            # only makes sense on identical spans. Each pass owns half of the bar
+            # (fix round 1): both were recording against the whole file's duration,
+            # so the first pass took the fraction to 1.0 and the second had nowhere
+            # to go -- a poller saw the job finish, then start again. Half each
+            # walks the bar once, in the order the work happens.
             sides = {
                 name: _zipformer_words(
                     name, audio, spans, sherpa, models_dir,
-                    progress if index == 0 else _silent(),
+                    progress.fraction(first=index * 0.5, span=0.5),
                 )
                 for index, name in enumerate(ROVER_ENGINES)
             }
@@ -507,13 +549,6 @@ def _run_zipformer(engine: str, spec: dict, progress_path: str | os.PathLike[str
     }
 
 
-class _silent:
-    """A heartbeat that records nothing: ROVER's second pass must not double-count."""
-
-    def at(self, seconds: float | None = None, fraction: float | None = None) -> None:
-        return None
-
-
 def _rover_words(words_30m: list[dict], words_68m: list[dict]) -> list[dict]:
     """Combine one chunk of 30M and 68M words by aligning their normalized text.
 
@@ -527,12 +562,21 @@ def _rover_words(words_30m: list[dict], words_68m: list[dict]) -> list[dict]:
     2. ``equal`` spans (both sides said the same words) keep the **68M** words
        and their timestamps: that is the better of the two models where they
        agree and its panel is the one the engine list advertises.
-    3. ``replace`` spans (an ``insert`` or a ``delete`` is just a replace with an
-       empty side) take the whole side with the higher mean ``p`` over the span,
-       compared with ``>`` -- a difference smaller than ``ROVER_P_EPSILON`` (or an
-       exact tie) goes to the **30M**, which has the better published WER. A span
-       only one side heard is a replace with an empty rival, so the word is kept
-       rather than lost: silence on one side has no confidence to weigh.
+    3. **Ruling R35 -- every differing span takes the 30M side.** ``replace``,
+       ``insert`` and ``delete`` are all the same judgement now: an insert is a
+       replace with an empty 30M side and a delete one with an empty 68M side.
+       sherpa-onnx 2.0.1 reports no per-token probabilities
+       (``result.ys_log_probs`` is empty, so every word has ``p == 1.0``), which
+       makes the confidence comparison below a guarantee that the 30M always
+       wins -- and the 30M has the better published WER -- so the rule is stated
+       once instead of left to a comparison that cannot discriminate. It also
+       means a word only the 68M heard is **dropped** (the 30M's silence is its
+       verdict), which is the change from the pre-R35 behaviour that kept it.
+    4. The confidence comparison is still here for the day a sherpa-onnx build
+       fills ``ys_log_probs``: when **both** sides of a differing span have a
+       mean ``p`` under 1.0 (so the numbers mean something), the span goes to the
+       side with the higher mean ``p``, compared with ``>`` -- a difference
+       smaller than ``ROVER_P_EPSILON`` (or an exact tie) goes to the **30M**.
 
     The last word of the chunk is marked ``segEnd`` whichever side it came from;
     the caller has already given each word its final times.
@@ -554,14 +598,25 @@ def _rover_words(words_30m: list[dict], words_68m: list[dict]) -> list[dict]:
 
 
 def _rover_span(words_30m: list[dict], words_68m: list[dict]) -> list[dict]:
-    """The side of a differing span with the higher mean ``p``; a tie goes to the 30M."""
+    """The 30M side of a differing span (R35), unless both sides have real confidences.
+
+    Ruling R35: with every ``p`` at 1.0 (sherpa-onnx 2.0.1 reports no per-token
+    probabilities) there is nothing to weigh, so the 30M side wins -- including an
+    empty 30M side, which drops words only the 68M heard. The confidence
+    comparison is kept for a build that reports probabilities: it runs only when
+    both sides have a mean ``p`` strictly under 1.0, so a "1.0 versus 0.4" pair
+    (one side confident, one side without data) is still the 30M's.
+    """
     if not words_30m:
-        return words_68m
+        # A delete: the 30M heard nothing here, and that is its answer.
+        return []
     if not words_68m:
         return words_30m
     confidence_30m = sum(word["p"] for word in words_30m) / len(words_30m)
     confidence_68m = sum(word["p"] for word in words_68m) / len(words_68m)
-    return words_68m if confidence_68m > confidence_30m + ROVER_P_EPSILON else words_30m
+    if confidence_30m < 1.0 and confidence_68m < 1.0:
+        return words_68m if confidence_68m > confidence_30m + ROVER_P_EPSILON else words_30m
+    return words_30m
 
 
 def _rover_key(word: dict) -> str:

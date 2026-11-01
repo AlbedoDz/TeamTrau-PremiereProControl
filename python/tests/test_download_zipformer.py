@@ -5,6 +5,10 @@ files of the repo it was asked for, the Silero VAD arrives through the same fake
 ``urlopen`` as YuNet, and sentencepiece is replaced by a fake processor. What is
 asserted is the plan (which engine pulls which folder, in which order) and the
 result: each model reported with its path and whether it was fetched this time.
+
+Fix round 1 changed what a "whole" file is -- the floor of each file is now the
+size the hub reports for it -- so the fake sizes below are the real ones and the
+hub is faked too (``FakeApi``). The fix's own cases live in test_download_fix1.py.
 """
 import json
 from pathlib import Path
@@ -17,13 +21,45 @@ ZIPFORMER_68M_REPO = "csukuangfj/sherpa-onnx-zipformer-vi-int8-2025-04-20"
 ZIPFORMER_30M_REPO = "hynt/Zipformer-30M-RNNT-6000h"
 VAD_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
 
-# Over the download commands' size floors, so a fake download produces a real model.
-ONNX_BYTES = b"\x08" * (120 * 1024)
-ZIPFORMER_WEIGHTS = b"\x08" * (1024 * 1024 + 1)  # clears MIN_ZIPFORMER_BYTES
-ZIPFORMER_BPE = b"\x08" * (100 * 1024 + 1)  # clears MIN_BPE_BYTES
-VAD_BYTES = b"\x08" * (16 * 1024 + 1)  # clears MIN_VAD_BYTES
-# The small files in a Zipformer folder only have to exist.
-ZIPFORMER_SMALL = b"{}"
+# The sizes the hub publishes for the files of each repo (the same on disk).
+REAL_SIZES = {
+    ZIPFORMER_68M_REPO: {
+        "encoder-epoch-12-avg-8.int8.onnx": 70_876_129,
+        "decoder-epoch-12-avg-8.onnx": 5_165_084,
+        "joiner-epoch-12-avg-8.int8.onnx": 1_033_417,
+        "tokens.txt": 25_847,
+        "bpe.model": 270_695,
+    },
+    ZIPFORMER_30M_REPO: {
+        "encoder-epoch-20-avg-10.int8.onnx": 27_699_063,
+        "decoder-epoch-20-avg-10.int8.onnx": 1_308_690,
+        "joiner-epoch-20-avg-10.int8.onnx": 1_033_417,
+        "bpe.model": 268_106,
+    },
+}
+VAD_BYTES = b"\x08" * (100 * 1024 + 1)  # clears MIN_VAD_BYTES
+ONNX_BYTES = b"\x08" * (120 * 1024)  # YuNet, over MIN_ONNX_BYTES
+# The real 30M sizes, for the "folder of weights, no tokens" case below: a folder
+# that is complete but for its generated tokens.txt.
+ZIPFORMER_WEIGHTS = b"\x08" * REAL_SIZES[ZIPFORMER_30M_REPO]["encoder-epoch-20-avg-10.int8.onnx"]
+ZIPFORMER_JOINER = b"\x08" * REAL_SIZES[ZIPFORMER_30M_REPO]["joiner-epoch-20-avg-10.int8.onnx"]
+ZIPFORMER_BPE = b"\x08" * REAL_SIZES[ZIPFORMER_30M_REPO]["bpe.model"]
+
+
+class FakePathsInfo:
+    def __init__(self, path, size):
+        self.path = path
+        self.size = size
+
+
+class FakeApi:
+    """The hub's file sizes: the same numbers the fake download writes."""
+
+    calls = []
+
+    def get_paths_info(self, repo_id, paths, **kwargs):
+        FakeApi.calls.append({"repoId": repo_id, "paths": list(paths)})
+        return [FakePathsInfo(path, REAL_SIZES[repo_id][path]) for path in paths if path in REAL_SIZES.get(repo_id, {})]
 
 
 class FakeSnapshot:
@@ -33,16 +69,14 @@ class FakeSnapshot:
 
     @classmethod
     def __call__(cls, repo_id, local_dir, allow_patterns=None, **kwargs):
-        cls.calls.append({"repoId": repo_id, "localDir": local_dir, "allowPatterns": allow_patterns})
+        cls.calls.append({"repoId": repo_id, "localDir": local_dir, "allowPatterns": list(allow_patterns or [])})
         folder = Path(local_dir)
         folder.mkdir(parents=True, exist_ok=True)
         if repo_id in ZIPFORMER_REPOS:
-            plan = sherpa_models.ZIPFORMER[ZIPFORMER_REPOS[repo_id]]["files"]
-            for kind, name in plan.items():
-                if kind == "tokens" and ZIPFORMER_REPOS[repo_id] in sherpa_models.GENERATED_TOKENS:
-                    continue  # this repo has no tokens.txt: setup builds it
-                body = {"encoder": ZIPFORMER_WEIGHTS, "joiner": ZIPFORMER_WEIGHTS, "bpe": ZIPFORMER_BPE}
-                (folder / name).write_bytes(body.get(kind, ZIPFORMER_SMALL))
+            sizes = REAL_SIZES[repo_id]
+            for name in allow_patterns or []:
+                if name in sizes:
+                    (folder / name).write_bytes(b"\x08" * sizes[name])
         else:
             for name in ("config.json", "model.bin", "preprocessor_config.json", "tokenizer.json", "vocabulary.json"):
                 (folder / name).write_bytes(b"weights" if name == "model.bin" else b"{}")
@@ -91,13 +125,16 @@ class FakeUrlopen:
 
 
 class FakeProcessor:
-    """A ``SentencePieceProcessor`` with three pieces, one of them a subword.
+    """A vocabulary long enough to be a vocabulary, not a stub.
 
-    ``_sentencepiece()`` returns the class and the code calls it with
-    ``model_file=``, so this is a class, not an instance. Bound as a class.
+    ``write_tokens`` rebuilds a tokens.txt under 1 KB (fix round 1), so six pieces
+    would leave a file the sidecar itself calls a stub and the folder would never
+    be reported whole.
     """
 
-    pieces = ["<blk>", "<sos/eos>", "<unk>", "▁XIN", "CHAO", "▁BẠN"]
+    pieces = ["<blk>", "<sos/eos>", "<unk>", "▁XIN", "CHAO", "▁BẠN"] + [
+        f"▁PIECE{index:04d}" for index in range(400)
+    ]
 
     def __init__(self, model_file=None, **kwargs):
         self.model_file = model_file
@@ -113,11 +150,18 @@ class FakeProcessor:
 def fakes(monkeypatch):
     FakeSnapshot.calls = []
     FakeUrlopen.calls = []
+    FakeApi.calls = []
     monkeypatch.setattr(download_models, "snapshot_download", FakeSnapshot())
     monkeypatch.setattr(download_models, "urlopen", FakeUrlopen())
+    monkeypatch.setattr(download_models, "hub_api", FakeApi())
     # A fake download is bytes, not a sentencepiece model: the tokeniser is the
     # one the tokens tests cover, and binding it here keeps this file offline-only.
     monkeypatch.setattr(sherpa_models, "_sentencepiece", lambda: FakeProcessor)
+    # The hub sizes are per-process state: start each test without them.
+    sz = dict(sherpa_models.HF_FILE_SIZES)
+    yield
+    sherpa_models.HF_FILE_SIZES.clear()
+    sherpa_models.HF_FILE_SIZES.update(sz)
 
 
 def run(tmp_path, **overrides):
@@ -188,9 +232,15 @@ def test_every_downloaded_model_is_reported_with_its_path(tmp_path):
     result = run(tmp_path, engines=["rover"])
 
     folder = tmp_path / "models"
-    assert result["zipformer68m"] == {"path": str(folder / "zipformer-vi-68m-int8"), "downloaded": True}
-    assert result["zipformer30m"] == {"path": str(folder / "zipformer-vi-30m-int8"), "downloaded": True}
-    assert result["vad"] == {"path": str(folder / "silero_vad.onnx"), "downloaded": True}
+    assert result["zipformer68m"] == {
+        "path": str(folder / "zipformer-vi-68m-int8"), "downloaded": True, "failed": False,
+    }
+    assert result["zipformer30m"] == {
+        "path": str(folder / "zipformer-vi-30m-int8"), "downloaded": True, "failed": False,
+    }
+    assert result["vad"] == {
+        "path": str(folder / "silero_vad.onnx"), "downloaded": True, "failed": False,
+    }
 
 
 def test_a_second_run_downloads_nothing(tmp_path):
@@ -261,8 +311,8 @@ def test_the_30m_folder_does_not_need_a_downloaded_tokens_file(tmp_path):
     folder.mkdir(parents=True)
     plan = sherpa_models.ZIPFORMER[sherpa_models.ZIPFORMER_30M_DIR]["files"]
     (folder / plan["encoder"]).write_bytes(ZIPFORMER_WEIGHTS)
-    (folder / plan["decoder"]).write_bytes(ZIPFORMER_SMALL)
-    (folder / plan["joiner"]).write_bytes(ZIPFORMER_WEIGHTS)
+    (folder / plan["decoder"]).write_bytes(b"\x08" * REAL_SIZES[ZIPFORMER_30M_REPO]["decoder-epoch-20-avg-10.int8.onnx"])
+    (folder / plan["joiner"]).write_bytes(ZIPFORMER_JOINER)
     (folder / plan["bpe"]).write_bytes(ZIPFORMER_BPE)
     (tmp_path / "models" / "silero_vad.onnx").write_bytes(VAD_BYTES)
     FakeSnapshot.calls = []
@@ -305,9 +355,9 @@ def test_tokens_txt_is_one_piece_and_id_per_line(tmp_path):
 
     sherpa_models.write_tokens(bpe, tmp_path / "tokens.txt")
 
-    assert (tmp_path / "tokens.txt").read_text(encoding="utf-8").splitlines() == [
-        "<blk> 0", "<sos/eos> 1", "<unk> 2", "▁XIN 3", "CHAO 4", "▁BẠN 5",
-    ]
+    lines = (tmp_path / "tokens.txt").read_text(encoding="utf-8").splitlines()
+    assert lines[:6] == ["<blk> 0", "<sos/eos> 1", "<unk> 2", "▁XIN 3", "CHAO 4", "▁BẠN 5"]
+    assert len(lines) == len(FakeProcessor.pieces)
 
 
 def test_tokens_txt_is_written_with_lf_and_no_bom(tmp_path):
@@ -320,17 +370,23 @@ def test_tokens_txt_is_written_with_lf_and_no_bom(tmp_path):
     raw = (tmp_path / "tokens.txt").read_bytes()
     assert not raw.startswith(b"\xef\xbb\xbf")
     assert b"\r\n" not in raw
-    assert raw == "<blk> 0\n<sos/eos> 1\n<unk> 2\n▁XIN 3\nCHAO 4\n▁BẠN 5\n".encode("utf-8")
+    assert raw.startswith("<blk> 0\n<sos/eos> 1\n<unk> 2\n▁XIN 3\nCHAO 4\n▁BẠN 5\n".encode("utf-8"))
+    assert raw.endswith(b"\n") and b"\r" not in raw
 
 
 def test_a_tokens_file_is_not_rewritten_when_it_exists(tmp_path):
-    """Only what is missing is made: a second setup must not touch the folder."""
+    """Only what is missing is made: a second setup must not touch the folder.
+
+    Fix round 1: a file *under* 1 KB is rebuilt (see test_download_fix1.py), so
+    this one is a vocabulary-sized file, which is what a real folder holds.
+    """
     tokens = tmp_path / "tokens.txt"
-    tokens.write_text("▁XIN 0\n", encoding="utf-8")
+    body = "".join(f"▁XIN{index} {index}\n" for index in range(200))
+    tokens.write_text(body, encoding="utf-8")
 
     sherpa_models.write_tokens(tmp_path / "bpe.model", tokens)
 
-    assert tokens.read_text(encoding="utf-8") == "▁XIN 0\n"
+    assert tokens.read_text(encoding="utf-8") == body
 
 
 def test_the_tokens_format_matches_the_68m_file(tmp_path):

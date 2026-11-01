@@ -17,30 +17,45 @@ from premiere_mcp_sidecar import check, sherpa_models
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def no_hub_sizes():
+    """The per-file floors are learned from the hub, which no test may reach.
+
+    With none recorded, every onnx/tokens/bpe file is held to the 100 KB offline
+    floor, which is what a machine without a network sees (test_download_fix1.py
+    covers the online floors).
+    """
+    saved = dict(sherpa_models.HF_FILE_SIZES)
+    sherpa_models.HF_FILE_SIZES.clear()
+    yield
+    sherpa_models.HF_FILE_SIZES.clear()
+    sherpa_models.HF_FILE_SIZES.update(saved)
+
+
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("PREMIERE_MCP_HOME", str(tmp_path))
     return tmp_path / "models"
 
 
 def write_zipformer(models, name):
-    """A complete folder, with the weights over the downloader's size floors."""
+    """A complete folder, with the weights over the downloader's offline floors."""
     folder = models / name
     folder.mkdir(parents=True, exist_ok=True)
     plan = sherpa_models.ZIPFORMER[name]["files"]
     for kind, filename in plan.items():
-        if kind == "tokens" and name in sherpa_models.GENERATED_TOKENS:
-            # The 30M tokens.txt is generated, never downloaded.
-            (folder / filename).write_text("<blk> 0\n", encoding="utf-8")
+        if kind == "tokens":
+            # The 30M's is generated; the 68M's is 25 KB, both over MIN_TOKENS_BYTES.
+            (folder / filename).write_text(
+                "".join(f"▁PIECE{index} {index}\n" for index in range(200)), encoding="utf-8"
+            )
             continue
-        body = {"encoder": b"\x08" * (1024 * 1024 + 1), "joiner": b"\x08" * (1024 * 1024 + 1),
-                "bpe": b"\x08" * (100 * 1024 + 1)}
-        (folder / filename).write_bytes(body.get(kind, b"{}"))
+        (folder / filename).write_bytes(b"\x08" * (sherpa_models.MIN_FILE_BYTES + 1))
     return folder
 
 
 def write_vad(models):
     models.mkdir(parents=True, exist_ok=True)
-    (models / sherpa_models.VAD_NAME).write_bytes(b"\x08" * (16 * 1024 + 1))
+    (models / sherpa_models.VAD_NAME).write_bytes(b"\x08" * (sherpa_models.MIN_VAD_BYTES + 1))
 
 
 def test_a_complete_68m_folder_is_reported(tmp_path, monkeypatch):

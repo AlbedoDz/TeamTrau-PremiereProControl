@@ -44,7 +44,29 @@ def run_faces(payload: dict) -> dict:
 def run_download_models(payload: dict) -> dict:
     from . import download_models
 
-    return download_models.run(payload, payload.get("progressPath"))
+    # Fix round 1: a model that fails no longer stops the run (the others still
+    # arrive), so the verdict is carried out to the exit code here -- the caller
+    # sees the full result *and* a non-zero exit, and can log which models failed.
+    result = download_models.run(payload, payload.get("progressPath"))
+    failed = download_models.failed(result)
+    if failed:
+        raise PartialFailure(result, failed)
+    return result
+
+
+class PartialFailure(Exception):
+    """Some models arrived and some did not: the run's result, and a non-zero exit.
+
+    ``main`` writes every model's entry at the top level (the shape a complete run
+    has), adds ``failed`` and ``error``, and exits 1: setup both reports the models
+    it has and fails the command that asked for all of them.
+    """
+
+    def __init__(self, result: dict, failed: list[str]) -> None:
+        names = ", ".join(failed)
+        detail = "; ".join(f"{key}: {result[key].get('error', 'failed')}" for key in failed)
+        super().__init__(f"download-models failed for {names} ({detail})")
+        self.payload = {**result, "failed": failed}
 
 
 COMMANDS = {
@@ -75,6 +97,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.progress:
             payload["progressPath"] = args.progress
         result = handler(payload)
+    except PartialFailure as exc:
+        # Some models arrived: write what did, so the caller reports every model's
+        # verdict, and exit non-zero because the run was not complete.
+        io.log(f"{args.command} failed: {exc}")
+        if args.output:
+            io.write_output(args.output, {**exc.payload, "error": str(exc)})
+        return 1
     except Exception as exc:
         io.log(f"{args.command} failed: {exc}")
         traceback.print_exc(file=sys.stderr)

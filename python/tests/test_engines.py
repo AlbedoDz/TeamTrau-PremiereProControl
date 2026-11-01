@@ -224,7 +224,10 @@ def test_whisper_is_still_the_default_engine(tmp_path, monkeypatch):
         {"mediaPath": str(tmp_path / "talk.wav"), "modelDir": str(tmp_path / "turbo")}, None
     )
 
-    assert result["engine"] == "whisper-turbo"
+    # Fix round 1 (B8): the whisper result is exactly what it was before the
+    # Zipformers -- no ``engine`` key, so a caller that compared the whole object
+    # sees no change.
+    assert set(result) == {"words", "device", "computeType", "durationSec"}
     assert result["words"] == []
 
 
@@ -583,8 +586,13 @@ def test_rover_keeps_the_30m_when_the_68m_span_is_less_confident(tmp_path, monke
     assert [w["w"] for w in result["words"]] == ["đi", "tiệc", "nào"]
 
 
-def test_rover_takes_a_word_only_one_side_heard(tmp_path, monkeypatch):
-    """An insert has no rival span to score: it is added rather than dropped."""
+def test_rover_drops_a_word_only_the_68m_heard(tmp_path, monkeypatch):
+    """Ruling R35 (fix round 1): a differing span takes the 30M side, empty or not.
+
+    Before R35 an insert was added so the word was not lost; with no per-token
+    probability on either side there is nothing to weigh, and the 30M's silence is
+    its verdict. The insert and delete cases are covered in test_engines_fix1.py.
+    """
     monkeypatch.setattr(transcribe.io, "pcm16k", lambda path: fake_audio(6))
     FakeVad.segments = [FakeSegment(0.0, 4.0)]
     results = {
@@ -595,7 +603,7 @@ def test_rover_takes_a_word_only_one_side_heard(tmp_path, monkeypatch):
 
     result = transcribe.run(rover_spec(tmp_path), None)
 
-    assert [w["w"] for w in result["words"]] == ["đi", "xa", "hội"]
+    assert [w["w"] for w in result["words"]] == ["đi", "xa"]
 
 
 def test_rover_prefers_the_30m_on_a_tie(tmp_path, monkeypatch):
