@@ -8,10 +8,14 @@ a synthesised file, so the "never call ``decode_audio``" rule is observable.
 import dataclasses
 import json
 import math
+import os
 import struct
+import subprocess
+import sys
 import threading
 import time
 import wave
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -110,11 +114,14 @@ def spec(tmp_path, **overrides):
 
 
 def test_words_shape_with_fake_model(tmp_path, monkeypatch, no_cuda):
-    monkeypatch.setattr(transcribe, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
     # Importing `decode_audio` anywhere in the command must never happen: the
-    # bundled PyAV build cannot read some of the podcast containers.
+    # bundled PyAV build cannot read some of the podcast containers. `transcribe`
+    # does not import the module at all, so the trap goes on the module itself.
+    import faster_whisper
+
     monkeypatch.setattr(
-        transcribe.faster_whisper, "decode_audio",
+        faster_whisper, "decode_audio",
         lambda *a, **k: pytest.fail("decode_audio must not be called"),
     )
     progress = tmp_path / "progress.json"
@@ -148,7 +155,7 @@ def test_words_shape_with_fake_model(tmp_path, monkeypatch, no_cuda):
 
 
 def test_asks_cuda_for_float16_int8_first(tmp_path, monkeypatch, with_cuda):
-    monkeypatch.setattr(transcribe, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
 
     result = transcribe.run(spec(tmp_path), None)
 
@@ -168,7 +175,7 @@ def test_cpu_fallback(tmp_path, monkeypatch, with_cuda):
                 raise RuntimeError("Library cudnn_ops_infer.so.8 is not found")
             return super().transcribe(audio, **options)
 
-    monkeypatch.setattr(transcribe, "WhisperModel", CudaBroken)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: CudaBroken)
 
     result = transcribe.run(spec(tmp_path), None)
 
@@ -186,7 +193,7 @@ def test_cuda_loading_error_falls_back_too(tmp_path, monkeypatch, with_cuda):
             if kwargs.get("device") == "cuda":
                 raise RuntimeError("Cannot load library: cublas64_12.dll")
 
-    monkeypatch.setattr(transcribe, "WhisperModel", CudaLoadFails)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: CudaLoadFails)
 
     result = transcribe.run(spec(tmp_path), None)
 
@@ -195,7 +202,7 @@ def test_cuda_loading_error_falls_back_too(tmp_path, monkeypatch, with_cuda):
 
 
 def test_device_cpu_in_input_skips_cuda(tmp_path, monkeypatch, with_cuda):
-    monkeypatch.setattr(transcribe, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
 
     transcribe.run(spec(tmp_path, device="cpu"), None)
 
@@ -204,7 +211,7 @@ def test_device_cpu_in_input_skips_cuda(tmp_path, monkeypatch, with_cuda):
 
 
 def test_empty_glossary_sends_no_prompt(tmp_path, monkeypatch, no_cuda):
-    monkeypatch.setattr(transcribe, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
 
     transcribe.run(spec(tmp_path, glossary=[]), None)
 
@@ -232,7 +239,7 @@ def test_progress_heartbeat_while_a_segment_takes_long(tmp_path, monkeypatch, no
 
             return segments(), info(3.0)
 
-    monkeypatch.setattr(transcribe, "WhisperModel", Slow)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: Slow)
     monkeypatch.setattr(transcribe, "progress_interval", lambda: 0.02)
     monkeypatch.setattr(
         transcribe.io, "write_progress",
@@ -260,7 +267,7 @@ def test_heartbeat_writes_before_the_first_segment(tmp_path, monkeypatch, no_cud
             release.wait(5)
             return iter(SEGMENTS), info(3.0)
 
-    monkeypatch.setattr(transcribe, "WhisperModel", Blocking)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: Blocking)
     monkeypatch.setattr(transcribe, "progress_interval", lambda: 0.05)
     monkeypatch.setattr(
         transcribe.io, "write_progress",
@@ -290,7 +297,7 @@ def test_heartbeat_writes_before_the_first_segment(tmp_path, monkeypatch, no_cud
 
 def test_progress_never_exceeds_the_media_duration(tmp_path, monkeypatch, no_cuda):
     """A segment past the decoded length clamps at 1.0 instead of overshooting."""
-    monkeypatch.setattr(transcribe, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
     short = make_wav(tmp_path / "short.wav", 2)
 
     result = transcribe.run(spec(tmp_path, mediaPath=str(short)), None)
@@ -300,14 +307,14 @@ def test_progress_never_exceeds_the_media_duration(tmp_path, monkeypatch, no_cud
 
 
 def test_missing_media_path_is_an_error(tmp_path, monkeypatch, no_cuda):
-    monkeypatch.setattr(transcribe, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
 
     with pytest.raises(ValueError, match="mediaPath"):
         transcribe.run({"modelDir": "x"}, None)
 
 
 def test_unreadable_media_is_an_error(tmp_path, monkeypatch, no_cuda):
-    monkeypatch.setattr(transcribe, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
     bogus = tmp_path / "bogus.wav"
     bogus.write_bytes(b"not a wav")
 
@@ -329,7 +336,7 @@ def test_silence_pads_short_audio_and_skips_empty_words(tmp_path, monkeypatch, n
             ])]
             return iter(segments), info(1.0)
 
-    monkeypatch.setattr(transcribe, "WhisperModel", Blanky)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: Blanky)
 
     result = transcribe.run(spec(tmp_path), None)
 
@@ -379,10 +386,173 @@ def test_cli_runs_transcribe(tmp_path, monkeypatch):
     }), encoding="utf-8")
     out = tmp_path / "out.json"
     progress = tmp_path / "progress.json"
-    monkeypatch.setattr(transcribe, "WhisperModel", FakeWhisperModel)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
 
     code = cli.main(["transcribe", "--input", str(spec_path), "--output", str(out), "--progress", str(progress)])
 
     assert code == 0
     assert len(json.loads(out.read_text(encoding="utf-8"))["words"]) == 4
     assert json.loads(progress.read_text(encoding="utf-8"))["done"] == 1.0
+
+
+# --- the DLL directories, then the import -------------------------------------
+
+
+def test_cuda_dlls_are_added_before_faster_whisper_is_imported(tmp_path, monkeypatch, with_cuda):
+    """Order matters: ctranslate2 binds its CUDA DLLs when it is first imported.
+
+    ``transcribe`` cannot import faster-whisper at module import time, because by
+    then ctranslate2 has already looked for cublas/cudnn on a search path the
+    ``nvidia-*`` wheels are not on. The import happens inside ``run``, after the
+    directories are added.
+    """
+    order = []
+
+    def fake_add():
+        order.append("dll directories")
+
+    def fake_import():
+        order.append("import faster_whisper")
+        return FakeWhisperModel
+
+    monkeypatch.setattr(transcribe, "_add_cuda_dll_directories", fake_add)
+    monkeypatch.setattr(transcribe, "_import_whisper_model", fake_import)
+
+    transcribe.run(spec(tmp_path), None)
+
+    assert order == ["dll directories", "import faster_whisper"]
+
+
+def test_module_import_does_not_load_faster_whisper():
+    """Importing the sidecar's `check` must not need the ASR stack to load."""
+    package_root = str(Path(__file__).resolve().parents[1])
+    completed = subprocess.run(
+        [sys.executable, "-c",
+         "import sys, premiere_mcp_sidecar.transcribe;"
+         "print('faster_whisper' in sys.modules, 'ctranslate2' in sys.modules)"],
+        capture_output=True, text=True, cwd=package_root,
+        env={**os.environ, "PYTHONPATH": package_root},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "False False"
+
+
+def _make_site_packages(tmp_path, libraries):
+    site = tmp_path / "site-packages"
+    for library in libraries:
+        (site / "nvidia" / library / "bin").mkdir(parents=True)
+    return site
+
+
+def _fake_windows_site(monkeypatch, site):
+    """Point the DLL sweep at a fake site-packages, on a pretended Windows."""
+    added = []
+
+    class FakeSite:
+        @staticmethod
+        def getsitepackages():
+            return [str(site)]
+
+    monkeypatch.setattr(transcribe, "windows", lambda: True)
+    monkeypatch.setitem(sys.modules, "site", FakeSite)
+    monkeypatch.setattr(transcribe.os, "add_dll_directory", added.append, raising=False)
+    return added
+
+
+def test_every_nvidia_binary_directory_is_added(tmp_path, monkeypatch):
+    """cublas and cudnn are not the only wheels ctranslate2 may need to load."""
+    site = _make_site_packages(tmp_path, ["cublas", "cudnn", "cuda_runtime", "cufft"])
+    added = _fake_windows_site(monkeypatch, site)
+
+    transcribe._add_cuda_dll_directories()
+
+    assert sorted(Path(path).parent.name for path in added) == [
+        "cublas", "cuda_runtime", "cudnn", "cufft",
+    ]
+    assert all(Path(path).name == "bin" for path in added)
+    assert all(Path(path).parent.parent.name == "nvidia" for path in added)
+
+
+def test_a_missing_bin_directory_is_skipped(tmp_path, monkeypatch):
+    site = _make_site_packages(tmp_path, ["cublas"])
+    (site / "nvidia" / "cuda_nvrtc").mkdir()  # no bin/ inside
+    added = _fake_windows_site(monkeypatch, site)
+
+    transcribe._add_cuda_dll_directories()
+
+    assert len(added) == 1
+    assert Path(added[0]).parent.name == "cublas"
+
+
+def test_the_dll_sweep_is_a_no_op_off_windows(tmp_path, monkeypatch):
+    site = _make_site_packages(tmp_path, ["cublas"])
+    added = []
+
+    class FakeSite:
+        @staticmethod
+        def getsitepackages():
+            return [str(site)]
+
+    monkeypatch.setattr(transcribe, "windows", lambda: False)
+    monkeypatch.setitem(sys.modules, "site", FakeSite)
+    monkeypatch.setattr(transcribe.os, "add_dll_directory", added.append, raising=False)
+
+    transcribe._add_cuda_dll_directories()
+
+    assert added == []
+
+
+def test_cpu_fallback_keeps_progress_moving_forward(tmp_path, monkeypatch, with_cuda):
+    """A failed CUDA attempt must not write a *lower* fraction than it already did.
+
+    The CPU attempt gets its own heartbeat (a new ETA for the run that is actually
+    happening), but progress.json is polled by the runner: a drop from 0.7 back to
+    0.01 looks like the job restarted, so the new heartbeat starts where the old
+    one stopped.
+    """
+    writes = []
+
+    class CudaFailsLate(FakeWhisperModel):
+        """Delivers one segment on CUDA (so progress rises), then dies."""
+
+        def transcribe(self, audio, **options):
+            self.calls.append({"audio": audio, **options})
+            if self.compute_type != "int8_float16":
+                return super().transcribe(audio, **options)
+
+            def segments():
+                yield SEGMENTS[0]
+                raise RuntimeError("CUDA out of memory")
+
+            return segments(), info(3.0)
+
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: CudaFailsLate)
+    monkeypatch.setattr(transcribe, "progress_interval", lambda: 0)
+    monkeypatch.setattr(
+        transcribe.io, "write_progress",
+        lambda path, done, eta_sec=None: writes.append(done),
+    )
+
+    result = transcribe.run(spec(tmp_path), tmp_path / "progress.json")
+
+    assert (result["device"], result["computeType"]) == ("cpu", "int8")
+    assert writes == sorted(writes), f"progress went backwards: {writes}"
+    assert writes[0] > 0.0 and writes[-1] == 1.0
+
+
+def test_a_fresh_run_starts_its_progress_at_zero(tmp_path, monkeypatch, no_cuda):
+    """Monotonic across a fallback only: a new job does not inherit an old file's 1.0."""
+    writes = []
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
+    monkeypatch.setattr(
+        transcribe.io, "write_progress",
+        lambda path, done, eta_sec=None: writes.append(done),
+    )
+    progress = tmp_path / "progress.json"
+    progress.write_text('{"done": 1.0, "etaSec": 0.0}', encoding="utf-8")
+
+    transcribe.run(spec(tmp_path), progress)
+
+    assert writes[0] < 1.0
+    assert writes[-1] == 1.0

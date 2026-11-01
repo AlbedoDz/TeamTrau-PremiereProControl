@@ -152,7 +152,10 @@ class Heartbeat:
                 beat.at(seconds=segment.end)
 
     Every write is atomic (see ``write_progress``) and the fraction never goes
-    backwards, whatever order the timer and the caller land in.
+    backwards, whatever order the timer and the caller land in. An attempt that
+    starts mid-job (a CUDA run retried on the CPU) starts at the fraction the job
+    has already reported, so a poller never sees it restart; a fresh job starts at
+    zero and does not inherit a previous run's file.
     """
 
     def __init__(
@@ -209,6 +212,24 @@ class Heartbeat:
             return
         self._thread = threading.Thread(target=self._loop, name="progress-heartbeat", daemon=True)
         self._thread.start()
+
+    @property
+    def done(self) -> float:
+        """The highest fraction this heartbeat has recorded."""
+        with self._lock:
+            return self._done
+
+    def adopt(self, other: "Heartbeat | None") -> None:
+        """Start no lower than ``other`` has already reported.
+
+        The caller's ETA clock is its own (a new attempt times its own work), but
+        the fraction is the job's, so a retry picks up where the failed attempt
+        stopped instead of dropping the poller back to zero.
+        """
+        if other is None:
+            return
+        with self._lock:
+            self._done = max(self._done, other.done)
 
     def _loop(self) -> None:
         while not self._stop.wait(self.interval):
