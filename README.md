@@ -196,7 +196,7 @@ To install the sidecar and model weights:
 premiere-pro-mcp --setup-asr
 ```
 
-- **Disk space:** Setup downloads about 2 GB in total (Python packages + 1.6 GB model) into `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows).
+- **Disk space:** Setup downloads about 1.8 GB (Python packages + the 1.6 GB large-v3-turbo model); on PCs with an NVIDIA GPU it also installs the CUDA libraries, about 3.8 GB in total into `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows). Without an NVIDIA GPU (including PCs with only an Intel/AMD integrated GPU) transcription runs on the CPU: about 0.7 minutes of processing per minute of audio on an 8-core CPU, roughly 1.4 minutes per minute on 2 cores (measured), about 1.9 GB RAM.
 - **GPU acceleration:** An NVIDIA GPU (`int8_float16`) is recommended for fast transcription (measured on a 9-minute Vietnamese podcast: ~51 s on an RTX 3070 using ~1.4 GB VRAM). CPU-only inference (`int8`) works automatically if CUDA is absent, but runs ~7× slower.
 - All other Premiere MCP tools continue to work without this setup.
 
