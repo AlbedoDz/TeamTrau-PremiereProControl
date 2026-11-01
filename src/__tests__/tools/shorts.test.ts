@@ -78,7 +78,7 @@ describe('transcribe_sequence', () => {
     const r = await tools.executeTool('transcribe_sequence', { glossary: ['Trau', 'MCP'] });
     expect(startJob).toHaveBeenCalledTimes(2);
     const [key, command, input] = startJob.mock.calls[0];
-    expect(key).toMatch(new RegExp(`^transcribe\\|${fileA.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\|1:[\\d.]+\\|${ASR_MODEL}\\|Trau\\nMCP$`));
+    expect(key).toMatch(new RegExp(`^transcribe-v2\\|${fileA.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}\\|1:[\\d.]+\\|${ASR_MODEL}\\|Trau\\nMCP$`));
     expect(command).toBe('transcribe');
     expect(input).toMatchObject({ mediaPath: fileA, language: 'vi', glossary: ['Trau', 'MCP'], device: 'auto', model: ASR_MODEL });
     expect(r).toMatchObject({ success: true, status: 'running', files: 2 });

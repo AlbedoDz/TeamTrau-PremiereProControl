@@ -88,6 +88,34 @@ describe('splitSentences', () => {
   });
 });
 
+describe('segEnd', () => {
+  it('splitSentences ends a sentence at segEnd without punctuation', () => {
+    const s = splitSentences([
+      tw('một', 0, 0.2), { ...tw('hai', 0.2, 0.4), segEnd: true }, tw('ba', 0.4, 0.6), tw('bốn', 0.6, 0.8),
+    ]);
+    expect(s.map((x) => x.text)).toEqual(['một hai', 'ba bốn']);
+  });
+
+  it('survives mapping, repair and dedupe (kept word keeps it)', () => {
+    const c = clip({ start: 10, inPoint: 0, outPoint: 10, end: 20 });
+    const m = mapWordsToTimeline([c], new Map([['a.wav', [{ ...aw('x', 1, 1.2), segEnd: true }]]]), FRAME);
+    expect(m.words[0]!.segEnd).toBe(true);
+    expect(repairTimestamps(m.words).words[0]!.segEnd).toBe(true);
+    const a = { ...tw('x', 0, 1, 0, 0.5), segEnd: true };
+    const b = tw('x', 0, 1, 1, 0.4);
+    expect(dedupeOverlaps([a, b])[0]!.segEnd).toBe(true);
+  });
+});
+
+describe('dedupe segEnd merge', () => {
+  it('kept word carries segEnd when the dropped duplicate had it', () => {
+    const kept = tw('x', 0, 1, 0, 0.9);
+    const dropped = { ...tw('x', 0, 1, 1, 0.3), segEnd: true };
+    expect(dedupeOverlaps([kept, dropped])[0]!.segEnd).toBe(true);
+    expect(dedupeOverlaps([dropped, kept])[0]!.segEnd).toBe(true);
+  });
+});
+
 describe('clipFingerprint', () => {
   it('is stable under order and ignores video clips', () => {
     const a = clip({ id: 'A' }), b = clip({ id: 'B', start: 10, end: 20 });

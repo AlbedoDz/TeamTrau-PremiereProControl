@@ -121,7 +121,7 @@ export async function loadTranscript(
   for (const mediaPath of paths) {
     const stamp = fileStamp(mediaPath);
     if (stamp === null) return { success: false, error: `Media file not found: ${mediaPath}` };
-    keys.push(`transcribe|${mediaPath}|${stamp}|${ASR_MODEL}|${glossary.join('\n')}`);
+    keys.push(`transcribe-v2|${mediaPath}|${stamp}|${ASR_MODEL}|${glossary.join('\n')}`);
   }
 
   // startJob replaces a failed job without reporting it, so read the state first.

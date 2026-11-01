@@ -13,6 +13,8 @@ export interface AsrWord {
   start: number;
   end: number;
   p: number;
+  /** True on the last word of a Whisper segment. */
+  segEnd?: boolean;
 }
 
 /** A word on sequence time. */
@@ -105,7 +107,11 @@ export function dedupeOverlaps(words: TimelineWord[]): TimelineWord[] {
       }
     }
     if (dup < 0) kept.push(word);
-    else if (word.p > kept[dup]!.p) kept[dup] = word;
+    else {
+      const segEnd = word.segEnd === true || kept[dup]!.segEnd === true;
+      const winner = word.p > kept[dup]!.p ? word : kept[dup]!;
+      kept[dup] = segEnd && winner.segEnd !== true ? { ...winner, segEnd: true } : winner;
+    }
   }
   return kept.sort((a, b) => a.start - b.start || a.trackIndex - b.trackIndex);
 }
@@ -123,7 +129,7 @@ export function repairTimestamps(words: TimelineWord[]): { words: TimelineWord[]
   return { words: out, repaired };
 }
 
-/** Splits after a word ending in . ? ! (or an ellipsis), or before a gap over `pauseSec`. */
+/** Splits after a word ending in . ? ! (or an ellipsis), after a segEnd word, or before a gap over `pauseSec`. */
 export function splitSentences(words: TimelineWord[], pauseSec = 1.0): Sentence[] {
   const sentences: Sentence[] = [];
   let first = 0;
@@ -141,7 +147,7 @@ export function splitSentences(words: TimelineWord[], pauseSec = 1.0): Sentence[
   };
   for (let i = 0; i < words.length; i++) {
     const next = words[i + 1];
-    const endsSentence = /[.?!…]["')\]]*$/.test(words[i]!.w.trim());
+    const endsSentence = words[i]!.segEnd === true || /[.?!…]["')\]]*$/.test(words[i]!.w.trim());
     if (!next || endsSentence || next.start - words[i]!.end > pauseSec) flush(i);
   }
   return sentences;

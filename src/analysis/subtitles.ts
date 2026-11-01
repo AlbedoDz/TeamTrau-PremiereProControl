@@ -29,7 +29,7 @@ export const DEFAULT_SUBTITLE_OPTIONS: SubtitleOptions = {
   gap: 0.08,
 };
 
-interface Word { w: string; start: number; end: number }
+interface Word { w: string; start: number; end: number; segEnd?: boolean }
 
 const ms = (n: number): number => Math.round(n * 1000) / 1000;
 const MIN_CUE_SEC = 0.04;
@@ -80,7 +80,7 @@ export function buildSubtitleCues(words: Word[], opts: Partial<SubtitleOptions> 
   const clean: Word[] = [];
   for (const word of [...words].sort((x, y) => x.start - y.start)) {
     const w = word.w.normalize('NFC').replace(/\s+/g, ' ').trim();
-    if (w) clean.push({ w, start: word.start, end: word.end });
+    if (w) clean.push({ w, start: word.start, end: word.end, ...(word.segEnd ? { segEnd: true } : {}) });
   }
 
   const groups: Word[][] = [];
@@ -97,7 +97,7 @@ export function buildSubtitleCues(words: Word[], opts: Partial<SubtitleOptions> 
       }
     }
     cur.push(word);
-    if (SENTENCE_END.test(word.w)) {
+    if (word.segEnd === true || SENTENCE_END.test(word.w)) {
       groups.push(cur);
       cur = [];
     }
