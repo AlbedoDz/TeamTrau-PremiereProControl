@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,7 @@ export interface SetupAsrOptions {
   spawnFn?: typeof spawn;
   home?: string;
   platform?: NodeJS.Platform;
+  exists?: (path: string) => boolean;
 }
 
 function runCommand(
@@ -121,6 +123,7 @@ export async function setupAsr(
   const spawnFn = options.spawnFn ?? spawn;
   const home = options.home ?? premiereMcpHome();
   const pkgPythonDir = options.pkgPythonDir;
+  const exists = options.exists ?? existsSync;
 
   const venvDir = join(home, 'venv');
   const py = plat === 'win32'
@@ -131,10 +134,18 @@ export async function setupAsr(
   const cudaTxt = join(pkgPythonDir, 'requirements-cuda.txt');
   const isCudaPlatform = plat === 'win32' || plat === 'linux';
 
+  const venvExists = exists(py);
+  if (venvExists) {
+    log(`Reusing the existing Python environment at ${py}`);
+  }
+
   const uv = await isUvAvailable(spawnFn);
 
   if (uv) {
-    let code = await runCommand('uv', ['venv', '-p', '3.12', venvDir], log, spawnFn);
+    let code = 0;
+    if (!venvExists) {
+      code = await runCommand('uv', ['venv', '-p', '3.12', venvDir], log, spawnFn);
+    }
     if (code !== 0) return code;
 
     code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', reqTxt], log, spawnFn);
@@ -148,7 +159,8 @@ export async function setupAsr(
     code = await runCommand('uv', ['pip', 'install', '-p', py, pkgPythonDir], log, spawnFn);
     if (code !== 0) return code;
   } else {
-    let venvCode = -1;
+    if (!venvExists) {
+      let venvCode = -1;
     if (plat === 'win32') {
       const pyCode = await runCommand('py', ['-3.12', '-m', 'venv', venvDir], log, spawnFn);
       if (pyCode === 0) {
@@ -163,6 +175,7 @@ export async function setupAsr(
     if (venvCode !== 0) {
       venvCode = await runCommand('python', ['-m', 'venv', venvDir], log, spawnFn);
       if (venvCode !== 0) return venvCode;
+    }
     }
 
     let code = await runCommand(py, ['-m', 'pip', 'install', '-r', reqTxt], log, spawnFn);

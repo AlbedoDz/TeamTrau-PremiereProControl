@@ -96,6 +96,50 @@ describe('setupAsr and asrStatus', () => {
   describe('setupAsr', () => {
     const fakePkgPythonDir = '/fake/python';
 
+    it('reuses an existing venv', async () => {
+      const logs: string[] = [];
+      const code = await setupAsr((l) => logs.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+        exists: () => true,
+      });
+
+      expect(code).toBe(0);
+      expect(logs).toContain(
+        `Reusing the existing Python environment at ${join(fakeHome, 'venv', 'Scripts', 'python.exe')}`
+      );
+      const hasVenv = spawned.some(
+        (s) => (s.cmd === 'uv' && s.args[0] === 'venv') || s.args.includes('venv')
+      );
+      expect(hasVenv).toBe(false);
+      expect(spawned.some((s) => s.args.includes('pip') && s.args.includes('install'))).toBe(true);
+      expect(spawned.some((s) => s.args.includes('download-models'))).toBe(true);
+      expect(spawned.some((s) => s.args.includes('check'))).toBe(true);
+
+      uvAvailable = false;
+      spawned = [];
+      const logsFallback: string[] = [];
+      const codeFallback = await setupAsr((l) => logsFallback.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+        exists: () => true,
+      });
+
+      expect(codeFallback).toBe(0);
+      expect(logsFallback).toContain(
+        `Reusing the existing Python environment at ${join(fakeHome, 'venv', 'Scripts', 'python.exe')}`
+      );
+      const hasVenvFallback = spawned.some(
+        (s) => (s.cmd === 'uv' && s.args[0] === 'venv') || s.args.includes('venv')
+      );
+      expect(hasVenvFallback).toBe(false);
+      expect(spawned.some((s) => s.args.includes('pip') && s.args.includes('install'))).toBe(true);
+      expect(spawned.some((s) => s.args.includes('download-models'))).toBe(true);
+      expect(spawned.some((s) => s.args.includes('check'))).toBe(true);
+    });
+
     it('uses uv when available', async () => {
       uvAvailable = true;
       const logsWin: string[] = [];
