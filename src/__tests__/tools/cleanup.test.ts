@@ -1,6 +1,7 @@
 import { PremiereProTools } from '../../tools/index.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { mkdtempSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { clearAnalysisCache } from '../../analysis/cache.js';
 
 jest.mock('../../bridge/index.js');
@@ -34,8 +35,12 @@ describe('cleanup tools', () => {
   let executeScript: jest.Mock;
   let tools: PremiereProTools;
 
-  beforeEach(() => {
-    clearAnalysisCache();
+  beforeAll(() => {
+    process.env.PREMIERE_MCP_CACHE_DIR = mkdtempSync(join(tmpdir(), 'premiere-mcp-cache-'));
+  });
+
+  beforeEach(async () => {
+    await clearAnalysisCache();
     findFfTool.mockReset().mockResolvedValue('ffmpeg');
     runFf.mockReset();
     executeScript = jest.fn();
@@ -71,7 +76,7 @@ describe('cleanup tools', () => {
       .mockResolvedValueOnce(snapshot(20 - 2.76));
     runFf.mockResolvedValue({ code: 0, stdout: '', stderr: 'silence_start: 5\nsilence_end: 8 | silence_duration: 3' });
 
-    const result = await tools.executeTool('remove_silence_from_sequence', {});
+    const result = await tools.executeTool('remove_silence_from_sequence', { backup: false });
 
     expect(result).toMatchObject({ success: true, applied: true, verified: true, cutCount: 1 });
     const scripts = executeScript.mock.calls.map((c) => c[0] as string);
@@ -88,7 +93,7 @@ describe('cleanup tools', () => {
       .mockResolvedValueOnce(snapshot(20));
     runFf.mockResolvedValue({ code: 0, stdout: '', stderr: 'silence_start: 5\nsilence_end: 8 | silence_duration: 3' });
 
-    const result = await tools.executeTool('remove_silence_from_sequence', {});
+    const result = await tools.executeTool('remove_silence_from_sequence', { backup: false });
 
     expect(result.success).toBe(true);
     expect(result.verified).toBe(false);
@@ -101,7 +106,7 @@ describe('cleanup tools', () => {
       .mockResolvedValueOnce({ success: false, error: 'QE unavailable' });
     runFf.mockResolvedValue({ code: 0, stdout: '', stderr: 'silence_start: 5\nsilence_end: 8 | silence_duration: 3' });
 
-    const result = await tools.executeTool('remove_silence_from_sequence', {});
+    const result = await tools.executeTool('remove_silence_from_sequence', { backup: false });
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('QE unavailable');
@@ -121,7 +126,7 @@ describe('cleanup tools', () => {
       .mockResolvedValueOnce(snapshot(20))
       .mockResolvedValueOnce({ success: true });
     runFf.mockResolvedValue({ code: 0, stdout: '', stderr: 'Summary:\n  Integrated loudness:\n    I:         -20.0 LUFS\n' });
-    const result = await tools.executeTool('normalize_loudness', { targetLufs: -14 });
+    const result = await tools.executeTool('normalize_loudness', { targetLufs: -14, backup: false });
     expect(result.success).toBe(true);
     expect(result.clips[0].applied).toBe(true);
     expect(executeScript.mock.calls[1]![0]).toContain('var dB = 6;');
@@ -133,6 +138,58 @@ describe('cleanup tools', () => {
     const result = await tools.executeTool('normalize_loudness', {});
     expect(result.clips[0].skipped).toBe('no measurable loudness');
     expect(executeScript).toHaveBeenCalledTimes(1);
+  });
+
+  const silence = { code: 0, stdout: '', stderr: 'silence_start: 5\nsilence_end: 8 | silence_duration: 3' };
+
+  it('backs the project up before razoring, and copies the file instead of saving as', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'premiere-mcp-proj-'));
+    const project = join(dir, 'Show.prproj');
+    writeFileSync(project, 'project-bytes');
+    executeScript
+      .mockResolvedValueOnce(snapshot(20))
+      .mockResolvedValueOnce({ success: true, path: project })
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true, removedClips: 2 })
+      .mockResolvedValueOnce(snapshot(20 - 2.76));
+    runFf.mockResolvedValue(silence);
+
+    const result = await tools.executeTool('remove_silence_from_sequence', {});
+
+    expect(result.backupPath).toContain('premiere-mcp-backups');
+    expect(existsSync(result.backupPath)).toBe(true);
+    expect(readdirSync(join(dir, 'premiere-mcp-backups'))).toHaveLength(1);
+    const scripts = executeScript.mock.calls.map((c) => c[0] as string);
+    expect(scripts[1]).toContain('p.save()');
+    expect(scripts.join(' ')).not.toContain('saveAs');
+  });
+
+  it('refuses to edit when the backup cannot be made, leaving the sequence untouched', async () => {
+    executeScript
+      .mockResolvedValueOnce(snapshot(20))
+      .mockResolvedValueOnce({ success: false, error: 'The project has not been saved yet' });
+    runFf.mockResolvedValue(silence);
+
+    const result = await tools.executeTool('remove_silence_from_sequence', {});
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Backup failed, nothing was changed');
+    expect(result.error).toContain('backup=false');
+    expect(executeScript).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not back up on a dry run', async () => {
+    executeScript.mockResolvedValueOnce(snapshot(20));
+    runFf.mockResolvedValue(silence);
+    await tools.executeTool('remove_silence_from_sequence', { dryRun: true });
+    expect(executeScript).toHaveBeenCalledTimes(1);
+  });
+
+  it('preflight_media lists only files with issues and counts the clean ones', async () => {
+    const result = await tools.executeTool('preflight_media', { mediaPaths: [join(tmpdir(), 'premiere-mcp-no-such-file.mp4')] });
+    expect(result.cleanFiles).toBe(0);
+    expect(result.files).toHaveLength(1);
   });
 
   it('preflight_media reports missing files without needing ffprobe output', async () => {

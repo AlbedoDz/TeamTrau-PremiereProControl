@@ -8,9 +8,11 @@
  * here gather inputs from Premiere, run the analysis, and apply the result.
  */
 import { z } from 'zod';
-import { access } from 'node:fs/promises';
+import { access, copyFile, mkdir } from 'node:fs/promises';
+import { basename, dirname, extname, join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
 import { cached } from '../../analysis/cache.js';
+import { analysisConcurrency, mapLimit } from '../../analysis/pool.js';
 import {
   ffmpegMissingResult,
   findFfTool,
@@ -129,30 +131,30 @@ async function preflightMedia(
   const ffprobe = await findFfTool('ffprobe');
   if (!ffprobe) return ffmpegMissingResult('preflight_media');
 
-  const files = [];
-  for (const mediaPath of paths) {
+  const files = await mapLimit(paths, analysisConcurrency(), async (mediaPath) => {
     try {
       await access(mediaPath);
     } catch {
-      files.push({ mediaPath, issues: [{ code: 'MEDIA_MISSING', severity: 'error', message: 'File does not exist or is not readable.' }] });
-      continue;
+      return { mediaPath, issues: [{ code: 'MEDIA_MISSING', severity: 'error', message: 'File does not exist or is not readable.' }] };
     }
     try {
       const probe = await cached(mediaPath, 'probe', null, () => probeMedia(ffprobe, mediaPath));
-      files.push({ mediaPath, issues: preflightIssues(probe, { sequenceFps, targetSampleRate: args.targetSampleRate }) });
+      return { mediaPath, issues: preflightIssues(probe, { sequenceFps, targetSampleRate: args.targetSampleRate }) };
     } catch (err) {
-      files.push({ mediaPath, issues: [{ code: 'MEDIA_UNREADABLE', severity: 'error', message: err instanceof Error ? err.message : String(err) }] });
+      return { mediaPath, issues: [{ code: 'MEDIA_UNREADABLE', severity: 'error', message: err instanceof Error ? err.message : String(err) }] };
     }
-  }
+  });
   const all = files.flatMap((f) => f.issues);
+  const withIssues = files.filter((f) => f.issues.length > 0);
   return {
     success: true,
     sequenceName,
     checked: files.length,
+    cleanFiles: files.length - withIssues.length,
     errors: all.filter((i) => i.severity === 'error').length,
     warnings: all.filter((i) => i.severity === 'warning').length,
     clean: all.length === 0,
-    files,
+    files: withIssues,
   };
 }
 
@@ -269,6 +271,40 @@ async function rippleDeleteRange(
   return ctx.bridge.executeScript(script);
 }
 
+/**
+ * Saves the open project and copies the .prproj beside it, so a bulk edit can be
+ * rolled back by opening the copy. Deliberately not saveAs: that would re-point the
+ * open project at the copy and the user would keep editing the backup.
+ */
+async function backupProject(ctx: ToolContext): Promise<{ path: string } | { error: string }> {
+  const info: any = await ctx.bridge.executeScript(`
+    try {
+      var p = app.project;
+      if (!p.path) return JSON.stringify({ success: false, error: 'The project has not been saved yet, so there is nothing to back up.' });
+      p.save();
+      return JSON.stringify({ success: true, path: String(p.path) });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: e.toString() });
+    }
+  `);
+  if (!info || info.success === false || !info.path) {
+    return { error: info?.error ?? 'Could not read the project path.' };
+  }
+  const source = String(info.path);
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+  const dir = join(dirname(source), 'premiere-mcp-backups');
+  const target = join(dir, `${basename(source, extname(source))}-${stamp}${extname(source) || '.prproj'}`);
+  try {
+    await mkdir(dir, { recursive: true });
+    await copyFile(source, target);
+  } catch (err) {
+    return { error: `Could not copy the project file: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  return { path: target };
+}
+
+const BACKUP_FAILED_HINT = ' Fix this, or pass backup=false to edit without a backup.';
+
 async function removeSilenceFromSequence(
   ctx: ToolContext,
   args: {
@@ -278,6 +314,7 @@ async function removeSilenceFromSequence(
     paddingSeconds: number;
     audioTrackIndices?: number[];
     dryRun: boolean;
+    backup: boolean;
   },
 ): Promise<any> {
   const before = await readSequence(ctx, args.sequenceId);
@@ -288,9 +325,8 @@ async function removeSilenceFromSequence(
   const ffmpeg = await findFfTool('ffmpeg');
   if (!ffmpeg) return ffmpegMissingResult('remove_silence_from_sequence');
 
-  const silenceByMedia = new Map<string, Interval[]>();
-  for (const mediaPath of audioPaths) {
-    const params = { db: args.noiseThresholdDb, d: args.minSilenceSeconds };
+  const params = { db: args.noiseThresholdDb, d: args.minSilenceSeconds };
+  const analysed = await mapLimit(audioPaths, analysisConcurrency(), async (mediaPath) => {
     try {
       const run = await cached(mediaPath, 'silence', params, () =>
         runFf(ffmpeg, [
@@ -299,12 +335,15 @@ async function removeSilenceFromSequence(
           '-f', 'null', '-',
         ]),
       );
-      if (run.code !== 0) return { success: false, error: `ffmpeg could not analyse ${mediaPath}`, ffmpegStderr: run.stderr.slice(-1000) };
-      silenceByMedia.set(mediaPath, parseSilenceIntervals(run.stderr));
+      if (run.code !== 0) return { mediaPath, failure: { success: false, error: `ffmpeg could not analyse ${mediaPath}`, ffmpegStderr: run.stderr.slice(-1000) } };
+      return { mediaPath, intervals: parseSilenceIntervals(run.stderr) };
     } catch (err) {
-      return { success: false, error: `Failed to run ffmpeg: ${err instanceof Error ? err.message : String(err)}` };
+      return { mediaPath, failure: { success: false, error: `Failed to run ffmpeg: ${err instanceof Error ? err.message : String(err)}` } };
     }
-  }
+  });
+  const failed = analysed.find((r) => r.failure);
+  if (failed) return failed.failure;
+  const silenceByMedia = new Map<string, Interval[]>(analysed.map((r) => [r.mediaPath, r.intervals!]));
 
   const plan = planSilenceCuts(before.clips, silenceByMedia, {
     paddingSeconds: args.paddingSeconds,
@@ -329,6 +368,13 @@ async function removeSilenceFromSequence(
       ...summary,
       note: plan.cuts.length === 0 ? 'No silence long enough to cut.' : 'Dry run: nothing was changed. Run again with dryRun=false to apply.',
     };
+  }
+
+  let backupPath: string | undefined;
+  if (args.backup) {
+    const backup = await backupProject(ctx);
+    if ('error' in backup) return { success: false, error: `Backup failed, nothing was changed: ${backup.error}${BACKUP_FAILED_HINT}`, ...summary };
+    backupPath = backup.path;
   }
 
   // Back to front, so earlier timeline positions are unaffected by each ripple.
@@ -359,6 +405,7 @@ async function removeSilenceFromSequence(
     dryRun: false,
     applied: true,
     verified,
+    backupPath,
     ...summary,
     sequenceDurationBefore: before.endTime,
     sequenceDurationAfter: after.endTime,
@@ -375,7 +422,7 @@ async function removeSilenceFromSequence(
 
 async function normalizeLoudness(
   ctx: ToolContext,
-  args: { sequenceId?: string; targetLufs: number; audioTrackIndices?: number[]; dryRun: boolean },
+  args: { sequenceId?: string; targetLufs: number; audioTrackIndices?: number[]; dryRun: boolean; backup: boolean },
 ): Promise<any> {
   const snapshot = await readSequence(ctx, args.sequenceId);
   if (isError(snapshot)) return { success: false, error: snapshot.error };
@@ -387,6 +434,8 @@ async function normalizeLoudness(
   if (!ffmpeg) return ffmpegMissingResult('normalize_loudness');
 
   const results: Array<Record<string, unknown>> = [];
+  let backupPath: string | undefined;
+  let backedUp = args.dryRun || !args.backup;
   for (const clip of clips) {
     const length = clip.outPoint - clip.inPoint;
     let measured: number | null;
@@ -409,6 +458,13 @@ async function normalizeLoudness(
     const gainDb = loudnessGainDb(measured, args.targetLufs);
     const entry: Record<string, unknown> = { clipId: clip.id, trackIndex: clip.trackIndex, measuredLufs: measured, gainDb };
     if (!args.dryRun) {
+      if (!backedUp) {
+        // Taken lazily so a sequence with nothing to change is never saved or copied.
+        const backup = await backupProject(ctx);
+        if ('error' in backup) return { success: false, error: `Backup failed, nothing was changed: ${backup.error}${BACKUP_FAILED_HINT}` };
+        backupPath = backup.path;
+        backedUp = true;
+      }
       const set = await adjustAudioLevels(ctx, clip.id, gainDb);
       entry.applied = set?.success !== false;
       if (set?.success === false) entry.error = set.error;
@@ -421,6 +477,7 @@ async function normalizeLoudness(
     dryRun: args.dryRun,
     targetLufs: args.targetLufs,
     sequenceName: snapshot.sequenceName,
+    backupPath,
     clips: results,
     note: "Gain replaces the clip's current Volume level. Loudness is measured on each clip's trimmed source range, before any other effect on the clip.",
   };
@@ -429,6 +486,10 @@ async function normalizeLoudness(
 // ------------------------------------------------------------------- declarations
 
 const sequenceIdArg = z.string().optional().describe('Sequence ID. Defaults to the active sequence.');
+const backupArg = z
+  .boolean()
+  .default(true)
+  .describe('Save the project and copy it to a premiere-mcp-backups folder beside it before changing anything (default true). Ignored on a dry run. Set false to skip.');
 const trackArg = z
   .array(z.number().int().min(0))
   .optional()
@@ -475,6 +536,7 @@ export const cleanupTools: ToolModule[] = [
       paddingSeconds: z.number().min(0).default(0.1).describe('Silence kept on each side of a cut so speech is not clipped (default 0.1).'),
       audioTrackIndices: trackArg.describe('Audio tracks that decide what counts as sound, e.g. only the dialogue track so music does not keep silence alive. Defaults to all audio tracks.'),
       dryRun: z.boolean().default(false).describe('When true, report the planned cuts and change nothing.'),
+      backup: backupArg,
     }),
     run: (ctx, args) => removeSilenceFromSequence(ctx, args),
   },
@@ -487,6 +549,7 @@ export const cleanupTools: ToolModule[] = [
       targetLufs: z.number().min(-60).max(0).default(-14).describe('Target integrated loudness in LUFS: -14 for social platforms, -16 for web dialogue, -23 for broadcast (default -14).'),
       audioTrackIndices: trackArg,
       dryRun: z.boolean().default(false).describe('When true, measure and report gains without changing any clip.'),
+      backup: backupArg,
     }),
     run: (ctx, args) => normalizeLoudness(ctx, args),
   },
