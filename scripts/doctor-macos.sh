@@ -147,6 +147,9 @@ else
   fail "Claude Desktop config not found at $CLAUDE_CONFIG_PATH"
 fi
 
+echo "ASR (optional)"
+(cd "$REPO_ROOT" && node dist/cli.js asr-status) || true
+
 info "Premiere panel check must still be done manually inside Premiere Pro."
 info "Open Window > Extensions > MCP Bridge (CEP), then click Test Connection."
 

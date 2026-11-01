@@ -47,7 +47,7 @@ export async function sidecarPython(): Promise<string | null> {
 export function modelPaths(): { whisper: string; yunet: string } {
   const models = join(premiereMcpHome(), 'models');
   return {
-    whisper: join(models, 'faster-whisper-large-v3'),
+    whisper: join(models, 'faster-whisper-large-v3-turbo'),
     yunet: join(models, 'face_detection_yunet_2023mar.onnx'),
   };
 }
