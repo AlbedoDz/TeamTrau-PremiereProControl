@@ -17,7 +17,7 @@ from .download_models import (
     ONNX_NAME,
     WHISPER_DIR_NAME,
     WHISPER_REQUIRED_FILES,
-    _whisper_missing,
+    whisper_missing,
 )
 
 # Ruling R22: the model download-models writes and the server runs. The folder name
@@ -62,7 +62,7 @@ def _whisper_model_ok(models_dir: Path) -> bool:
     run used to leave model.bin + config.json behind, which was reported as
     installed and then failed on the missing tokenizer at the first transcription.
     """
-    return not _whisper_missing(models_dir / WHISPER_MODEL_DIR)
+    return not whisper_missing(models_dir / WHISPER_MODEL_DIR)
 
 
 def _yunet_model_ok(models_dir: Path) -> bool:

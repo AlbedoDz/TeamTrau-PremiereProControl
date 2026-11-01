@@ -200,6 +200,69 @@ def test_a_failure_that_is_not_a_sharing_violation_is_not_retried(tmp_path, monk
     assert len(attempts) == 1
 
 
+class _NoWinerrorOSError(OSError):
+    """An ``OSError`` with no ``winerror`` attribute, like CPython's on POSIX.
+
+    Windows gives every ``OSError`` a ``winerror`` getset (``None`` for an error
+    raised in Python), so the missing attribute is simulated here instead of
+    skipping the test -- this suite runs on Windows, and the platform where the
+    bug bit is the one that cannot be run directly.
+    """
+
+    def __getattribute__(self, name):
+        if name == "winerror":
+            raise AttributeError(name)
+        return super().__getattribute__(name)
+
+
+def test_an_oserror_without_winerror_is_raised_unchanged(tmp_path, monkeypatch):
+    """A failure with no retryable Win32 code behind it: the real error must surface.
+
+    The retry policy is for Windows sharing violations only. On macOS and Linux the
+    error has no ``winerror`` at all, and reading it unguarded turned the caller's
+    real errno into an ``AttributeError`` -- the one thing a reader of ``output.json``
+    must never get instead of the reason the write failed.
+    """
+    target = tmp_path / "out.json"
+    attempts = []
+    raised = _NoWinerrorOSError(18, "Invalid cross-device link", "out.json.tmp")
+    assert not hasattr(raised, "winerror")
+
+    def cross_device(src, dst):
+        attempts.append(dst)
+        raise raised
+
+    monkeypatch.setattr(io.os, "replace", cross_device)
+
+    with pytest.raises(OSError) as caught:
+        io.write_output(target, {"ok": True})
+
+    assert caught.value is raised, "the error itself must reach the caller, not a copy"
+    assert caught.value.errno == 18
+    assert len(attempts) == 1, "a non-Windows failure is not a sharing violation"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [], "and the scratch file is cleaned up"
+
+
+def test_an_oserror_whose_winerror_is_none_is_raised_unchanged(tmp_path, monkeypatch):
+    """Windows' own shape for a Python-raised ``OSError``: ``winerror`` is ``None``."""
+    target = tmp_path / "out.json"
+    attempts = []
+    raised = OSError(18, "Invalid cross-device link", "out.json.tmp")
+    assert getattr(raised, "winerror", None) is None
+
+    def cross_device(src, dst):
+        attempts.append(dst)
+        raise raised
+
+    monkeypatch.setattr(io.os, "replace", cross_device)
+
+    with pytest.raises(OSError) as caught:
+        io.write_output(target, {"ok": True})
+
+    assert caught.value is raised
+    assert len(attempts) == 1
+
+
 def test_the_retry_backoff_doubles_from_ten_ms_and_caps_at_250(tmp_path, monkeypatch):
     """Exponential with jitter, 10 ms up to 250 ms, inside the write_output deadline."""
     target = tmp_path / "out.json"

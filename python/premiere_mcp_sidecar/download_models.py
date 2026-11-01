@@ -107,12 +107,14 @@ def onnx_path(models_dir: Path) -> Path:
 
 def _whisper_present(folder: Path) -> bool:
     """The whole turbo set is there and the weights are whole: a partial copy does not count."""
-    return not _whisper_missing(folder)
+    return not whisper_missing(folder)
 
 
-def _whisper_missing(folder: Path) -> list[str]:
+def whisper_missing(folder: Path) -> list[str]:
     """What ``folder`` still lacks, in the order of ``WHISPER_REQUIRED_FILES``.
 
+    Public because ``check`` asks the very same question: one implementation, so the
+    installer and the environment report cannot disagree about what a model is.
     An empty list means the model is complete: every required file is present and
     ``model.bin`` is over ``MIN_WHISPER_BYTES``.
     """
@@ -137,7 +139,7 @@ def _download_whisper(folder: Path, repo: str) -> None:
     snapshot(repo_id=repo, local_dir=str(folder), allow_patterns=ALLOW_PATTERNS)
     # A parallel fetch that was interrupted can come back without an error and
     # without every file, so the folder is judged here, not by the call's success.
-    missing = _whisper_missing(folder)
+    missing = whisper_missing(folder)
     if missing:
         raise RuntimeError(f"{repo} is still missing {', '.join(missing)} after the download")
 

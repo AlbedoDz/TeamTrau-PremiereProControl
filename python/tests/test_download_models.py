@@ -257,6 +257,27 @@ def test_the_required_whisper_files_are_the_whole_turbo_folder():
     assert download_models.MIN_WHISPER_BYTES == 100 * 1024 * 1024
 
 
+def test_whisper_missing_is_public(tmp_path):
+    """`check` imports it across a module boundary: it must not be underscore-private."""
+    folder = write_turbo_snapshot(models_dir(tmp_path) / "faster-whisper-large-v3-turbo")
+
+    assert download_models.whisper_missing(folder) == []
+    assert not hasattr(download_models, "_whisper_missing"), "one name, no private alias left behind"
+
+
+def test_whisper_missing_names_every_absent_file_and_a_stub_weight_file(tmp_path):
+    folder = models_dir(tmp_path) / "faster-whisper-large-v3-turbo"
+    folder.mkdir(parents=True)
+
+    assert download_models.whisper_missing(folder) == list(download_models.WHISPER_REQUIRED_FILES)
+
+    for name in download_models.WHISPER_REQUIRED_FILES:
+        (folder / name).write_bytes(b"{}")
+    missing = download_models.whisper_missing(folder)
+
+    assert len(missing) == 1 and missing[0].startswith("model.bin under ")
+
+
 def test_a_truncated_onnx_is_downloaded_again(tmp_path):
     (models_dir(tmp_path)).mkdir(parents=True)
     (models_dir(tmp_path) / ONNX_NAME).write_bytes(b"\x08" * 1024)

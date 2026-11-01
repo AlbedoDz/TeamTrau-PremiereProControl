@@ -60,8 +60,14 @@ def read_input(path: str | os.PathLike[str] | None) -> dict:
 
 
 def _is_replace_blocked(exc: OSError) -> bool:
-    """True when another handle on the target is the only reason the move failed."""
-    return exc.winerror in RETRYABLE_WINERRORS
+    """True when another handle on the target is the only reason the move failed.
+
+    ``winerror`` only exists on Windows: on macOS and Linux ``OSError`` has no such
+    attribute (and Windows leaves it ``None`` for an error raised in Python), so the
+    code is read defensively. Reading it directly turned a real errno -- a missing
+    folder, a cross-device rename -- into an ``AttributeError`` on those platforms.
+    """
+    return getattr(exc, "winerror", None) in RETRYABLE_WINERRORS
 
 
 def _backoff_seconds(attempt: int) -> float:

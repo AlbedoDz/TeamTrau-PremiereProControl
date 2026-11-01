@@ -49,6 +49,13 @@ def test_the_turbo_folder_is_the_whisper_model(tmp_path, monkeypatch):
     assert report["models"]["whisper"] is True
 
 
+def test_the_completeness_rule_comes_from_download_models():
+    """One verdict, no drift: `check` uses the downloader's public ``whisper_missing``."""
+    from premiere_mcp_sidecar import download_models
+
+    assert check.whisper_missing is download_models.whisper_missing
+
+
 @pytest.mark.parametrize("missing", WHISPER_FILES)
 def test_a_turbo_folder_missing_a_file_is_not_installed(tmp_path, monkeypatch, missing):
     """A snapshot cut short by a parallel fetch has a gap: not a model."""
