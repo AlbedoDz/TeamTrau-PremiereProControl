@@ -26,7 +26,7 @@ const backupArg = z
   .describe('Save the project and copy it to a premiere-mcp-backups folder beside it before changing anything (default true). Ignored on a dry run.');
 
 /** Takes the project backup, or returns the failure result to hand straight back. */
-async function ensureBackup(ctx: ToolContext, wanted: boolean): Promise<{ path?: string } | { failure: Record<string, unknown> }> {
+export async function ensureBackup(ctx: ToolContext, wanted: boolean): Promise<{ path?: string } | { failure: Record<string, unknown> }> {
   if (!wanted) return {};
   const backup = await backupProject(ctx);
   if ('error' in backup) return { failure: { success: false, error: `Backup failed, nothing was changed: ${backup.error}${BACKUP_FAILED_HINT}` } };
@@ -95,7 +95,7 @@ async function autoDuckMusic(
 
 // ---------------------------------------------------------------- qa_sequence
 
-async function qaSequence(
+export async function qaSequence(
   ctx: ToolContext,
   args: { sequenceId?: string; minClipFrames: number; checkMedia: boolean },
 ): Promise<any> {
