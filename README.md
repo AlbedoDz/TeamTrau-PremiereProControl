@@ -4,7 +4,7 @@
 
 **Operate local Adobe Premiere Pro projects through MCP.**
 
-298 Premiere tools behind `search_tools` / `invoke_tool`, 13 context resources, and 10 guided prompts for Codex, Claude Code, Claude Desktop, and other MCP clients. CEP is the supported production bridge; UXP remains experimental.
+299 Premiere tools behind `search_tools` / `invoke_tool`, 13 context resources, and 10 guided prompts for Codex, Claude Code, Claude Desktop, and other MCP clients. CEP is the supported production bridge; UXP remains experimental.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-5fd3c6.svg)](LICENSE.md)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933.svg)](https://nodejs.org/)
@@ -128,14 +128,14 @@ This repository is currently validated for:
 
 Current catalog status as of August 31, 2026:
 
-- `298` catalog tools (`search_tools`, `get_tool_schema`, `invoke_tool`, plus 295 Premiere operations)
+- `299` catalog tools (`search_tools`, `get_tool_schema`, `invoke_tool`, plus 296 Premiere operations)
 - `tools/list` advertises the small always-on set by default (`search_tools`, `get_tool_schema`, `invoke_tool`, `verify_premiere_connection`, `list_sequences`). Set `PREMIERE_MCP_TOOLSET=full` to list every tool, which is what Claude Code native tool search indexes
 - coverage spans project setup, media ingest, bins, sequences, timeline editing, transitions, effects, keyframes, captions, markers, metadata, proxies, multicam, color, audio, exports, and higher-level assembly workflows
 - the catalog includes practical agent workflows such as product-spot assembly, motion-graphics demos, timeline razoring, caption reads, audio ducking, scene edit detection, EDL import, export readiness validation, and linked audio/video operations
 
 Most recent completed local live validation:
 
-- `298` catalog tools; `get_capabilities` reports `catalog.advertised` vs `catalog.tools`, local installation, and optional live connection state. `verify_premiere_connection` is the canonical read-only bridge and host readiness check
+- `299` catalog tools; `get_capabilities` reports `catalog.advertised` vs `catalog.tools`, local installation, and optional live connection state. `verify_premiere_connection` is the canonical read-only bridge and host readiness check
 - `0` known parked or placeholder tools are advertised
 - `import_ae_comps` is intentionally not advertised because Premiere returned `false` for real `.aep` fixtures in this environment and a generic `.aep` import can wedge the CEP bridge
 
@@ -207,12 +207,14 @@ premiere-pro-mcp --setup-asr --engine zipformer-30m --yes --no-default
 
 | Engine | Download | License | Speed (9 min of audio) | Notes |
 | --- | --- | --- | --- | --- |
-| `zipformer-68m` (default) | about 80 MB + 2 MB voice-activity model | Apache-2.0 | 22 s on the CPU | Installed by `--setup-asr`. No punctuation: captions break at pauses. |
+| `zipformer-68m` (default) | about 80 MB + 2 MB voice-activity model | Apache-2.0 | 22 s on a Ryzen 9 5900HX CPU (9-minute episode) | Installed by `--setup-asr`. No punctuation: captions break at pauses. |
 | `zipformer-30m` | about 30 MB | CC-BY-NC-ND-4.0 (non-commercial only) | CPU | Smaller and lower quality. |
 | `rover` | both Zipformers (about 112 MB) | includes the 30M model: non-commercial only | CPU, runs both models | Combines the two outputs. |
 | `whisper-turbo` | 1.6 GB model, plus about 2 GB CUDA libraries if an NVIDIA GPU is found | MIT | about 51 s on an RTX 3070; about 0.7 min per audio minute on an 8-core CPU | Adds punctuation. Best with a GPU. |
 
 Zipformer engines output lowercase words without punctuation; the server capitalises the start of each sentence and applies your `glossary` spellings. Data lives in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows). `premiere-pro-mcp asr-status` and `get_capabilities` report `defaultEngine` and which engines are installed. All other Premiere MCP tools continue to work without this setup.
+
+**Disk use of `build_short`:** each call leaves its animated caption file (a ProRes 4444 `.mov`, about 140 MB per 22 s of short) in `%USERPROFILE%\.premiere-mcpenders`. The file is only needed while the short is open in Premiere; delete it after you export the short. `whisper-turbo` also adds about 190 MB of Python packages (faster-whisper) to the default install.
 
 ## Advanced Setup and Verification
 
@@ -264,7 +266,7 @@ For a real-host sweep, use a disposable Premiere project and run `node scripts/l
 
 ## Tools
 
-All `298` catalog tools have an implementation. `tools/list` advertises a small always-on set so hosts that dump every MCP schema do not spend the context window on unused Premiere operations (Anthropic tool-search / MCP progressive discovery). Call `search_tools` (BM25 `query` or regex `pattern`), optionally `get_tool_schema`, then `invoke_tool`. Set `PREMIERE_MCP_TOOLSET=full` to restore a flat 298-tool list. This catalog explains the editing surface in human terms. Start with `verify_premiere_connection`, then inspect the project before asking an agent to mutate it.
+All `299` catalog tools have an implementation. `tools/list` advertises a small always-on set so hosts that dump every MCP schema do not spend the context window on unused Premiere operations (Anthropic tool-search / MCP progressive discovery). Call `search_tools` (BM25 `query` or regex `pattern`), optionally `get_tool_schema`, then `invoke_tool`. Set `PREMIERE_MCP_TOOLSET=full` to restore a flat 299-tool list. This catalog explains the editing surface in human terms. Start with `verify_premiere_connection`, then inspect the project before asking an agent to mutate it.
 
 ### Discovery and project inspection
 

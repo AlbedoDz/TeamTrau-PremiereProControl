@@ -1,5 +1,5 @@
 import { PremiereProTools } from '../../tools/index.js';
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -277,6 +277,20 @@ describe('transcribe_sequence', () => {
     expect(r.wordsFile).toContain(join(home, 'renders'));
     const second = await tools.executeTool('transcribe_sequence', { pageSize: 1, page: 1, engine: 'whisper-turbo' });
     expect(second.sentences[0].text).toBe('Hôm nay.');
+  });
+
+  it('caps pageSize at 500 and does not rewrite an unchanged words file', async () => {
+    executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA)]));
+    startJob.mockResolvedValue({ status: 'done', progress: 1, result: { words: [{ w: 'Xin', start: 1, end: 1.3, p: 1 }] } });
+    const tooBig = await tools.executeTool('transcribe_sequence', { pageSize: 501 }).catch((e) => e);
+    expect(tooBig).not.toMatchObject({ success: true });
+    const first = await tools.executeTool('transcribe_sequence', { pageSize: 500 });
+    expect(first.success).toBe(true);
+    const before = statSync(first.wordsFile).mtimeMs;
+    utimesSync(first.wordsFile, new Date(1000), new Date(1000));
+    await tools.executeTool('transcribe_sequence', { pageSize: 500 });
+    expect(statSync(first.wordsFile).mtimeMs).toBe(1000);
+    expect(before).toBeGreaterThan(1000);
   });
 
   it('errors when the dialogue tracks have no clips', async () => {
@@ -621,6 +635,18 @@ describe('build_short', () => {
     expect(reframe).toContain('__secondsToTicks(12)');
     expect(reframe).toContain('__secondsToTicks(35.52)');
     expect(r.verified).toBe(true); // readback 23.5 s is within one frame of 23.52
+  });
+
+  it('restores the source in/out only when it had marks; otherwise it clears them', async () => {
+    await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S' });
+    const reframe = scripts.find((x) => x.includes('build_short:reframe'))!;
+    expect(reframe).toContain('hadMarks = false'); // unmarked = in 0 and out at the sequence end
+    expect(reframe).toContain('if (hadMarks) {');
+    expect(reframe.indexOf('seq.setInPoint(prevIn)')).toBeGreaterThan(reframe.indexOf('if (hadMarks) {'));
+    expect(reframe).toContain('seq.clearInPoint()');
+    expect(reframe).toContain('seq.clearOutPoint()');
+    // fallback when this Premiere has no clear call: the full range, never the clip range
+    expect(reframe).toContain('seq.setOutPoint(seq.end)');
   });
 
   it('normalises only the dialogue tracks, never the music', async () => {

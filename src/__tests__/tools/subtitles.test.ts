@@ -130,6 +130,24 @@ describe('create_captions_from_transcript', () => {
     expect(scripts.some((s) => s.includes('p.save()'))).toBe(false);
   });
 
+  it('refuses an outputPath that is not .srt or that already exists, unless overwrite is true', async () => {
+    const bad = await tools.executeTool('create_captions_from_transcript', { outputPath: join(home, 'notes.txt'), backup: false });
+    expect(bad).toMatchObject({ success: false });
+    expect(String(bad.error)).toContain('.srt');
+    expect(existsSync(join(home, 'notes.txt'))).toBe(false);
+
+    const out = join(home, 'keep.srt');
+    writeFileSync(out, 'precious');
+    const exists = await tools.executeTool('create_captions_from_transcript', { outputPath: out, backup: false });
+    expect(exists).toMatchObject({ success: false });
+    expect(String(exists.error)).toContain('overwrite');
+    expect(readFileSync(out, 'utf8')).toBe('precious');
+
+    const ok = await tools.executeTool('create_captions_from_transcript', { outputPath: out, overwrite: true, backup: false });
+    expect(ok.success).toBe(true);
+    expect(readFileSync(out, 'utf8')).toContain('00:00');
+  });
+
   it('reports failedStep create_caption_track with the srtPath', async () => {
     captionResult = { success: false, error: 'boom' };
     const r = await tools.executeTool('create_captions_from_transcript', {});

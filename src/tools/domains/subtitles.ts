@@ -4,7 +4,8 @@
  */
 import { z } from 'zod';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, extname, join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
 import { premiereMcpHome } from '../../analysis/sidecar.js';
 import { ENGINE_IDS } from '../../analysis/asr-engines.js';
@@ -25,6 +26,7 @@ interface Args {
   endTime?: number | undefined;
   maxCharsPerLine: number;
   outputPath?: string | undefined;
+  overwrite?: boolean | undefined;
   dryRun: boolean;
   backup: boolean;
 }
@@ -50,6 +52,15 @@ async function createCaptionsFromTranscript(ctx: ToolContext, args: Args): Promi
 
   if (args.dryRun) {
     return { success: true, dryRun: true, sequenceId: loaded.sequenceId, cueCount: cues.length, preview, warnings };
+  }
+
+  if (args.outputPath !== undefined) {
+    if (extname(args.outputPath).toLowerCase() !== '.srt') {
+      return { success: false, error: `outputPath must end in .srt (got ${args.outputPath}).`, warnings };
+    }
+    if (existsSync(args.outputPath) && args.overwrite !== true) {
+      return { success: false, error: `${args.outputPath} already exists. Pass overwrite: true to replace it, or choose another outputPath.`, warnings };
+    }
   }
 
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
@@ -110,7 +121,8 @@ export const subtitlesTools: ToolModule[] = [
       startTime: z.number().min(0).optional().describe('Only words starting at or after this sequence time in seconds. Caption times stay in sequence time.'),
       endTime: z.number().min(0).optional().describe('Only words starting before this sequence time in seconds.'),
       maxCharsPerLine: z.number().int().min(10).default(42).describe('Maximum characters per caption line (default 42).'),
-      outputPath: z.string().optional().describe('Where to write the .srt. Defaults to <premiere-mcp home>/renders/<sequence>-captions-<timestamp>.srt.'),
+      outputPath: z.string().optional().describe('Where to write the .srt; must end in .srt and must not exist unless overwrite is true. Defaults to <premiere-mcp home>/renders/<sequence>-captions-<timestamp>.srt.'),
+      overwrite: z.boolean().default(false).describe('Replace outputPath when that file already exists (default false: an existing file is refused).'),
       dryRun: z.boolean().default(false).describe('Return the cue count and a preview without writing a file or changing the project.'),
       backup: z.boolean().default(true).describe('Save the project and copy it to a premiere-mcp-backups folder beside it before changing anything (default true). Ignored on a dry run.'),
     }),

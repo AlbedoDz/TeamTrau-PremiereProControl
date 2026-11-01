@@ -153,11 +153,16 @@ export function splitSentences(words: TimelineWord[], pauseSec = 1.0): Sentence[
   return sentences;
 }
 
-/** sha1 of the audio clips (sorted), so a cached transcript can tell when the edit changed. */
-export function clipFingerprint(clips: SequenceClip[]): string {
+/**
+ * sha1 of the audio clips (sorted), so a cached transcript can tell when the edit changed. The
+ * speech engine (and, for whisper, the glossary that biases it) is part of it: a different engine
+ * gives different words, so a candidate list made with another engine is stale.
+ */
+export function clipFingerprint(clips: SequenceClip[], engine = '', glossary: string[] = []): string {
   const rows = clips
     .filter((c) => c.trackType === 'audio')
     .map((c) => [c.id, c.start, c.end, c.inPoint, c.outPoint, c.mediaPath ?? ''].join('|'))
     .sort();
+  if (engine) rows.push(`engine|${engine}|${[...new Set(glossary)].sort().join(',')}`);
   return createHash('sha1').update(rows.join('\n')).digest('hex');
 }
