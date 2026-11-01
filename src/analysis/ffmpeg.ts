@@ -147,10 +147,10 @@ export function parseShortTermLoudness(stderr: string): FrameSample[] {
   const samples: FrameSample[] = [];
   for (const line of stderr.split(/\r?\n/)) {
     const tMatch = /(?:^|\s)t:\s*([\d.eE+-]+)/.exec(line);
-    const sMatch = /(?:^|\s)S:\s*(-?[\d.eE+-]+|nan|-?inf)\b/i.exec(line);
+    const sMatch = /S:\s*(-?inf|nan|-?\d+(?:\.\d+)?)/i.exec(line);
     if (!tMatch || !sMatch) continue;
     const rawS = sMatch[1]!.toLowerCase();
-    if (rawS.includes('inf') || rawS.includes('nan')) continue;
+    if (rawS === '-inf' || rawS === 'inf' || rawS === 'nan') continue;
     const t = parseFloat(tMatch[1]!);
     const v = parseFloat(rawS);
     if (!Number.isFinite(t) || !Number.isFinite(v)) continue;

@@ -5,6 +5,7 @@ import {
   scoreCandidates,
   signalsFor,
   type Candidate,
+  type CandidateSignals,
   type Window,
 } from '../../analysis/highlights.js';
 import { parseShortTermLoudness } from '../../analysis/ffmpeg.js';
@@ -75,6 +76,21 @@ describe('signalsFor', () => {
     const w: Window = { startSentenceId: 0, endSentenceId: 0, start: 0.0, end: 5.0 };
     const signals = signalsFor(w, words, [], -14, []);
     expect(signals.fillerRate).toBeCloseTo(0.3, 5);
+  });
+
+  it('fillers are matched after NFC/lowercase/punctuation stripping ("Ờ," and "Thì là." count)', () => {
+    const words: TimelineWord[] = [
+      tw('Tôi', 0.0, 1.0),
+      tw('Ờ,', 1.0, 2.0),
+      tw('nghĩ', 2.0, 3.0),
+      tw('Thì', 3.0, 4.0),
+      tw('là.', 4.0, 5.0),
+      tw('đúng.', 5.0, 6.0),
+    ];
+    const w: Window = { startSentenceId: 0, endSentenceId: 0, start: 0.0, end: 6.0 };
+    const signals = signalsFor(w, words, [], -14, []);
+    // 6 words total, 3 filler words ("Ờ,", "Thì", "là.") -> fillerRate = 3 / 6 = 0.5
+    expect(signals.fillerRate).toBeCloseTo(0.5, 5);
   });
 
   it('multiFaceRatio is the share of seconds with two or more faces', () => {
@@ -239,6 +255,21 @@ describe('pickDiverse', () => {
     expect(picked[0]!.start).toBe(10);
     expect(picked[1]!.start).toBe(80);
   });
+
+  it('pickDiverse with totalSeconds <= 0 puts everything in bucket 0 without throwing', () => {
+    const c1 = makeCand(10, 20, 100);
+    const c2 = makeCand(30, 40, 90);
+    const c3 = makeCand(50, 60, 80);
+    const c4 = makeCand(70, 80, 70);
+
+    const pickedZero = pickDiverse([c1, c2, c3, c4], 10, 0);
+    expect(pickedZero).toHaveLength(2);
+    expect(pickedZero[0]!.start).toBe(10);
+    expect(pickedZero[1]!.start).toBe(30);
+
+    const pickedNegative = pickDiverse([c1, c2, c3, c4], 10, -50);
+    expect(pickedNegative).toHaveLength(2);
+  });
 });
 
 describe('parseShortTermLoudness', () => {
@@ -261,5 +292,169 @@ describe('parseShortTermLoudness', () => {
 `;
     const samples = parseShortTermLoudness(stderr);
     expect(samples).toEqual([{ t: 0.5, v: -14.2 }]);
+  });
+});
+
+function naiveSignalsFor(
+  w: Window,
+  words: TimelineWord[],
+  loudness: FrameSample[],
+  medianLufs: number,
+  faces: Array<{ t: number; count: number }>,
+): CandidateSignals {
+  const inWords = words
+    .filter((word) => word.start >= w.start && word.start < w.end)
+    .sort((a, b) => a.start - b.start);
+
+  const duration = w.end - w.start;
+  const wordsPerSec = duration > 0 ? inWords.length / duration : 0;
+
+  const loudInWindow = loudness.filter((s) => s.t >= w.start && s.t < w.end);
+  const loudnessRel =
+    loudInWindow.length > 0
+      ? loudInWindow.reduce((sum, s) => sum + s.v, 0) / loudInWindow.length - medianLufs
+      : 0;
+
+  const hasQuestion = inWords.some((word) => /\?[^\p{L}\p{N}]*$/u.test(word.w.trim()));
+  const hasExclaim = inWords.some((word) => /![^\p{L}\p{N}]*$/u.test(word.w.trim()));
+
+  const tokens = inWords.map((word) =>
+    word.w.normalize('NFC').toLowerCase().replace(/[\p{P}\p{S}]/gu, '').trim(),
+  );
+  let fillerWords = 0;
+  let idx = 0;
+  const fillers = [['thì', 'là'], ['kiểu'], ['ờ'], ['à'], ['ừ']];
+  while (idx < tokens.length) {
+    let matchedLength = 0;
+    for (const filler of fillers) {
+      if (idx + filler.length <= tokens.length) {
+        let match = true;
+        for (let k = 0; k < filler.length; k++) {
+          if (tokens[idx + k] !== filler[k]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) {
+          matchedLength = filler.length;
+          break;
+        }
+      }
+      if (filler.length > 1 && tokens[idx] === filler.join(' ')) {
+        matchedLength = 1;
+        break;
+      }
+    }
+    if (matchedLength > 0) {
+      fillerWords += matchedLength;
+      idx += matchedLength;
+    } else {
+      idx++;
+    }
+  }
+  const fillerRate = inWords.length > 0 ? fillerWords / inWords.length : 0;
+
+  let maxPauseSec = 0;
+  for (let i = 0; i < inWords.length - 1; i++) {
+    const gap = inWords[i + 1]!.start - inWords[i]!.end;
+    if (gap > maxPauseSec) {
+      maxPauseSec = gap;
+    }
+  }
+
+  const facesInWindow = faces.filter((f) => f.t >= w.start && f.t < w.end);
+  const multiFaceRatio =
+    facesInWindow.length > 0
+      ? facesInWindow.filter((f) => f.count >= 2).length / facesInWindow.length
+      : 0;
+
+  return {
+    wordsPerSec,
+    loudnessRel,
+    hasQuestion,
+    hasExclaim,
+    fillerRate,
+    maxPauseSec,
+    multiFaceRatio,
+  };
+}
+
+describe('performance guard', () => {
+  it('signalsFor across 60-minute candidate windows runs in under 300ms and matches naive reference', () => {
+    // 600 sentences, one every 6 s
+    const sentences: Sentence[] = [];
+    for (let i = 0; i < 600; i++) {
+      sentences.push({
+        id: i,
+        start: i * 6,
+        end: (i + 1) * 6,
+        text: `Câu ${i}.`,
+        firstWord: i * 15,
+        lastWord: i * 15 + 14,
+      });
+    }
+
+    // 9,000 sorted words: 2.5 words/s (each 0.4s), sentence end every 15 words
+    const words: TimelineWord[] = [];
+    for (let k = 0; k < 9000; k++) {
+      const isSentenceEnd = k % 15 === 14;
+      let wText = 'từ';
+      if (isSentenceEnd) {
+        wText = k % 60 === 59 ? 'hết?' : 'hết.';
+      } else if (k % 45 === 0) {
+        wText = 'ờ';
+      } else if (k % 45 === 10) {
+        wText = 'thì';
+      } else if (k % 45 === 11) {
+        wText = 'là';
+      }
+      words.push(tw(wText, k * 0.4, (k + 1) * 0.4));
+    }
+
+    // 36,000 loudness samples (every 0.1 s)
+    const loudness: FrameSample[] = [];
+    for (let m = 0; m < 36000; m++) {
+      loudness.push({
+        t: Math.round(m * 0.1 * 10) / 10,
+        v: -24 + (m % 10) * 0.5,
+      });
+    }
+
+    // 3,600 faces (every 1 s)
+    const faces: Array<{ t: number; count: number }> = [];
+    for (let p = 0; p < 3600; p++) {
+      faces.push({
+        t: p,
+        count: p % 4 === 0 ? 2 : 1,
+      });
+    }
+
+    const windows = candidateWindows(sentences, 20, 90);
+    expect(windows.length).toBeGreaterThan(0);
+
+    const medianLufs = -20;
+    const t0 = performance.now();
+    for (const w of windows) {
+      signalsFor(w, words, loudness, medianLufs, faces);
+    }
+    const elapsed = performance.now() - t0;
+    expect(elapsed).toBeLessThan(300);
+
+    // Verify against naive reference for ~50 sampled windows
+    const step = Math.max(1, Math.floor(windows.length / 50));
+    const sampleWindows = windows.filter((_, idx) => idx % step === 0).slice(0, 50);
+    expect(sampleWindows.length).toBeGreaterThanOrEqual(40);
+
+    for (const w of sampleWindows) {
+      const actual = signalsFor(w, words, loudness, medianLufs, faces);
+      const expected = naiveSignalsFor(w, words, loudness, medianLufs, faces);
+      expect(actual.wordsPerSec).toBeCloseTo(expected.wordsPerSec, 5);
+      expect(actual.loudnessRel).toBeCloseTo(expected.loudnessRel, 5);
+      expect(actual.hasQuestion).toBe(expected.hasQuestion);
+      expect(actual.hasExclaim).toBe(expected.hasExclaim);
+      expect(actual.fillerRate).toBeCloseTo(expected.fillerRate, 5);
+      expect(actual.maxPauseSec).toBeCloseTo(expected.maxPauseSec, 5);
+      expect(actual.multiFaceRatio).toBeCloseTo(expected.multiFaceRatio, 5);
+    }
   });
 });
