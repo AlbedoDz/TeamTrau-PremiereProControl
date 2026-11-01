@@ -188,7 +188,7 @@ async function detectSilence(ctx: ToolContext,
   };
 }
 
-async function setupDucking(ctx: ToolContext, 
+export async function setupDucking(ctx: ToolContext, 
   clipId: string,
   baseDb: number,
   duckingWindows: Array<{ startTime: number; endTime: number; duckedDb: number }>,
@@ -378,7 +378,7 @@ async function muteTrack(ctx: ToolContext, sequenceId: string, trackIndex: numbe
   return await ctx.bridge.executeScript(script);
 }
 
-async function applyAudioEffect(ctx: ToolContext, clipId: string, effectName: string, parameters?: any): Promise<any> {
+export async function applyAudioEffect(ctx: ToolContext, clipId: string, effectName: string, parameters?: any): Promise<any> {
   const guard = await ctx.bridge.executeScript(`
       try {
         var info = __findClip(${JSON.stringify(clipId)});

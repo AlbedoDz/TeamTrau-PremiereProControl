@@ -35,7 +35,7 @@ import {
 import { adjustAudioLevels, resolveProjectItemMediaPath } from './audio.js';
 import { razorTimelineAtTime } from './timeline.js';
 
-interface SequenceSnapshot {
+export interface SequenceSnapshot {
   sequenceId: string;
   sequenceName: string;
   frameDuration: number;
@@ -47,7 +47,7 @@ const sequenceLookup = (sequenceId?: string): string =>
   sequenceId ? `__findSequence(${JSON.stringify(sequenceId)})` : 'app.project.activeSequence';
 
 /** Read every clip of a sequence with the media file behind it. */
-async function readSequence(ctx: ToolContext, sequenceId?: string): Promise<SequenceSnapshot | { error: string }> {
+export async function readSequence(ctx: ToolContext, sequenceId?: string): Promise<SequenceSnapshot | { error: string }> {
   const missing = sequenceId
     ? `"Sequence not found by id: " + ${JSON.stringify(sequenceId)}`
     : '"No active sequence"';
@@ -91,10 +91,10 @@ async function readSequence(ctx: ToolContext, sequenceId?: string): Promise<Sequ
   return result as SequenceSnapshot;
 }
 
-const isError = (value: unknown): value is { error: string } =>
+export const isError = (value: unknown): value is { error: string } =>
   typeof value === 'object' && value !== null && 'error' in value;
 
-const uniquePaths = (clips: SequenceClip[], type?: 'audio' | 'video'): string[] => [
+export const uniquePaths = (clips: SequenceClip[], type?: 'audio' | 'video'): string[] => [
   ...new Set(clips.filter((c) => c.mediaPath && (!type || c.trackType === type)).map((c) => c.mediaPath!)),
 ];
 
@@ -271,12 +271,40 @@ async function rippleDeleteRange(
   return ctx.bridge.executeScript(script);
 }
 
+/** Silent stretches of each file in source time, run in parallel and cached. */
+export async function analyseSilence(
+  ffmpeg: string,
+  mediaPaths: string[],
+  noiseDb: number,
+  minSeconds: number,
+): Promise<{ silenceByMedia: Map<string, Interval[]> } | { failure: Record<string, unknown> }> {
+  const params = { db: noiseDb, d: minSeconds };
+  const analysed = await mapLimit(mediaPaths, analysisConcurrency(), async (mediaPath) => {
+    try {
+      const run = await cached(mediaPath, 'silence', params, () =>
+        runFf(ffmpeg, [
+          '-hide_banner', '-nostats', '-i', mediaPath,
+          '-af', `silencedetect=noise=${noiseDb}dB:d=${minSeconds}`,
+          '-f', 'null', '-',
+        ]),
+      );
+      if (run.code !== 0) return { mediaPath, failure: { success: false, error: `ffmpeg could not analyse ${mediaPath}`, ffmpegStderr: run.stderr.slice(-1000) } };
+      return { mediaPath, intervals: parseSilenceIntervals(run.stderr) };
+    } catch (err) {
+      return { mediaPath, failure: { success: false, error: `Failed to run ffmpeg: ${err instanceof Error ? err.message : String(err)}` } };
+    }
+  });
+  const failed = analysed.find((r) => r.failure);
+  if (failed) return { failure: failed.failure! };
+  return { silenceByMedia: new Map(analysed.map((r) => [r.mediaPath, r.intervals!])) };
+}
+
 /**
  * Saves the open project and copies the .prproj beside it, so a bulk edit can be
  * rolled back by opening the copy. Deliberately not saveAs: that would re-point the
  * open project at the copy and the user would keep editing the backup.
  */
-async function backupProject(ctx: ToolContext): Promise<{ path: string } | { error: string }> {
+export async function backupProject(ctx: ToolContext): Promise<{ path: string } | { error: string }> {
   const info: any = await ctx.bridge.executeScript(`
     try {
       var p = app.project;
@@ -303,7 +331,7 @@ async function backupProject(ctx: ToolContext): Promise<{ path: string } | { err
   return { path: target };
 }
 
-const BACKUP_FAILED_HINT = ' Fix this, or pass backup=false to edit without a backup.';
+export const BACKUP_FAILED_HINT = ' Fix this, or pass backup=false to edit without a backup.';
 
 async function removeSilenceFromSequence(
   ctx: ToolContext,
@@ -325,25 +353,9 @@ async function removeSilenceFromSequence(
   const ffmpeg = await findFfTool('ffmpeg');
   if (!ffmpeg) return ffmpegMissingResult('remove_silence_from_sequence');
 
-  const params = { db: args.noiseThresholdDb, d: args.minSilenceSeconds };
-  const analysed = await mapLimit(audioPaths, analysisConcurrency(), async (mediaPath) => {
-    try {
-      const run = await cached(mediaPath, 'silence', params, () =>
-        runFf(ffmpeg, [
-          '-hide_banner', '-nostats', '-i', mediaPath,
-          '-af', `silencedetect=noise=${args.noiseThresholdDb}dB:d=${args.minSilenceSeconds}`,
-          '-f', 'null', '-',
-        ]),
-      );
-      if (run.code !== 0) return { mediaPath, failure: { success: false, error: `ffmpeg could not analyse ${mediaPath}`, ffmpegStderr: run.stderr.slice(-1000) } };
-      return { mediaPath, intervals: parseSilenceIntervals(run.stderr) };
-    } catch (err) {
-      return { mediaPath, failure: { success: false, error: `Failed to run ffmpeg: ${err instanceof Error ? err.message : String(err)}` } };
-    }
-  });
-  const failed = analysed.find((r) => r.failure);
-  if (failed) return failed.failure;
-  const silenceByMedia = new Map<string, Interval[]>(analysed.map((r) => [r.mediaPath, r.intervals!]));
+  const analysed = await analyseSilence(ffmpeg, audioPaths, args.noiseThresholdDb, args.minSilenceSeconds);
+  if ('failure' in analysed) return analysed.failure;
+  const silenceByMedia = analysed.silenceByMedia;
 
   const plan = planSilenceCuts(before.clips, silenceByMedia, {
     paddingSeconds: args.paddingSeconds,
@@ -420,7 +432,7 @@ async function removeSilenceFromSequence(
 
 // ------------------------------------------------------------- normalize_loudness
 
-async function normalizeLoudness(
+export async function normalizeLoudness(
   ctx: ToolContext,
   args: { sequenceId?: string; targetLufs: number; audioTrackIndices?: number[]; dryRun: boolean; backup: boolean },
 ): Promise<any> {

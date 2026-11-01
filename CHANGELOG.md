@@ -2,6 +2,16 @@
 
 All notable changes are documented here. Releases use semantic versioning.
 
+## [Unreleased]
+
+- New editing helpers:
+  - `auto_duck_music` finds speech on the named dialogue tracks (ffmpeg) and writes volume keyframes that lower the named music tracks under it, then bring them back.
+  - `qa_sequence` is a read-only pre-export check for flash frames, gaps, overlaps and missing media.
+  - `apply_dialogue_chain` applies a list of audio effects (default DeNoise, Dynamics) to the dialogue tracks and normalises loudness.
+  - `auto_punch_in` scales every nth clip on a video track so a single-camera cut reads as two angles.
+- Every tool that changes the sequence has `dryRun` and, by default, a project backup first.
+- Analysis results are cached on disk and files are analysed in parallel; `preflight_media` lists only files with issues.
+
 ## [1.3.0] - 2026-11-01
 
 - New footage-cleanup tools that analyse the media file with ffmpeg/ffprobe, because Premiere's scripting API cannot read audio levels or pixels:

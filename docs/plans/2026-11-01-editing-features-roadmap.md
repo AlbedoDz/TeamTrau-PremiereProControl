@@ -129,3 +129,15 @@ Fixture 12 s, hai khoảng lặng 3-6 s và 9-11 s, cắt bằng `remove_silence
 | 25 | 4,520 s | 4,520 s | 7,480 s | 0 | true |
 Chạy lại dry-run sau khi cắt: 0 khoảng lặng còn lại. Sao lưu tự động tạo `premiere-mcp-backups/Project-Temp-*.prproj`. `normalize_loudness` ghi gain +7,8..+8 dB lên 3 clip, `applied: true`.
 Giữ nguyên cách ripple hiện tại (razor, nhấc, ripple clip cuối); chưa cần đổi sang `ripple_delete`. Chưa đo bằng mắt việc audio và video còn thẳng hàng sau cắt; không có khoảng trống nào.
+
+## 8. Tiến độ giai đoạn B (2026-11-01)
+
+Xong 4 tool (catalog 291): `auto_duck_music`, `qa_sequence`, `apply_dialogue_chain`, `auto_punch_in`. Phần quyết định nằm ở `src/analysis/editing.ts` (có test thuần), phần ghi dùng lại `setup_ducking`, `apply_audio_effect`, `normalize_loudness`.
+
+Kiểm chứng live trên Project-Temp (Premiere 25.6.3):
+- `auto_duck_music`: tìm đúng 3 đoạn lời (0-3, 6-9, 11-12 s), ghi 10 keyframe; đọc lại: -24 dB = 0,01122 và -12 dB = 0,04467 đúng thang hiệu chuẩn.
+- `apply_dialogue_chain`: clip có đủ Volume, DeNoise, Dynamics sau khi chạy.
+- `auto_punch_in`: Motion Scale đọc lại đúng 112.
+- `qa_sequence`: sequence sau khi cắt lặng báo sạch, không khoảng trống.
+
+Chưa kiểm chứng: thời gian keyframe khi clip nhạc không bắt đầu ở 0 hoặc có in-point khác 0 (tài liệu `setup_ducking` nói thời gian nguồn tuyệt đối, đã truyền theo quy ước đó); tên hiệu ứng trên Premiere không phải tiếng Anh (truyền qua `effects`); `speed_ramp` chưa làm.
