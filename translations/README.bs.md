@@ -8,7 +8,7 @@ Upravljajte Adobe Premiere Pro kroz MCP pomoću Codexa, Claude Codea, Claude Des
 
 ```bash
 git clone https://github.com/AlbedoDz/TeamTrau-PremiereProControl.git
-cd Adobe_Premiere_Pro_MCP
+cd TeamTrau-PremiereProControl
 npm run setup:mac
 ```
 

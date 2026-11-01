@@ -8,7 +8,7 @@ Steruj Adobe Premiere Pro przez MCP za pomocą Codex, Claude Code, Claude Deskto
 
 ```bash
 git clone https://github.com/AlbedoDz/TeamTrau-PremiereProControl.git
-cd Adobe_Premiere_Pro_MCP
+cd TeamTrau-PremiereProControl
 npm run setup:mac
 ```
 

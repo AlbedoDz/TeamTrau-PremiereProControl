@@ -140,6 +140,20 @@ describe('ffmpeg output parsing', () => {
   });
 });
 
+describe('parseProbe cover art', () => {
+  it('ignores an embedded picture so an MP3 is not mistaken for 90000 fps video', () => {
+    const probe = parseProbe(JSON.stringify({
+      streams: [
+        { codec_type: 'audio', codec_name: 'mp3', channels: 2, sample_rate: '44100' },
+        { codec_type: 'video', codec_name: 'mjpeg', r_frame_rate: '90000/1', avg_frame_rate: '0/0', disposition: { attached_pic: 1 } },
+      ],
+      format: { duration: '550' },
+    }));
+    expect(probe.streams.map((s) => s.type)).toEqual(['audio']);
+    expect(preflightIssues(probe, { sequenceFps: 30 })).toEqual([]);
+  });
+});
+
 describe('preflightIssues', () => {
   const base = parseProbe(JSON.stringify({
     streams: [

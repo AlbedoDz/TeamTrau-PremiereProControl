@@ -6,7 +6,7 @@ This is the shortest path to a working install.
 
 ```bash
 git clone https://github.com/AlbedoDz/TeamTrau-PremiereProControl.git
-cd Adobe_Premiere_Pro_MCP
+cd TeamTrau-PremiereProControl
 npm run setup:mac
 ```
 
@@ -37,7 +37,7 @@ For better editing behavior, attach `premiere://config/get_instructions` before 
 
 ```powershell
 git clone https://github.com/AlbedoDz/TeamTrau-PremiereProControl.git
-cd Adobe_Premiere_Pro_MCP
+cd TeamTrau-PremiereProControl
 npm run setup:win
 ```
 
@@ -63,7 +63,7 @@ npm run build
 Add the MCP entry on one line:
 
 ```bash
-codex mcp add premiere_pro --env PREMIERE_TEMP_DIR=/tmp/premiere-mcp-bridge -- node /absolute/path/to/Adobe_Premiere_Pro_MCP/dist/index.js
+codex mcp add premiere_pro --env PREMIERE_TEMP_DIR=/tmp/premiere-mcp-bridge -- node /absolute/path/to/TeamTrau-PremiereProControl/dist/index.js
 ```
 
 Then:

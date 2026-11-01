@@ -25,10 +25,10 @@
 
 ## Install
 
-The supported bridge is the included **CEP panel**. Install the npm package on the same computer as Premiere Pro and your MCP client:
+The supported bridge is the included **CEP panel**. Install this project from GitHub on the same computer as Premiere Pro and your MCP client:
 
 ```bash
-npm install -g adobe-premiere-pro-mcp
+npm install -g github:AlbedoDz/TeamTrau-PremiereProControl
 premiere-pro-mcp --install-cep
 premiere-pro-mcp --doctor
 ```
@@ -37,9 +37,12 @@ premiere-pro-mcp --doctor
 
 Then restart Premiere Pro, open `Window > Extensions > TeamTrau PremiereProControl`, set the bridge directory shown by the installer, and start the bridge.
 
+The `adobe-premiere-pro-mcp` package on the npm registry is the original upstream project. It does not include this repository's tools and provides the same `premiere-pro-mcp` command, so do not install both.
+
 Requirements:
 
 - Node.js 20+
+- ffmpeg and ffprobe on PATH for the footage-analysis tools (silence removal, loudness, rough cut, beat cut). Everything else works without them, and `get_capabilities` reports whether they were found. Windows: `winget install --id Gyan.FFmpeg -e`; macOS: `brew install ffmpeg`.
 - Adobe Premiere Pro 2020+
 - Premiere Pro, the MCP client, and this package on the same computer
 
@@ -69,7 +72,7 @@ Install and start the CEP bridge with the same steps as above before using the p
 
 ### Claude Desktop one-click bundle
 
-Each GitHub release includes an `.mcpb` bundle for Claude Desktop. Download the matching `adobe-premiere-pro-mcp-<version>.mcpb` asset and open it in Claude Desktop to install the local MCP server. Its first launch installs the bundled CEP bridge for the current user.
+Each GitHub release includes an `.mcpb` bundle for Claude Desktop. Download the matching `TeamTrau-PremiereProControl-<version>.mcpb` asset and open it in Claude Desktop to install the local MCP server. Its first launch installs the bundled CEP bridge for the current user.
 
 Restart Premiere Pro, open `Window > Extensions > TeamTrau PremiereProControl`, set the bridge directory, and start the bridge. Then ask Claude:
 
@@ -93,13 +96,17 @@ The installer configures Claude Desktop on macOS and Claude Desktop plus GitHub 
 
 To opt out of anonymous usage telemetry, add `"env": { "PREMIERE_MCP_TELEMETRY": "0" }` to that server entry. See [Telemetry](#telemetry).
 
+### Share with another computer
+
+`npm run share:package` builds `release-artifacts/TeamTrau-PremiereProControl-<version>-share.zip`: the package, a Windows and a macOS installer, and a Vietnamese install guide ([share/HUONG-DAN.md](share/HUONG-DAN.md)). Send that zip; the other computer needs Node.js 20+, Premiere Pro, and optionally ffmpeg.
+
 ### Install from source
 
 Use source setup when developing the MCP, modifying the CEP panel, or troubleshooting a package install:
 
 ```bash
 git clone https://github.com/AlbedoDz/TeamTrau-PremiereProControl.git
-cd Adobe_Premiere_Pro_MCP
+cd TeamTrau-PremiereProControl
 npm install
 npm run build
 npm run setup:mac # macOS
@@ -222,7 +229,7 @@ For source installs, client-specific MCP configuration, Windows installer flags,
 
 The short version:
 
-1. Install with `npm install -g adobe-premiere-pro-mcp`, then run `premiere-pro-mcp --install-cep`.
+1. Install with `npm install -g github:AlbedoDz/TeamTrau-PremiereProControl`, then run `premiere-pro-mcp --install-cep`.
 2. Restart Premiere Pro and your MCP client, then start `Window > Extensions > TeamTrau PremiereProControl`.
 3. Run `premiere-pro-mcp --doctor`, then ask the client to call `verify_premiere_connection` without making changes.
 

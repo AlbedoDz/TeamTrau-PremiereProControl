@@ -378,7 +378,7 @@ async function removeSilenceFromSequence(
       dryRun: args.dryRun,
       applied: false,
       ...summary,
-      note: plan.cuts.length === 0 ? 'No silence long enough to cut.' : 'Dry run: nothing was changed. Run again with dryRun=false to apply.',
+      note: plan.cuts.length === 0 ? `No silence long enough to cut at ${args.noiseThresholdDb} dB. A loud or noisy recording keeps its pauses above the threshold: try a higher noiseThresholdDb such as -30 or -25 with dryRun=true.` : 'Dry run: nothing was changed. Run again with dryRun=false to apply.',
     };
   }
 

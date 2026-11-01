@@ -8,7 +8,7 @@ Codex, Claude Code, Claude Desktop 또는 다른 MCP 클라이언트를 통해 M
 
 ```bash
 git clone https://github.com/AlbedoDz/TeamTrau-PremiereProControl.git
-cd Adobe_Premiere_Pro_MCP
+cd TeamTrau-PremiereProControl
 npm run setup:mac
 ```
 

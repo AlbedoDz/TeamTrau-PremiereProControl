@@ -27,7 +27,7 @@ Operate Premiere through the `premiere-pro` MCP tools. Preserve the user's proje
 Install the companion bridge on the same computer as Premiere and Codex:
 
 ```bash
-npm install -g adobe-premiere-pro-mcp
+npm install -g github:AlbedoDz/TeamTrau-PremiereProControl
 premiere-pro-mcp --install-cep
 premiere-pro-mcp --doctor
 ```

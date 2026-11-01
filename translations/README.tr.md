@@ -8,7 +8,7 @@ Adobe Premiere Pro'yu MCP √ºzerinden Codex, Claude Code, Claude Desktop veya ba≈
 
 ```bash
 git clone https://github.com/AlbedoDz/TeamTrau-PremiereProControl.git
-cd Adobe_Premiere_Pro_MCP
+cd TeamTrau-PremiereProControl
 npm run setup:mac
 ```
 
