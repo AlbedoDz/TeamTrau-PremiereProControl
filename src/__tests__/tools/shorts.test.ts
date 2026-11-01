@@ -187,6 +187,7 @@ describe('find_highlight_candidates', () => {
   it('returns candidates with text and signals and never calls the faces sidecar by default', async () => {
     const r = await tools.executeTool('find_highlight_candidates', { minSec: 20, maxSec: 40, limit: 2 });
     expect(r).toMatchObject({ success: true, sequenceId: 's1', detectFaces: false });
+    expect(typeof r.fingerprint).toBe('string');
     expect(r.totalCandidates).toBeGreaterThan(0);
     expect(r.candidates.length).toBeGreaterThan(0);
     const c = r.candidates[0];
@@ -270,8 +271,10 @@ describe('build_short', () => {
   let captionPath: string;
   let reframeResult: Record<string, unknown>;
   let readbacks: Array<Record<string, unknown>>;
-  let sourceReads: number;
-  let staleAfterFirstRead: boolean;
+  let stale: boolean;
+  let extraSource: unknown[];
+  let extraShort: unknown[];
+  let fileM: string;
 
   // Four 12 s sentences with no gaps: 0-11.5, 12-23.5, 24-35.5, 36-47.5.
   const words = [0, 1, 2, 3].flatMap((s) => Array.from({ length: 4 }, (_, i) => ({
@@ -280,9 +283,10 @@ describe('build_short', () => {
   const vclip = (id: string, trackIndex: number, mediaPath: string, start = 0, end = 48) => ({
     id, trackType: 'video', trackIndex, start, end, inPoint: start, outPoint: end, mediaPath,
   });
-  const source = (stale: boolean) => sequence([
+  const source = () => sequence([
     aclip('c1', 0, 0, fileA, { end: stale ? 40 : 48, outPoint: stale ? 40 : 48 }),
     vclip('v1', 0, vidA),
+    ...extraSource,
   ]);
   const short = () => ({
     success: true, sequenceId: 'short1', sequenceName: 'Short', frameDuration: FRAME, endTime: 23.5,
@@ -290,6 +294,7 @@ describe('build_short', () => {
       aclip('sa', 0, 0, fileA, { end: 23.5, inPoint: 12, outPoint: 35.5 }),
       vclip('sv', 0, vidA, 0, 23.5),
       vclip('cap', 1, captionPath, 0, 23.5),
+      ...extraShort,
     ],
   });
 
@@ -302,11 +307,14 @@ describe('build_short', () => {
     writeFileSync(fileA, 'x');
     writeFileSync(vidA, 'v');
     writeFileSync(project, 'p');
+    fileM = join(home, 'music.wav');
+    writeFileSync(fileM, 'm');
     events = [];
     scripts = [];
     captionPath = '';
-    sourceReads = 0;
-    staleAfterFirstRead = false;
+    stale = false;
+    extraSource = [];
+    extraShort = [];
     buildShortTiming.pollMs = 0;
     buildShortTiming.timeoutMs = 0;
     reframeResult = {
@@ -347,8 +355,7 @@ describe('build_short', () => {
       }
       if (script.includes('collect(sequence.videoTracks')) {
         if (script.includes('"short1"')) { events.push('read-short'); return short(); }
-        sourceReads += 1;
-        return source(staleAfterFirstRead && sourceReads > 1);
+        return source();
       }
       if (script.includes('__findClip')) { events.push('gain'); return { success: true }; }
       return { success: true };
@@ -371,7 +378,7 @@ describe('build_short', () => {
       startSentenceId: 1, endSentenceId: 2, name: 'Short', dryRun: true,
       captions: [{ start: 0, end: 8.5, text: 'Chào cả nhà' }],
     });
-    expect(r).toMatchObject({ success: true, dryRun: true, start: 12, end: 35.5, durationSec: 23.5, name: 'Short' });
+    expect(r).toMatchObject({ success: true, dryRun: true, start: 12, end: 35.52, durationSec: 23.52, name: 'Short' }); // 35.5 s snaps up to frame 888
     expect(r.captions[0]).toMatchObject({ start: 0, end: 8.5, text: 'Chào cả nhà' });
     expect(r.captions.at(-1).end).toBe(23.5);
     expect(runSidecar).not.toHaveBeenCalled();
@@ -388,12 +395,77 @@ describe('build_short', () => {
     expect(runSidecar).not.toHaveBeenCalled();
   });
 
-  it('rejects a stale transcript', async () => {
-    staleAfterFirstRead = true;
-    const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S' });
-    expect(r).toMatchObject({ success: false, error: 'The sequence changed since it was transcribed. Run transcribe_sequence again.' });
-    expect(runSidecar).not.toHaveBeenCalled();
+  const fingerprintNow = async (): Promise<string> => (await tools.executeTool('find_highlight_candidates', {})).fingerprint;
+  const NO_FINGERPRINT = 'Pass expectedFingerprint from find_highlight_candidates so edits made after selection are detected.';
+
+  it('rejects a stale transcript when expectedFingerprint no longer matches', async () => {
+    const expectedFingerprint = await fingerprintNow();
+    expect(typeof expectedFingerprint).toBe('string');
+    stale = true; // the user edits the dialogue after picking the highlight
+    for (const dryRun of [true, false]) {
+      const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', expectedFingerprint, dryRun });
+      expect(r).toMatchObject({ success: false, error: 'The sequence changed since it was transcribed. Run transcribe_sequence again.' });
+    }
+    expect(runSidecar).not.toHaveBeenCalledWith('captions', expect.anything());
     expect(writes()).toEqual([]);
+  });
+
+  it('proceeds without the fingerprint warning when expectedFingerprint matches', async () => {
+    const expectedFingerprint = await fingerprintNow();
+    const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', expectedFingerprint });
+    expect(r).toMatchObject({ success: true, verified: true });
+    expect(r.warnings).not.toContain(NO_FINGERPRINT);
+  });
+
+  it('warns when expectedFingerprint is not given', async () => {
+    const dry = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', dryRun: true });
+    expect(dry.warnings).toContain(NO_FINGERPRINT);
+    const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S' });
+    expect(r.success).toBe(true);
+    expect(r.warnings).toContain(NO_FINGERPRINT);
+  });
+
+  it('keeps the failure contract when a step throws', async () => {
+    const base = executeScript.getMockImplementation()!;
+    executeScript.mockImplementation(async (script: string) => {
+      if (script.includes('build_short:place')) throw new Error('Bridge timed out');
+      return base(script);
+    });
+    const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S' });
+    expect(r).toMatchObject({
+      success: false, verified: false, failedStep: 'place_captions', shortSequenceId: 'short1',
+      backupPath: expect.stringContaining('premiere-mcp-backups'), captionFile: captionPath,
+    });
+    expect(r.error).toContain('Bridge timed out');
+    expect(events).not.toContain('ffmpeg');
+  });
+
+  it('snaps the range to whole frames', async () => {
+    startJob.mockResolvedValue({ status: 'done', progress: 1, result: { words: words.map((w) => ({ ...w, start: w.start + 0.01, end: w.end + 0.01 })) } });
+    const dry = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', dryRun: true });
+    expect(dry).toMatchObject({ start: 12, end: 35.52, durationSec: 23.52 });
+    const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S' });
+    expect(runSidecar.mock.calls.find(([c]) => c === 'captions')![1].duration).toBe(23.52);
+    const reframe = scripts.find((x) => x.includes('build_short:reframe'))!;
+    expect(reframe).toContain('__secondsToTicks(12)');
+    expect(reframe).toContain('__secondsToTicks(35.52)');
+    expect(r.verified).toBe(true); // readback 23.5 s is within one frame of 23.52
+  });
+
+  it('normalises only the dialogue tracks, never the music', async () => {
+    // Track 1 holds no media in the source, so the transcript's dialogue tracks are [0].
+    extraSource = [aclip('m0', 1, 0, null)];
+    extraShort = [aclip('m1', 1, 0, fileM, { end: 23.5 })];
+    const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S' });
+    expect(r.success).toBe(true);
+    expect(runFf).toHaveBeenCalled();
+    expect(runFf.mock.calls.some(([, argv]) => (argv as string[]).includes(fileM))).toBe(false);
+
+    runFf.mockClear();
+    extraSource = [aclip('m0', 1, 0, fileM)];
+    const explicit = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', dialogueTrackIndices: [0] });
+    expect(explicit.success).toBe(true);
+    expect(runFf.mock.calls.some(([, argv]) => (argv as string[]).includes(fileM))).toBe(false);
   });
 
   it('returns the install result when the sidecar is missing', async () => {
@@ -425,7 +497,7 @@ describe('build_short', () => {
     expect(events).not.toContain('faces');
 
     const render = runSidecar.mock.calls.find(([c]) => c === 'captions')![1];
-    expect(render).toMatchObject({ style: 'pop', width: 1215, height: 2160, fps: 25, duration: 23.5, safeArea: SAFE_AREA });
+    expect(render).toMatchObject({ style: 'pop', width: 1215, height: 2160, fps: 25, duration: 23.52, safeArea: SAFE_AREA });
     expect(render.groups[0].start).toBe(0);
     expect(render.outPath.startsWith(join(home, 'renders', 'Short-'))).toBe(true);
     expect(render.outPath.endsWith('.mov')).toBe(true);

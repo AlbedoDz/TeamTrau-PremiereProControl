@@ -50,6 +50,8 @@ export interface TranscriptReady {
   status: 'done';
   sequenceId: string;
   fingerprint: string;
+  /** The audio track indices the transcript was made from. */
+  dialogueTrackIndices: number[];
   words: TimelineWord[];
   sentences: Sentence[];
   warnings: string[];
@@ -180,6 +182,7 @@ export async function loadTranscript(
     status: 'done',
     sequenceId: snapshot.sequenceId,
     fingerprint: clipFingerprint(clips),
+    dialogueTrackIndices: indices,
     words,
     sentences: splitSentences(words),
     warnings: [...new Set(warnings)],
@@ -352,6 +355,7 @@ async function findHighlightCandidates(
   return {
     success: true,
     sequenceId: loaded.sequenceId,
+    fingerprint: loaded.fingerprint,
     totalCandidates: windows.length,
     candidates,
     detectFaces: args.detectFaces,
@@ -372,6 +376,7 @@ const samePath = (a: string, b: string): boolean =>
 export const buildShortTiming = { pollMs: 2000, timeoutMs: 30000 };
 
 interface BuildShortArgs extends TranscriptArgs {
+  expectedFingerprint?: string | undefined;
   startSentenceId: number;
   endSentenceId: number;
   name: string;
@@ -459,13 +464,13 @@ const placeScript = (sequenceId: string, itemId: string, binName: string): strin
     if (!seq) return JSON.stringify({ success: false, error: "Short sequence not found: " + ${JSON.stringify(sequenceId)} });
     var item = __findProjectItem(${JSON.stringify(itemId)});
     if (!item) return JSON.stringify({ success: false, error: "Imported caption item not found: " + ${JSON.stringify(itemId)} });
-    function childBin(parent, name) {
+    var childBin = function (parent, name) {
       for (var i = 0; i < parent.children.numItems; i++) {
         var c = parent.children[i];
         if (c && String(c.name) === name && c.type === ProjectItemType.BIN) return c;
       }
       return parent.createBin(name);
-    }
+    };
     var bin = childBin(childBin(app.project.rootItem, "Shorts"), ${JSON.stringify(binName)});
     var binMoved = true;
     try { item.moveBin(bin); } catch (eMove) { binMoved = false; }
@@ -524,10 +529,9 @@ const readbackScript = (sequenceId: string): string => `
       }
     }
     var keys = 0;
-    if (vt.numTracks > 0) {
-      var v1 = vt[0];
-      for (var j = 0; j < v1.clips.numItems; j++) {
-        var comps = v1.clips[j].components;
+    for (var t = 0; t < topIndex; t++) {
+      for (var j = 0; j < vt[t].clips.numItems; j++) {
+        var comps = vt[t].clips[j].components;
         for (var c = 0; c < comps.numItems; c++) {
           if (String(comps[c].displayName) !== "Auto Reframe") continue;
           for (var p = 0; p < comps[c].properties.numItems; p++) {
@@ -560,6 +564,15 @@ async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unkno
     };
   }
 
+  const warnings = [...loaded.warnings];
+  if (args.expectedFingerprint !== undefined) {
+    if (args.expectedFingerprint !== loaded.fingerprint) {
+      return { success: false, error: 'The sequence changed since it was transcribed. Run transcribe_sequence again.' };
+    }
+  } else {
+    warnings.push('Pass expectedFingerprint from find_highlight_candidates so edits made after selection are detected.');
+  }
+
   const total = loaded.sentences.length;
   const first = loaded.sentences.find((s) => s.id === args.startSentenceId);
   const last = loaded.sentences.find((s) => s.id === args.endSentenceId);
@@ -571,32 +584,28 @@ async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unkno
     };
   }
 
-  const snapshot = await readSequence(ctx, loaded.sequenceId);
-  if (isError(snapshot)) return { success: false, error: snapshot.error };
-  if (clipFingerprint(dialogueClips(snapshot, args.dialogueTrackIndices).clips) !== loaded.fingerprint) {
-    return { success: false, error: 'The sequence changed since it was transcribed. Run transcribe_sequence again.' };
-  }
-
-  const start = first.start;
-  const end = last.end;
+  // Whole frames: start snaps down, end snaps up, so the short and the captions agree on its length.
+  const fd = loaded.frameDuration;
+  const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
+  const start = round6(Math.floor(first.start / fd + 1e-6) * fd);
+  const end = round6(Math.ceil(last.end / fd - 1e-6) * fd);
   const durationSec = round3(end - start);
   const inRange = loaded.words.filter((w) => w.start >= start && w.start < end);
   const captions = applyCaptionOverrides(groupCaptions(inRange, start), args.captions ?? []);
   if (args.dryRun) {
-    return { success: true, dryRun: true, start, end, durationSec, name: args.name, captions };
+    return { success: true, dryRun: true, start, end, durationSec, name: args.name, captions, warnings };
   }
 
   const ffmpeg = await findFfTool('ffmpeg');
   if (!ffmpeg) return ffmpegMissingResult('build_short');
 
   // Auto Reframe keeps the source height: width = round(height × 9 / 16). Read only, before any change.
-  const probe: any = await ctx.bridge.executeScript(probeScript(snapshot.sequenceId));
+  const probe: any = await ctx.bridge.executeScript(probeScript(loaded.sequenceId));
   if (!probe || probe.success === false || !(probe.frameSizeVertical > 0)) {
     return { success: false, error: probe?.error ?? 'Could not read the sequence frame size.' };
   }
   const height = Math.round(Number(probe.frameSizeVertical));
   const width = Math.round(height * 9 / 16);
-  const warnings = [...loaded.warnings];
   if (captions.length === 0) warnings.push('No words fall in this range, so the caption track is empty.');
 
   // 1. Render the captions first: a failure here leaves the project untouched.
@@ -611,7 +620,7 @@ async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unkno
       style: args.captionStyle,
       width,
       height,
-      fps: round3(1 / snapshot.frameDuration),
+      fps: round3(1 / fd),
       duration: durationSec,
       ...(args.font ? { font: args.font } : {}),
       safeArea: SAFE_AREA,
@@ -630,95 +639,109 @@ async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unkno
 
   let backupPath: string | undefined;
   let shortSequenceId: string | undefined;
+  let step = 'backup';
   const fail = (failedStep: string, error: string): Record<string, unknown> => ({
     success: false, verified: false, failedStep, error, backupPath, shortSequenceId, captionFile, warnings,
   });
 
-  // 2. Backup.
-  const backup = await ensureBackup(ctx, args.backup);
-  if ('failure' in backup) return { ...backup.failure, verified: false, failedStep: 'backup', captionFile, warnings };
-  backupPath = backup.path;
+  try {
+    // 2. Backup.
+    const backup = await ensureBackup(ctx, args.backup);
+    if ('failure' in backup) return { ...backup.failure, verified: false, failedStep: 'backup', captionFile, warnings };
+    backupPath = backup.path;
 
-  // 3. Subsequence of the range, Auto Reframe to 9:16, drop the intermediate subsequence.
-  const reframe: any = await ctx.bridge.executeScript(reframeScript(snapshot.sequenceId, start, end, args.name));
-  if (!reframe || reframe.success === false || !reframe.sequenceID) return fail('reframe', reframe?.error ?? 'Auto Reframe did not return a sequence.');
-  shortSequenceId = String(reframe.sequenceID);
-  if (reframe.deleted === false) warnings.push('The intermediate subsequence could not be deleted; remove it from the project by hand.');
-  if (Number(reframe.frameSizeHorizontal) !== width || Number(reframe.frameSizeVertical) !== height) {
-    warnings.push(`Captions were rendered at ${width}×${height} but the short is ${reframe.frameSizeHorizontal}×${reframe.frameSizeVertical}; Premiere scales the caption overlay.`);
-  }
-
-  // 4. Import the caption file and place it on a new top video track at 0, in bin Shorts/<name>.
-  const imported = await importMedia(ctx, captionFile);
-  if (!imported?.success || !imported.id) return fail('import_captions', imported?.error ?? 'The caption file was not imported.');
-  const placed: any = await ctx.bridge.executeScript(placeScript(shortSequenceId, String(imported.id), safeFileName(args.name)));
-  if (!placed || placed.success === false) return fail('place_captions', placed?.error ?? 'The caption clip was not placed.');
-  if (placed.binMoved === false) warnings.push('The caption file could not be moved into the Shorts bin.');
-
-  // 5. Loudness.
-  const loudness = await normalizeLoudness(ctx, {
-    sequenceId: shortSequenceId,
-    targetLufs: args.targetLufs,
-    ...(args.dialogueTrackIndices ? { audioTrackIndices: args.dialogueTrackIndices } : {}),
-    dryRun: false,
-    backup: false,
-  });
-  if (!loudness || loudness.success === false) {
-    return fail('loudness', loudness?.error ?? 'Loudness could not be applied to every audio clip of the short.');
-  }
-
-  // 6. QA.
-  const qa = await qaSequence(ctx, { sequenceId: shortSequenceId, minClipFrames: 6, checkMedia: true });
-  if (!qa || qa.success === false) return fail('qa', qa?.error ?? 'qa_sequence failed on the short.');
-  if (qa.errors > 0) warnings.push(`qa_sequence found ${qa.errors} error(s) on the short; see qa.findings.`);
-
-  // 7. Multi-face warning markers (only when faces were asked for).
-  let markers: Array<{ start: number; end: number; name: string }> = [];
-  if (args.detectFaces) {
-    const faces = await timelineFaces(snapshot, { start, end }, warnings);
-    markers = multiFaceStretches(faces, start, end);
-    if (markers.length > 0) {
-      const added: any = await ctx.bridge.executeScript(markersScript(shortSequenceId, markers.map(({ start: s, end: e }) => ({ start: s, end: e }))));
-      if (!added || added.success === false) return fail('markers', added?.error ?? 'The warning markers were not added.');
+    // 3. Subsequence of the range, Auto Reframe to 9:16, drop the intermediate subsequence.
+    step = 'reframe';
+    const reframe: any = await ctx.bridge.executeScript(reframeScript(loaded.sequenceId, start, end, args.name));
+    if (!reframe || reframe.success === false || !reframe.sequenceID) return fail(step, reframe?.error ?? 'Auto Reframe did not return a sequence.');
+    shortSequenceId = String(reframe.sequenceID);
+    if (reframe.deleted === false) warnings.push('The intermediate subsequence could not be deleted; remove it from the project by hand.');
+    if (Number(reframe.frameSizeHorizontal) !== width || Number(reframe.frameSizeVertical) !== height) {
+      warnings.push(`Captions were rendered at ${width}×${height} but the short is ${reframe.frameSizeHorizontal}×${reframe.frameSizeVertical}; Premiere scales the caption overlay.`);
     }
-  }
 
-  // 8. Readback; wait for Auto Reframe's subject-tracking keyframes.
-  const began = Date.now();
-  let read: any;
-  for (;;) {
-    read = await ctx.bridge.executeScript(readbackScript(shortSequenceId));
-    if (!read || read.success === false) return fail('readback', read?.error ?? 'Could not read the short back.');
-    if (Number(read.reframeKeys) > 0 || Date.now() - began >= buildShortTiming.timeoutMs) break;
-    await sleep(buildShortTiming.pollMs);
-  }
-  if (!(Number(read.reframeKeys) > 0)) {
-    warnings.push(`Auto Reframe had no subject-tracking keyframes after ${Math.round(buildShortTiming.timeoutMs / 1000)} s; check the framing in Premiere.`);
-  }
-  const w = Number(read.frameSizeHorizontal);
-  const h = Number(read.frameSizeVertical);
-  const aspectOk = h > 0 && Math.abs(w - Math.round(h * 9 / 16)) <= 1;
-  const actualDuration = Number(read.endSeconds);
-  const durationOk = Math.abs(actualDuration - (end - start)) <= snapshot.frameDuration + 1e-6;
-  const captionOk = Array.isArray(read.topTrackPaths) && read.topTrackPaths.some((p: string) => samePath(String(p), captionFile));
-  if (!aspectOk) warnings.push(`The short is ${w}×${h}, not 9:16.`);
-  if (!durationOk) warnings.push(`The short lasts ${round3(actualDuration)} s, expected ${durationSec} s.`);
-  if (!captionOk) warnings.push('The caption clip was not found on the top video track.');
+    // 4. Import the caption file and place it on a new top video track at 0, in bin Shorts/<name>.
+    step = 'import_captions';
+    const imported = await importMedia(ctx, captionFile);
+    if (!imported?.success || !imported.id) return fail(step, imported?.error ?? 'The caption file was not imported.');
+    step = 'place_captions';
+    const placed: any = await ctx.bridge.executeScript(placeScript(shortSequenceId, String(imported.id), safeFileName(args.name)));
+    if (!placed || placed.success === false) return fail(step, placed?.error ?? 'The caption clip was not placed.');
+    if (placed.binMoved === false) warnings.push('The caption file could not be moved into the Shorts bin.');
 
-  return {
-    success: true,
-    verified: aspectOk && durationOk && captionOk,
-    shortSequenceId,
-    name: args.name,
-    durationSec: round3(actualDuration),
-    width: w,
-    height: h,
-    captionFile,
-    ...(backupPath ? { backupPath } : {}),
-    qa,
-    warnings: [...new Set(warnings)],
-    markers,
-  };
+    // 5. Loudness, on the dialogue tracks only so music is not pushed to the target.
+    step = 'loudness';
+    const loudness = await normalizeLoudness(ctx, {
+      sequenceId: shortSequenceId,
+      targetLufs: args.targetLufs,
+      audioTrackIndices: args.dialogueTrackIndices ?? loaded.dialogueTrackIndices,
+      dryRun: false,
+      backup: false,
+    });
+    if (!loudness || loudness.success === false) {
+      return fail(step, loudness?.error ?? 'Loudness could not be applied to every audio clip of the short.');
+    }
+
+    // 6. QA.
+    step = 'qa';
+    const qa = await qaSequence(ctx, { sequenceId: shortSequenceId, minClipFrames: 6, checkMedia: true });
+    if (!qa || qa.success === false) return fail(step, qa?.error ?? 'qa_sequence failed on the short.');
+    if (qa.errors > 0) warnings.push(`qa_sequence found ${qa.errors} error(s) on the short; see qa.findings.`);
+
+    // 7. Multi-face warning markers (only when faces were asked for).
+    step = 'markers';
+    let markers: Array<{ start: number; end: number; name: string }> = [];
+    if (args.detectFaces) {
+      const snapshot = await readSequence(ctx, loaded.sequenceId);
+      if (isError(snapshot)) return fail(step, snapshot.error);
+      const faces = await timelineFaces(snapshot, { start, end }, warnings);
+      markers = multiFaceStretches(faces, start, end);
+      if (markers.length > 0) {
+        const added: any = await ctx.bridge.executeScript(markersScript(shortSequenceId, markers.map(({ start: s, end: e }) => ({ start: s, end: e }))));
+        if (!added || added.success === false) return fail(step, added?.error ?? 'The warning markers were not added.');
+      }
+    }
+
+    // 8. Readback; wait for Auto Reframe's subject-tracking keyframes.
+    step = 'readback';
+    const began = Date.now();
+    let read: any;
+    for (;;) {
+      read = await ctx.bridge.executeScript(readbackScript(shortSequenceId));
+      if (!read || read.success === false) return fail(step, read?.error ?? 'Could not read the short back.');
+      if (Number(read.reframeKeys) > 0 || Date.now() - began >= buildShortTiming.timeoutMs) break;
+      await sleep(buildShortTiming.pollMs);
+    }
+    if (!(Number(read.reframeKeys) > 0)) {
+      warnings.push(`Auto Reframe had no subject-tracking keyframes after ${Math.round(buildShortTiming.timeoutMs / 1000)} s; check the framing in Premiere.`);
+    }
+    const w = Number(read.frameSizeHorizontal);
+    const h = Number(read.frameSizeVertical);
+    const aspectOk = h > 0 && Math.abs(w - Math.round(h * 9 / 16)) <= 1;
+    const actualDuration = Number(read.endSeconds);
+    const durationOk = Math.abs(actualDuration - (end - start)) <= fd + 1e-6;
+    const captionOk = Array.isArray(read.topTrackPaths) && read.topTrackPaths.some((p: string) => samePath(String(p), captionFile));
+    if (!aspectOk) warnings.push(`The short is ${w}×${h}, not 9:16.`);
+    if (!durationOk) warnings.push(`The short lasts ${round3(actualDuration)} s, expected ${durationSec} s.`);
+    if (!captionOk) warnings.push('The caption clip was not found on the top video track.');
+
+    return {
+      success: true,
+      verified: aspectOk && durationOk && captionOk,
+      shortSequenceId,
+      name: args.name,
+      durationSec: round3(actualDuration),
+      width: w,
+      height: h,
+      captionFile,
+      ...(backupPath ? { backupPath } : {}),
+      qa,
+      warnings: [...new Set(warnings)],
+      markers,
+    };
+  } catch (error) {
+    return fail(step, error instanceof Error ? error.message : String(error));
+  }
 }
 
 export const shortsTools: ToolModule[] = [
@@ -738,7 +761,7 @@ export const shortsTools: ToolModule[] = [
   {
     name: 'find_highlight_candidates',
     description:
-      'Proposes 20-90 s windows of whole sentences from the transcribed dialogue of a sequence as short-form highlight candidates, each with its text, objective signals (words per second, loudness relative to the median, question/exclamation, filler rate, longest pause, multi-face ratio) and a rawScore. Candidates never overlap and are spread across the episode. Uses the transcript from transcribe_sequence (returns status "running" until it is done) and ffmpeg for loudness. Face counting is off by default (detectFaces) to save CPU/GPU. Read-only. The agent reads the text and picks the best.',
+      'Proposes 20-90 s windows of whole sentences from the transcribed dialogue of a sequence as short-form highlight candidates, each with its text, objective signals (words per second, loudness relative to the median, question/exclamation, filler rate, longest pause, multi-face ratio) and a rawScore. Candidates never overlap and are spread across the episode. Uses the transcript from transcribe_sequence (returns status "running" until it is done) and ffmpeg for loudness. Face counting is off by default (detectFaces) to save CPU/GPU. Also returns the transcript fingerprint: pass it to build_short as expectedFingerprint so edits made after selection are detected. Read-only. The agent reads the text and picks the best.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech. Defaults to every audio track that has a clip with a media file.'),
@@ -753,11 +776,12 @@ export const shortsTools: ToolModule[] = [
   {
     name: 'build_short',
     description:
-      'Builds a vertical 9:16 short from a range of transcribed sentences (ids from transcribe_sequence): renders the captions to an alpha .mov first, then backs up the project, makes a subsequence of the range, runs Auto Reframe (9:16, its height follows the source), imports the captions into bin Shorts/<name> on a new top video track, normalises loudness to targetLufs, runs qa_sequence and reads the result back (verified). Use dryRun=true first to get the caption groups; edit their text and pass them back as `captions` (an empty text removes a group). On a failure after the render it stops, keeps what was built and returns failedStep and backupPath. Needs the analysis sidecar and ffmpeg.',
+      'Builds a vertical 9:16 short from a range of transcribed sentences (ids from transcribe_sequence): renders the captions to an alpha .mov first, then backs up the project, makes a subsequence of the range, runs Auto Reframe (9:16, its height follows the source), imports the captions into bin Shorts/<name> on a new top video track, normalises loudness to targetLufs, runs qa_sequence and reads the result back (verified). Use dryRun=true first to get the caption groups; edit their text and pass them back as `captions` (an empty text removes a group). Pass expectedFingerprint (the fingerprint returned by find_highlight_candidates or transcribe_sequence) so a sequence edited after selection is refused; without it a warning is returned. On a failure after the render it stops, keeps what was built and returns failedStep and backupPath. Needs the analysis sidecar and ffmpeg.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as transcribe_sequence. Defaults to every audio track that has a clip with a media file.'),
       glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward; use the same list as transcribe_sequence.'),
+      expectedFingerprint: z.string().optional().describe('fingerprint from find_highlight_candidates (or transcribe_sequence). If the sequence has changed since, build_short refuses instead of cutting the wrong range.'),
       startSentenceId: z.number().int().min(0).describe('Id of the first sentence of the short.'),
       endSentenceId: z.number().int().min(0).describe('Id of the last sentence of the short (inclusive).'),
       name: z.string().min(1).describe('Name of the new sequence. Any characters are kept; the caption file name is made safe.'),
