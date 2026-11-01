@@ -230,7 +230,7 @@ Write-Host 'Install complete.'
 Write-Host 'Next:'
 Write-Host '1. Restart VS Code and/or Claude Desktop so MCP config is reloaded.'
 Write-Host '2. Restart Premiere Pro.'
-Write-Host '3. Open Window > Extensions > MCP Bridge (CEP).'
+Write-Host '3. Open Window > Extensions > TeamTrau PremiereProControl.'
 Write-Host "4. Set Temp Directory to $TempDir."
 Write-Host '5. Click Save Configuration, Start Bridge, then Test Connection.'
 Write-Host ''

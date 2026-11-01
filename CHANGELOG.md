@@ -4,6 +4,7 @@ All notable changes are documented here. Releases use semantic versioning.
 
 ## [Unreleased]
 
+- The Premiere panel and its menu entry are now called **TeamTrau PremiereProControl** (Window > Extensions). Existing installs keep working; only the displayed name changed.
 - Podcast to 9:16 vertical shorts:
   - `transcribe_sequence` transcribes dialogue tracks using a local faster-whisper sidecar (`large-v3-turbo`, Vietnamese) with background jobs and disk caching.
   - `find_highlight_candidates` extracts 20–90 s highlight windows across sentence boundaries with speaking rate, loudness, pause, and multi-face signals.

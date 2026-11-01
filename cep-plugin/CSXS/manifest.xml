@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="10.0" ExtensionBundleId="com.mcp.premiere.cepbridge" ExtensionBundleVersion="1.1.6" ExtensionBundleName="MCP Bridge (CEP)">
+<ExtensionManifest Version="10.0" ExtensionBundleId="com.mcp.premiere.cepbridge" ExtensionBundleVersion="1.1.6" ExtensionBundleName="TeamTrau PremiereProControl">
   <ExtensionList>
     <Extension Id="com.mcp.premiere.cepbridge.panel" Version="1.1.6"/>
   </ExtensionList>
@@ -29,7 +29,7 @@
         </Lifecycle>
         <UI>
           <Type>Panel</Type>
-          <Menu>MCP Bridge (CEP)</Menu>
+          <Menu>TeamTrau PremiereProControl</Menu>
           <Geometry>
             <Size>
               <Height>400</Height>

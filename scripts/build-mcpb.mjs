@@ -20,7 +20,7 @@ const manifest = {
   display_name: 'Adobe Premiere Pro MCP',
   version: packageJson.version,
   description: 'Control Adobe Premiere Pro through MCP using the included CEP bridge.',
-  long_description: 'A local MCP server for Adobe Premiere Pro. On first launch the bundle installs its CEP bridge for the current user. Restart Premiere Pro, open Window > Extensions > MCP Bridge (CEP), and start the bridge before requesting edits.',
+  long_description: 'A local MCP server for Adobe Premiere Pro. On first launch the bundle installs its CEP bridge for the current user. Restart Premiere Pro, open Window > Extensions > TeamTrau PremiereProControl, and start the bridge before requesting edits.',
   author: {
     name: 'AlbedoDz',
     url: 'https://github.com/AlbedoDz/TeamTrau-PremiereProControl'

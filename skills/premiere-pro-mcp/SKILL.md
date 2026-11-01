@@ -62,7 +62,7 @@ After installing:
 
 1. Restart the MCP client if it reads config only at startup.
 2. Restart Premiere Pro.
-3. Open `Window > Extensions > MCP Bridge (CEP)`.
+3. Open `Window > Extensions > TeamTrau PremiereProControl`.
 4. Set `Temp Directory` to `/tmp/premiere-mcp-bridge`.
 5. Click `Save Configuration`.
 6. Click `Start Bridge`.
@@ -102,7 +102,7 @@ For deeper validation in a disposable project, create a test sequence with `crea
 If commands time out or report bridge errors:
 
 1. Confirm Premiere is open.
-2. Confirm `Window > Extensions > MCP Bridge (CEP)` is open and bridge is started.
+2. Confirm `Window > Extensions > TeamTrau PremiereProControl` is open and bridge is started.
 3. Confirm both sides use the same temp directory.
 4. Run:
 

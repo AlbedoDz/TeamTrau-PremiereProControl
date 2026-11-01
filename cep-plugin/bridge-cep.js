@@ -448,7 +448,7 @@
     };
 
     MCPPremiereBridge.prototype.init = function() {
-        this.log('Initializing MCP Bridge (CEP)...', 'info');
+        this.log('Initializing TeamTrau PremiereProControl...', 'info');
 
         // Check host environment
         try {
@@ -876,7 +876,7 @@
             this.updateServerStatus(true);
             return;
         }
-        this.log('Starting MCP Bridge...', 'info');
+        this.log('Starting TeamTrau PremiereProControl...', 'info');
         this.isProcessing = false;
         this.isConnected = true;
         this.updateUI();
@@ -893,7 +893,7 @@
     };
 
     MCPPremiereBridge.prototype.stopBridge = function() {
-        this.log('Stopping MCP Bridge...', 'info');
+        this.log('Stopping TeamTrau PremiereProControl...', 'info');
         this.isConnected = false;
         this.isProcessing = false;
         this.updateUI();
@@ -905,7 +905,7 @@
         var hostEnvironment = null;
         var report = {
             generatedAt: new Date().toISOString(),
-            panel: 'MCP Bridge (CEP)',
+            panel: 'TeamTrau PremiereProControl',
             tempDirectory: this.getTempDirectory(),
             hostEnvironment: null,
             checks: []

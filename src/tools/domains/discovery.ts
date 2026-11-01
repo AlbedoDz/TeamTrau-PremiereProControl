@@ -375,7 +375,7 @@ async function verifyPremiereConnection(ctx: ToolContext, launchIfNeeded = true)
           success: false,
           status: 'unavailable',
           error: e.toString(),
-          nextStep: 'Open Window > Extensions > MCP Bridge if the panel is missing, then run verify_premiere_connection again.'
+          nextStep: 'Open Window > Extensions > TeamTrau PremiereProControl if the panel is missing, then run verify_premiere_connection again.'
         });
       }
     `;

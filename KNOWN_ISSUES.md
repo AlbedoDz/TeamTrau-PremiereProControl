@@ -194,7 +194,7 @@ Symptoms:
 
 Fix:
 
-1. Open `Window > Extensions > MCP Bridge (CEP)`.
+1. Open `Window > Extensions > TeamTrau PremiereProControl`.
 2. Confirm the temp directory is `/tmp/premiere-mcp-bridge`.
 3. Click `Start Bridge`.
 4. If bridge code changed, right-click the panel and choose `Reload`.

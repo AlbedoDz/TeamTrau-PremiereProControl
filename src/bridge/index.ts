@@ -21,9 +21,9 @@ export const BRIDGE_PANEL_ABSENT_MS = 1500;
 export const BRIDGE_HEARTBEAT_STALE_MS = 2500;
 export const HEALTH_CHECK_TIMEOUT_MS = 8000;
 export const BRIDGE_PANEL_NOT_RUNNING =
-  'MCP Bridge is not running. Open Adobe Premiere Pro. The MCP Bridge panel auto-starts when Premiere opens it. If the panel is missing, choose Window > Extensions > MCP Bridge. Call verify_premiere_connection once rather than retrying other tools.';
+  'The TeamTrau PremiereProControl panel is not running. Open Adobe Premiere Pro. The TeamTrau PremiereProControl panel auto-starts when Premiere opens it. If the panel is missing, choose Window > Extensions > TeamTrau PremiereProControl. Call verify_premiere_connection once rather than retrying other tools.';
 export const BRIDGE_NOT_STARTED =
-  'MCP Bridge panel is open but the bridge is not started. Click Start Bridge, wait until it says Connected, then retry once.';
+  'TeamTrau PremiereProControl panel is open but the bridge is not started. Click Start Bridge, wait until it says Connected, then retry once.';
 export const PREMIERE_LAUNCH_WAIT_MS = 45000;
 
 /**
@@ -994,8 +994,8 @@ export class PremiereProBridge implements PremiereProTransport {
 
     if (!running && !launched) {
       const nextStep = this.premiereInstallPath
-        ? 'Adobe Premiere Pro is installed but could not be launched from this environment. Open Premiere yourself. The MCP Bridge panel auto-starts. Then run verify_premiere_connection once.'
-        : 'Adobe Premiere Pro is not installed in the usual location, so this server cannot launch it. Open Premiere, choose Window > Extensions > MCP Bridge if the panel does not appear, and run verify_premiere_connection once.';
+        ? 'Adobe Premiere Pro is installed but could not be launched from this environment. Open Premiere yourself. The TeamTrau PremiereProControl panel auto-starts. Then run verify_premiere_connection once.'
+        : 'Adobe Premiere Pro is not installed in the usual location, so this server cannot launch it. Open Premiere, choose Window > Extensions > TeamTrau PremiereProControl if the panel does not appear, and run verify_premiere_connection once.';
       return {
         ready: false,
         success: false,
@@ -1023,7 +1023,7 @@ export class PremiereProBridge implements PremiereProTransport {
     }
 
     const nextStep = launched
-      ? 'Premiere was launched but the MCP Bridge panel did not connect in time. When Premiere finishes opening, confirm Window > Extensions > MCP Bridge is visible, then run verify_premiere_connection once. Do not retry other tools yet.'
+      ? 'Premiere was launched but the TeamTrau PremiereProControl panel did not connect in time. When Premiere finishes opening, confirm Window > Extensions > TeamTrau PremiereProControl is visible, then run verify_premiere_connection once. Do not retry other tools yet.'
       : BRIDGE_PANEL_NOT_RUNNING;
     return {
       ready: false,
@@ -1291,7 +1291,7 @@ export class PremiereProBridge implements PremiereProTransport {
 
   private async timeoutMessage(): Promise<string> {
     const beat = await this.readHeartbeat();
-    const base = 'Bridge response timeout. Ensure Premiere Pro is open, MCP Bridge (CEP or UXP) panel is open, ' +
+    const base = 'Bridge response timeout. Ensure Premiere Pro is open, TeamTrau PremiereProControl (CEP or UXP) panel is open, ' +
       'Temp Directory is set to ' + this.tempDir + ', and Start Bridge is clicked. Do not retry until the panel says Connected.';
     if (!beat?.started || beat.scriptOkAt == null) return base;
     const scriptAgeSec = Math.round((Date.now() - beat.scriptOkAt) / 1000);

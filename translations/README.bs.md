@@ -12,7 +12,7 @@ cd Adobe_Premiere_Pro_MCP
 npm run setup:mac
 ```
 
-1. U Premiere Pro otvorite `Window > Extensions > MCP Bridge (CEP)`.
+1. U Premiere Pro otvorite `Window > Extensions > TeamTrau PremiereProControl`.
 2. Postavite `Temp Directory` na `/tmp/premiere-mcp-bridge`.
 3. Kliknite `Save Configuration`, `Start Bridge`, pa zatim `Test Connection`.
 4. Ako test ne uspije, kliknite `Run Diagnostics` i pošaljite `/tmp/premiere-mcp-bridge/premiere-mcp-diagnostics-latest.json`.

@@ -8,7 +8,7 @@ export const MCP_SERVER_INSTRUCTIONS = [
   'You are driving Adobe Premiere Pro through this MCP server.',
   '',
   'Connection — do this first, once per session:',
-  '- Call verify_premiere_connection before any editing tool. If Premiere is installed and not running, that call launches it and waits for the MCP Bridge panel. The CEP panel auto-starts the bridge when Premiere opens it; the user should not have to click Start Bridge.',
+  '- Call verify_premiere_connection before any editing tool. If Premiere is installed and not running, that call launches it and waits for the TeamTrau PremiereProControl panel. The CEP panel auto-starts the bridge when Premiere opens it; the user should not have to click Start Bridge.',
   '- If verify_premiere_connection or any other tool returns retry:false with userActionRequired:true, tell the user the nextStep verbatim and STOP. Do not call other editing tools. Do not retry the failed tool.',
   '- A missing MCP Bridge is not a Premiere editing failure. Do not call list_sequences, import_media, apply_effect, or similar until verify_premiere_connection succeeds.',
   '',

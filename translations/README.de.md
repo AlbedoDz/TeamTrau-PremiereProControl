@@ -12,7 +12,7 @@ cd Adobe_Premiere_Pro_MCP
 npm run setup:mac
 ```
 
-1. Öffne in Premiere Pro `Window > Extensions > MCP Bridge (CEP)`.
+1. Öffne in Premiere Pro `Window > Extensions > TeamTrau PremiereProControl`.
 2. Setze `Temp Directory` auf `/tmp/premiere-mcp-bridge`.
 3. Klicke auf `Save Configuration`, `Start Bridge` und danach `Test Connection`.
 4. Wenn der Test fehlschlägt, klicke auf `Run Diagnostics` und sende `/tmp/premiere-mcp-bridge/premiere-mcp-diagnostics-latest.json`.

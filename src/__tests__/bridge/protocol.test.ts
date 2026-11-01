@@ -171,7 +171,7 @@ describe('bridge file-queue protocol', () => {
       const started = Date.now();
 
       await expect(bridge.executeScript('return 1;', 20000)).rejects.toThrow(
-        /MCP Bridge is not running/,
+        /The TeamTrau PremiereProControl panel is not running/,
       );
 
       expect(Date.now() - started).toBeLessThan(5000);

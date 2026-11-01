@@ -225,7 +225,11 @@ function inferErrorCode(
   ) {
     return 'bridge.timeout';
   }
-  if (status === 'bridge_unavailable' || normalized.includes('mcp bridge is not running')) {
+  if (
+    status === 'bridge_unavailable' ||
+    normalized.includes('mcp bridge is not running') ||
+    normalized.includes('teamtrau premiereprocontrol panel is not running')
+  ) {
     if (normalized.includes('has not been clicked')) return 'bridge.not_started';
     return 'bridge.panel_absent';
   }

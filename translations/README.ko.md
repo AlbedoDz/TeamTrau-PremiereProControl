@@ -12,7 +12,7 @@ cd Adobe_Premiere_Pro_MCP
 npm run setup:mac
 ```
 
-1. Premiere Pro에서 `Window > Extensions > MCP Bridge (CEP)`를 엽니다.
+1. Premiere Pro에서 `Window > Extensions > TeamTrau PremiereProControl`를 엽니다.
 2. `Temp Directory`를 `/tmp/premiere-mcp-bridge`로 설정합니다.
 3. `Save Configuration`, `Start Bridge`, `Test Connection`을 순서대로 클릭합니다.
 4. 테스트가 실패하면 `Run Diagnostics`를 클릭하고 `/tmp/premiere-mcp-bridge/premiere-mcp-diagnostics-latest.json` 파일을 공유해 주세요.
