@@ -115,12 +115,7 @@ async function isUvAvailable(spawnFn: typeof spawn = spawn): Promise<boolean> {
 
 export async function setupAsr(
   log: (line: string) => void,
-  options: {
-    pkgPythonDir: string;
-    spawnFn?: typeof spawn;
-    home?: string;
-    platform?: NodeJS.Platform;
-  }
+  options: SetupAsrOptions
 ): Promise<number> {
   const plat = options.platform ?? process.platform;
   const spawnFn = options.spawnFn ?? spawn;
@@ -224,6 +219,7 @@ export async function setupAsr(
       // ignore read error
     }
 
+    resetAsrStatusCache();
     return 0;
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
@@ -236,12 +232,14 @@ interface CachedAsrStatus {
 }
 
 let cachedStatus: CachedAsrStatus | null = null;
+let inFlightStatus: Promise<AsrStatus> | null = null;
 
 export function resetAsrStatusCache(): void {
   cachedStatus = null;
+  inFlightStatus = null;
 }
 
-export async function asrStatus(opts?: { timeoutMs?: number; maxAgeMs?: number }): Promise<AsrStatus> {
+export async function asrStatus(opts?: AsrStatusOptions): Promise<AsrStatus> {
   const maxAgeMs = opts?.maxAgeMs ?? 60_000;
   const timeoutMs = opts?.timeoutMs ?? 60_000;
 
@@ -250,34 +248,45 @@ export async function asrStatus(opts?: { timeoutMs?: number; maxAgeMs?: number }
     return cachedStatus.result;
   }
 
-  const python = await sidecarPython();
-  if (!python) {
-    const result: AsrStatus = {
-      installed: false,
-      nextStep:
-        'Run premiere-pro-mcp --setup-asr (about 2 GB download: Python packages and the large-v3-turbo model).',
-    };
-    cachedStatus = { result, timestamp: Date.now() };
-    return result;
+  if (inFlightStatus) {
+    return inFlightStatus;
   }
 
-  try {
-    const report = await runSidecar<{
-      cuda?: boolean;
-      models?: { whisper: boolean; yunet: boolean };
-    }>('check', {}, timeoutMs);
+  const promise = (async (): Promise<AsrStatus> => {
+    const python = await sidecarPython();
+    if (!python) {
+      return {
+        installed: false,
+        nextStep:
+          'Run premiere-pro-mcp --setup-asr (about 2 GB download: Python packages and the large-v3-turbo model).',
+      };
+    }
 
-    const result: AsrStatus = { installed: true };
-    if (report?.cuda !== undefined) result.cuda = Boolean(report.cuda);
-    if (report?.models !== undefined) result.models = report.models;
-    cachedStatus = { result, timestamp: Date.now() };
-    return result;
-  } catch (error: unknown) {
-    const result: AsrStatus = {
-      installed: true,
-      nextStep: error instanceof Error ? error.message : String(error),
-    };
-    cachedStatus = { result, timestamp: Date.now() };
-    return result;
-  }
+    try {
+      const report = await runSidecar<{
+        cuda?: boolean;
+        models?: { whisper: boolean; yunet: boolean };
+      }>('check', {}, timeoutMs);
+
+      const result: AsrStatus = { installed: true };
+      if (report?.cuda !== undefined) result.cuda = Boolean(report.cuda);
+      if (report?.models !== undefined) result.models = report.models;
+      cachedStatus = { result, timestamp: Date.now() };
+      return result;
+    } catch (error: unknown) {
+      const result: AsrStatus = {
+        installed: true,
+        nextStep: error instanceof Error ? error.message : String(error),
+      };
+      cachedStatus = { result, timestamp: Date.now() };
+      return result;
+    }
+  })().finally(() => {
+    if (inFlightStatus === promise) {
+      inFlightStatus = null;
+    }
+  });
+
+  inFlightStatus = promise;
+  return promise;
 }

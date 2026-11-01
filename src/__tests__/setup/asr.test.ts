@@ -336,6 +336,52 @@ describe('setupAsr and asrStatus', () => {
       expect(spawned.some((s) => s.args.includes('check'))).toBe(false);
       expect(spawned.every((s) => !JSON.stringify(s).includes('.premiere-mcp'))).toBe(true);
     });
+
+    it('resets asr status cache when setupAsr finishes with exit code 0', async () => {
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\\premiere-mcp\\venv\\Scripts\\python.exe');
+      (sidecar.runSidecar as jest.Mock).mockResolvedValue({
+        cuda: false,
+        models: { whisper: true, yunet: true },
+      });
+
+      await asrStatus();
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+
+      const logs: string[] = [];
+      const code = await setupAsr((l) => logs.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+      });
+      expect(code).toBe(0);
+
+      await asrStatus();
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not reset asr status cache when setupAsr finishes with non-zero exit code', async () => {
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\\premiere-mcp\\venv\\Scripts\\python.exe');
+      (sidecar.runSidecar as jest.Mock).mockResolvedValue({
+        cuda: false,
+        models: { whisper: true, yunet: true },
+      });
+
+      await asrStatus();
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+
+      failTarget = 'download-models';
+      failExitCode = 3;
+      const logs: string[] = [];
+      const code = await setupAsr((l) => logs.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+      });
+      expect(code).toBe(3);
+
+      await asrStatus();
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('asrStatus', () => {
@@ -445,6 +491,56 @@ describe('setupAsr and asrStatus', () => {
 
       await asrStatus();
       expect(sidecar.runSidecar).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not memoise not installed result and runs sidecar check once python exists', async () => {
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValueOnce(null);
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\\premiere-mcp\\venv\\Scripts\\python.exe');
+      (sidecar.runSidecar as jest.Mock).mockResolvedValue({
+        cuda: true,
+        models: { whisper: true, yunet: true },
+      });
+
+      const first = await asrStatus();
+      expect(first.installed).toBe(false);
+      expect(first.nextStep).toContain('premiere-pro-mcp --setup-asr');
+      expect(sidecar.runSidecar).not.toHaveBeenCalled();
+
+      const second = await asrStatus();
+      expect(second.installed).toBe(true);
+      expect(second.cuda).toBe(true);
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs sidecar once when two asrStatus calls are concurrent', async () => {
+      (sidecar.sidecarPython as jest.Mock).mockResolvedValue('C:\\premiere-mcp\\venv\\Scripts\\python.exe');
+      let resolveSidecar!: (val: unknown) => void;
+      (sidecar.runSidecar as jest.Mock).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveSidecar = resolve;
+          })
+      );
+
+      const p1 = asrStatus();
+      const p2 = asrStatus();
+
+      await new Promise((r) => setImmediate(r));
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
+
+      resolveSidecar({
+        cuda: true,
+        models: { whisper: true, yunet: true },
+      });
+
+      const [res1, res2] = await Promise.all([p1, p2]);
+      expect(res1).toEqual({
+        installed: true,
+        cuda: true,
+        models: { whisper: true, yunet: true },
+      });
+      expect(res2).toEqual(res1);
+      expect(sidecar.runSidecar).toHaveBeenCalledTimes(1);
     });
   });
 });

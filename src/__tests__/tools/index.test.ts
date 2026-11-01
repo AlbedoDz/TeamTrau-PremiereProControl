@@ -119,13 +119,6 @@ describe('PremiereProTools', () => {
   });
 
   describe('executeTool()', () => {
-    // Duplicate 'get_capabilities includes asr status' test removed; kept more complete test at line 643
-    (() => {
-
-
-
-
-    });
     describe('marker colours', () => {
       // Premiere's setColorByIndex() order, verified against 26.0.2 by writing
       // each index and reading the rendered colour back off the timeline.
