@@ -9,6 +9,7 @@ import { spawn } from 'child_process';
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { delimiter, join } from 'node:path';
+import type { FrameSample } from './roughcut.js';
 
 export type FfTool = 'ffmpeg' | 'ffprobe';
 
@@ -139,6 +140,23 @@ export function parseIntegratedLoudness(stderr: string): number | null {
   if (!match) return null;
   const value = parseFloat(match[1]!);
   return Number.isFinite(value) ? value : null;
+}
+
+/** Short-term loudness samples (LUFS) from `ebur128=framelog=verbose`. */
+export function parseShortTermLoudness(stderr: string): FrameSample[] {
+  const samples: FrameSample[] = [];
+  for (const line of stderr.split(/\r?\n/)) {
+    const tMatch = /(?:^|\s)t:\s*([\d.eE+-]+)/.exec(line);
+    const sMatch = /(?:^|\s)S:\s*(-?[\d.eE+-]+|nan|-?inf)\b/i.exec(line);
+    if (!tMatch || !sMatch) continue;
+    const rawS = sMatch[1]!.toLowerCase();
+    if (rawS.includes('inf') || rawS.includes('nan')) continue;
+    const t = parseFloat(tMatch[1]!);
+    const v = parseFloat(rawS);
+    if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+    samples.push({ t, v });
+  }
+  return samples;
 }
 
 export interface ProbedStream {
