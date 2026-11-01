@@ -12,16 +12,26 @@ jest.mock('../../analysis/sidecar.js', () => {
     startJob: jest.fn(),
     jobStatus: jest.fn(),
     premiereMcpHome: jest.fn(),
+    runSidecar: jest.fn(),
   };
+});
+jest.mock('../../analysis/ffmpeg.js', () => {
+  const actual = jest.requireActual('../../analysis/ffmpeg.js');
+  return { ...actual, findFfTool: jest.fn(), runFf: jest.fn() };
 });
 
 import * as sidecar from '../../analysis/sidecar.js';
+import * as ffmpeg from '../../analysis/ffmpeg.js';
 import { ASR_MODEL } from '../../tools/domains/shorts.js';
 
 const sidecarPython = sidecar.sidecarPython as jest.Mock;
 const startJob = sidecar.startJob as jest.Mock;
 const jobStatus = sidecar.jobStatus as jest.Mock;
 const premiereMcpHome = sidecar.premiereMcpHome as jest.Mock;
+
+const runSidecar = sidecar.runSidecar as jest.Mock;
+const findFfTool = ffmpeg.findFfTool as jest.Mock;
+const runFf = ffmpeg.runFf as jest.Mock;
 
 const FRAME = 1 / 25;
 
@@ -128,5 +138,78 @@ describe('transcribe_sequence', () => {
     const r = await tools.executeTool('transcribe_sequence', {});
     expect(r).toMatchObject({ success: false, error: `Media file not found: ${missing}` });
     expect(startJob).not.toHaveBeenCalled();
+  });
+});
+
+describe('find_highlight_candidates', () => {
+  let executeScript: jest.Mock;
+  let tools: PremiereProTools;
+  let home: string;
+  let fileA: string;
+  let vidA: string;
+
+  // Four 12 s sentences with no gaps: 0-12, 12-24, 24-36, 36-48.
+  const words = [0, 1, 2, 3].flatMap((s) => Array.from({ length: 4 }, (_, i) => ({
+    w: i === 3 ? 'nhé.' : `từ${i}`, start: s * 12 + i * 3, end: s * 12 + i * 3 + 2.5, p: 0.9,
+  })));
+  const done = { status: 'done', progress: 1, result: { words } };
+  const vclip = (id: string, trackIndex: number, mediaPath: string) => ({
+    id, trackType: 'video', trackIndex, start: 0, end: 48, inPoint: 0, outPoint: 48, mediaPath,
+  });
+  const ebur = (n: number) => Array.from({ length: n }, (_, i) =>
+    `[Parsed_ebur128_0 @ 0x1] t: ${i + 1}    TARGET:-23 LUFS    M: -20.0 S: -${18 + (i % 3)}.0     I: -20.0 LUFS`).join('\n');
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'premiere-mcp-home-'));
+    fileA = join(home, 'a.wav');
+    vidA = join(home, 'v.mp4');
+    writeFileSync(fileA, 'x');
+    writeFileSync(vidA, 'v');
+    premiereMcpHome.mockReset().mockReturnValue(home);
+    sidecarPython.mockReset().mockResolvedValue('python');
+    startJob.mockReset().mockResolvedValue(done);
+    jobStatus.mockReset().mockResolvedValue(null);
+    runSidecar.mockReset().mockResolvedValue({ samples: [] });
+    findFfTool.mockReset().mockResolvedValue('ffmpeg');
+    runFf.mockReset().mockResolvedValue({ code: 0, stdout: '', stderr: ebur(48) });
+    executeScript = jest.fn().mockResolvedValue(sequence([aclip('c1', 0, 0, fileA, { end: 48, outPoint: 48 }), vclip('v1', 0, vidA)]));
+    tools = new PremiereProTools({ executeScript } as never);
+  });
+
+  it('returns running while the transcript is pending', async () => {
+    startJob.mockResolvedValue({ status: 'running', progress: 0.3 });
+    const r = await tools.executeTool('find_highlight_candidates', {});
+    expect(r).toMatchObject({ status: 'running', files: 1 });
+    expect(runFf).not.toHaveBeenCalled();
+  });
+
+  it('returns candidates with text and signals and never calls the faces sidecar by default', async () => {
+    const r = await tools.executeTool('find_highlight_candidates', { minSec: 20, maxSec: 40, limit: 2 });
+    expect(r).toMatchObject({ success: true, sequenceId: 's1', detectFaces: false });
+    expect(r.totalCandidates).toBeGreaterThan(0);
+    expect(r.candidates.length).toBeGreaterThan(0);
+    const c = r.candidates[0];
+    expect(c.text).toContain('từ0 từ1 từ2 nhé.');
+    expect(c.signals).toMatchObject({ multiFaceRatio: 0 });
+    expect(typeof c.rawScore).toBe('number');
+    expect(runFf).toHaveBeenCalledTimes(1);
+    expect(runFf.mock.calls[0][1]).toEqual(expect.arrayContaining(['-hide_banner', '-nostats', '-i', fileA, '-map', '0:a:0', '-af', 'ebur128=framelog=verbose']));
+    expect(runSidecar).not.toHaveBeenCalled();
+  });
+
+  it('derives multiFaceRatio from the mocked faces when detectFaces is true', async () => {
+    runSidecar.mockResolvedValue({ samples: Array.from({ length: 48 }, (_, t) => ({ t, count: 2 })) });
+    const r = await tools.executeTool('find_highlight_candidates', { detectFaces: true, minSec: 20, maxSec: 40 });
+    expect(r.detectFaces).toBe(true);
+    expect(runSidecar).toHaveBeenCalledTimes(1);
+    expect(runSidecar.mock.calls[0][0]).toBe('faces');
+    expect(runSidecar.mock.calls[0][1]).toMatchObject({ mediaPath: vidA, fps: 1, ranges: [{ start: 0, end: 48 }] });
+    expect(r.candidates[0].signals.multiFaceRatio).toBeCloseTo(1);
+  });
+
+  it('reports a missing ffmpeg', async () => {
+    findFfTool.mockResolvedValue(null);
+    const r = await tools.executeTool('find_highlight_candidates', {});
+    expect(r).toMatchObject({ success: false, errorCode: 'ffmpeg.not_found' });
   });
 });
