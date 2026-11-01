@@ -120,3 +120,12 @@ Chưa xong: chạy `remove_silence_from_sequence` trên project nháp trong Prem
 | blackdetect, freezedetect | ~6 s cho 5 phút 1080p H.264, gấp ~50 lần thời gian thực; giải mã video chiếm gần hết, giảm độ phân giải không nhanh hơn |
 | Nạp server + 287 tool | 150 ms, 77 MB RAM |
 Không tool nào cần GPU. Lần chạy thứ hai trên cùng file gần như tức thì nhờ cache.
+
+### Kiểm chứng live (2026-11-01, Premiere 25.6.3, project nháp Project-Temp)
+Fixture 12 s, hai khoảng lặng 3-6 s và 9-11 s, cắt bằng `remove_silence_from_sequence` với mặc định:
+| fps | kế hoạch bỏ | thực tế bỏ | độ dài sau | khoảng trống | verified |
+|---|---|---|---|---|---|
+| 29,97 | 4,537 s | 4,538 s | 7,441 s | 0 | true |
+| 25 | 4,520 s | 4,520 s | 7,480 s | 0 | true |
+Chạy lại dry-run sau khi cắt: 0 khoảng lặng còn lại. Sao lưu tự động tạo `premiere-mcp-backups/Project-Temp-*.prproj`. `normalize_loudness` ghi gain +7,8..+8 dB lên 3 clip, `applied: true`.
+Giữ nguyên cách ripple hiện tại (razor, nhấc, ripple clip cuối); chưa cần đổi sang `ripple_delete`. Chưa đo bằng mắt việc audio và video còn thẳng hàng sau cắt; không có khoảng trống nào.
