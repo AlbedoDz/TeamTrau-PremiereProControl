@@ -31,7 +31,7 @@ describe('tool catalog structure', () => {
   it('gives every domain tool a callable handler', () => {
     const unrunnable = domainTools.filter((tool) => typeof tool.run !== 'function');
     expect(unrunnable.map((tool) => tool.name)).toEqual([]);
-    expect(domainTools.length).toBe(124);
+    expect(domainTools.length).toBe(125);
   });
 
   it('exposes every domain module through the barrel', () => {

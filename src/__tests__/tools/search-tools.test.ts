@@ -29,7 +29,7 @@ describe('tool search', () => {
     try {
       expect(resolveToolset()).toBe('search');
       expect(tools.getAdvertisedTools().map((tool) => tool.name)).toEqual([...CORE_ADVERTISED_TOOL_NAMES]);
-      expect(tools.getAvailableTools().length).toBe(295);
+      expect(tools.getAvailableTools().length).toBe(296);
       expect(tools.getAdvertisedTools()).toHaveLength(5);
     } finally {
       restore();
@@ -40,7 +40,7 @@ describe('tool search', () => {
     const restore = stubToolset('full');
     try {
       expect(resolveToolset()).toBe('full');
-      expect(tools.getAdvertisedTools()).toHaveLength(295);
+      expect(tools.getAdvertisedTools()).toHaveLength(296);
     } finally {
       restore();
     }
@@ -106,7 +106,7 @@ describe('tool search', () => {
       arguments: {},
     });
     expect(result.success).toBe(true);
-    expect(result.catalog.tools).toBe(295);
+    expect(result.catalog.tools).toBe(296);
   });
 
   it('refuses nested invoke_tool', async () => {
