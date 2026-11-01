@@ -107,6 +107,15 @@ describe('segEnd', () => {
   });
 });
 
+describe('dedupe segEnd merge', () => {
+  it('kept word carries segEnd when the dropped duplicate had it', () => {
+    const kept = tw('x', 0, 1, 0, 0.9);
+    const dropped = { ...tw('x', 0, 1, 1, 0.3), segEnd: true };
+    expect(dedupeOverlaps([kept, dropped])[0]!.segEnd).toBe(true);
+    expect(dedupeOverlaps([dropped, kept])[0]!.segEnd).toBe(true);
+  });
+});
+
 describe('clipFingerprint', () => {
   it('is stable under order and ignores video clips', () => {
     const a = clip({ id: 'A' }), b = clip({ id: 'B', start: 10, end: 20 });

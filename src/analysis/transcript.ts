@@ -107,7 +107,11 @@ export function dedupeOverlaps(words: TimelineWord[]): TimelineWord[] {
       }
     }
     if (dup < 0) kept.push(word);
-    else if (word.p > kept[dup]!.p) kept[dup] = word;
+    else {
+      const segEnd = word.segEnd === true || kept[dup]!.segEnd === true;
+      const winner = word.p > kept[dup]!.p ? word : kept[dup]!;
+      kept[dup] = segEnd && winner.segEnd !== true ? { ...winner, segEnd: true } : winner;
+    }
   }
   return kept.sort((a, b) => a.start - b.start || a.trackIndex - b.trackIndex);
 }
