@@ -109,7 +109,7 @@ On Windows, use `npm run setup:win` from PowerShell after `npm install` and `npm
 
 ---
 
-![Current MCP Bridge (CEP) panel](images/demo.png)
+![Current TeamTrau PremiereProControl panel](images/demo.png)
 
 Current CEP panel UI inside Premiere Pro, using the refreshed bridge controls and status layout.
 
@@ -414,7 +414,7 @@ By default `tools/list` advertises `search_tools`, `get_tool_schema`, `invoke_to
 
 ## Updates
 
-When a newer package is on npm, the MCP Bridge panel shows **Update now** and **Later**. Later snoozes the prompt for 7 days. Agents also see this on `get_capabilities`. Opt out with `PREMIERE_MCP_UPDATE_CHECK=0` or `"updateCheck": false` in `~/.premiere-mcp-bridge/config.json`.
+When a newer package is on npm, the TeamTrau PremiereProControl panel shows **Update now** and **Later**. Later snoozes the prompt for 7 days. Agents also see this on `get_capabilities`. Opt out with `PREMIERE_MCP_UPDATE_CHECK=0` or `"updateCheck": false` in `~/.premiere-mcp-bridge/config.json`.
 
 ## Troubleshooting
 
