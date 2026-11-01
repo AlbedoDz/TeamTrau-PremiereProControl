@@ -15,17 +15,24 @@ Use this skill to convert an edited 16:9 podcast sequence (20–90 minutes, mult
 
 ## Prerequisites and Setup
 
-The transcription, visual analysis, and caption rendering pipeline uses a local Python sidecar (`faster-whisper` with `large-v3-turbo` in `int8_float16` on NVIDIA GPU or `int8` on CPU, optional OpenCV YuNet for face detection, and Pillow/ffmpeg for ProRes 4444 alpha caption video generation).
+The transcription, visual analysis, and caption rendering pipeline uses a local Python sidecar (selectable speech engines, optional OpenCV YuNet for face detection, and Pillow/ffmpeg for ProRes 4444 alpha caption video generation).
 
-1. Install the ASR dependencies:
+1. Install the sidecar and the default engine (Zipformer-68M, about 150 MB, CPU, no GPU needed):
    ```bash
    premiere-pro-mcp --setup-asr
    ```
-2. **Disk space**: Setup downloads about 1.8 GB (Python packages + the 1.6 GB large-v3-turbo model); on PCs with an NVIDIA GPU it also installs the CUDA libraries, about 3.8 GB in total in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows) for the virtual environment and Whisper `large-v3-turbo` model weights. Without an NVIDIA GPU (including PCs with only an Intel/AMD integrated GPU) transcription runs on the CPU: about 0.7 minutes of processing per minute of audio on an 8-core CPU, roughly 1.4 minutes per minute on 2 cores (measured), about 1.9 GB RAM.
-3. **Hardware acceleration**:
-   - An NVIDIA GPU with CUDA (`int8_float16`) is optional but recommended (measured on a 9-minute Vietnamese podcast: ~51 s on an RTX 3070 using ~1.4 GB VRAM).
-   - If CUDA is not available, inference automatically falls back to CPU (`int8`), which works but is ~7× slower.
-4. If the sidecar is not installed when calling shorts tools, the tool returns error code `asr.not_installed` with instructions to run `premiere-pro-mcp --setup-asr`. Other MCP tools remain fully functional.
+2. Other engines are downloaded only if the user chooses them. Never download on your own: ask the user, state the size and license, and give them the command to run in a terminal (`premiere-pro-mcp --setup-asr --engine <id>`; add `--yes` only after they approve):
+
+| Engine | Download | License | Speed (9 min of audio) | Notes |
+| --- | --- | --- | --- | --- |
+| `zipformer-68m` (default) | about 80 MB + 2 MB voice-activity model | Apache-2.0 | 22 s on the CPU | Installed by `--setup-asr`. No punctuation: captions break at pauses. |
+| `zipformer-30m` | about 30 MB | CC-BY-NC-ND-4.0 (non-commercial only) | CPU | Smaller and lower quality. |
+| `rover` | both Zipformers (about 112 MB) | includes the 30M model: non-commercial only | CPU, runs both models | Combines the two outputs. |
+| `whisper-turbo` | 1.6 GB model, plus about 2 GB CUDA libraries if an NVIDIA GPU is found | MIT | about 51 s on an RTX 3070; about 0.7 min per audio minute on an 8-core CPU | Adds punctuation. Best with a GPU. |
+
+3. Pick the engine per call with `engine` on `transcribe_sequence`, `find_highlight_candidates`, `build_short` and `create_captions_from_transcript` (use the same value on all of them), or leave it out to use the configured default. If the engine is not installed the tool returns `asr.engine_not_installed` with `downloadMb`, `license` and `command`: tell the user and stop; do not retry.
+4. Zipformer engines output no punctuation; captions and sentences break at pauses, and the server capitalises sentence starts and applies the `glossary`. Whisper adds punctuation.
+5. If the sidecar is not installed when calling shorts tools, the tool returns error code `asr.not_installed` with instructions to run `premiere-pro-mcp --setup-asr`. Other MCP tools remain fully functional.
 
 ## Tool Execution Order and 3-Review Process
 

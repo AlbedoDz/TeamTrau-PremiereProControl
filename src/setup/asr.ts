@@ -3,7 +3,19 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { premiereMcpHome, runSidecar, sidecarPython } from '../analysis/sidecar.js';
+import { readAsrEngine, writeAsrEngine } from '../analysis/asr-config.js';
+import {
+  DEFAULT_ENGINE,
+  ENGINES,
+  VAD_MB,
+  downloadMb,
+  installedEngines,
+  usesZipformer,
+  type CheckReport,
+  type EngineId,
+} from '../analysis/asr-engines.js';
 
 export interface AsrStatus {
   installed: boolean;
@@ -12,6 +24,10 @@ export interface AsrStatus {
     whisper: boolean;
     yunet: boolean;
   };
+  /** The engine used when a tool gets no `engine`: the configured one, else zipformer-68m. */
+  defaultEngine: EngineId;
+  /** Which engines have every model installed. Absent when the sidecar check failed. */
+  engines?: Record<EngineId, boolean>;
   nextStep?: string;
 }
 
@@ -27,6 +43,29 @@ export interface SetupAsrOptions {
   platform?: NodeJS.Platform;
   exists?: (path: string) => boolean;
   nvidiaProbeTimeoutMs?: number;
+  /** Engine to install after asking for consent. Without it only the default engine is installed. */
+  engine?: EngineId;
+  /** Consent already given on the command line (--yes). */
+  yes?: boolean;
+  /** Keep the current default engine instead of switching to `engine` (--no-default). */
+  noDefault?: boolean;
+  isTTY?: boolean;
+  /** Asks the user a yes/no question; defaults to a readline prompt. */
+  confirm?: (question: string) => Promise<boolean>;
+}
+
+async function askYesNo(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return /^y(es)?$/i.test((await rl.question(`${question} [y/N] `)).trim());
+  } finally {
+    rl.close();
+  }
+}
+
+/** Sidecar engine ids to download; rover is both zipformers. */
+function downloadEngines(engine: EngineId): string[] {
+  return engine === 'rover' ? ['zipformer-68m', 'zipformer-30m'] : [engine];
 }
 
 function runCommand(
@@ -183,18 +222,37 @@ export async function setupAsr(
 
   const reqTxt = join(pkgPythonDir, 'requirements.txt');
   const cudaTxt = join(pkgPythonDir, 'requirements-cuda.txt');
-  const shouldInstallCuda = async (): Promise<boolean> => {
-    if (plat !== 'win32' && plat !== 'linux') {
-      return false;
+  const engine: EngineId = options.engine ?? DEFAULT_ENGINE;
+  const explicit = options.engine !== undefined;
+
+  // CUDA libraries only for whisper-turbo, and only when nvidia-smi finds a GPU (probed once).
+  let installCuda = false;
+  if (explicit) {
+    const info = ENGINES[engine];
+    let cudaNote = '';
+    if (info.needsCuda && (plat === 'win32' || plat === 'linux')) {
+      installCuda = await hasNvidiaGpu(spawnFn, options.nvidiaProbeTimeoutMs);
+      cudaNote = installCuda ? ' plus about 2 GB of CUDA libraries' : '';
+      log(installCuda
+        ? 'NVIDIA GPU found: installing CUDA libraries (about 2 GB).'
+        : 'No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
     }
-    const gpu = await hasNvidiaGpu(spawnFn, options.nvidiaProbeTimeoutMs);
-    if (gpu) {
-      log('NVIDIA GPU found: installing CUDA libraries (about 2 GB).');
-      return true;
+    log(`Engine ${engine}: ${info.label}`);
+    log(`Download: about ${downloadMb(engine)} MB${usesZipformer(engine) ? ` (includes a ${VAD_MB} MB voice-activity model)` : ''}${cudaNote}.`);
+    log(`License: ${info.license}${info.nonCommercial ? ' (non-commercial use only)' : ''}.`);
+    if (!options.yes) {
+      const isTTY = options.isTTY ?? Boolean(process.stdin.isTTY);
+      if (!isTTY) {
+        log(`This download needs your approval. Re-run with --yes to approve it: premiere-pro-mcp --setup-asr --engine ${engine} --yes`);
+        return 2;
+      }
+      const approved = await (options.confirm ?? askYesNo)(`Download ${engine} now?`);
+      if (!approved) {
+        log('Cancelled: nothing was downloaded.');
+        return 1;
+      }
     }
-    log('No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
-    return false;
-  };
+  }
 
   const venvExists = exists(py);
   if (venvExists) {
@@ -213,7 +271,7 @@ export async function setupAsr(
     code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', reqTxt], log, spawnFn);
     if (code !== 0) return code;
 
-    if (await shouldInstallCuda()) {
+    if (installCuda) {
       code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', cudaTxt], log, spawnFn);
       if (code !== 0) return code;
     }
@@ -243,7 +301,7 @@ export async function setupAsr(
     let code = await runCommand(py, ['-m', 'pip', 'install', '-r', reqTxt], log, spawnFn);
     if (code !== 0) return code;
 
-    if (await shouldInstallCuda()) {
+    if (installCuda) {
       code = await runCommand(py, ['-m', 'pip', 'install', '-r', cudaTxt], log, spawnFn);
       if (code !== 0) return code;
     }
@@ -261,7 +319,7 @@ export async function setupAsr(
       downloadInput,
       JSON.stringify({
         modelsDir: join(home, 'models'),
-        whisperRepo: 'mobiuslabsgmbh/faster-whisper-large-v3-turbo',
+        engines: downloadEngines(engine),
       })
     );
 
@@ -294,6 +352,9 @@ export async function setupAsr(
       // ignore read error
     }
 
+    if (explicit ? !options.noDefault : (await readAsrEngine(home)) === undefined) {
+      await writeAsrEngine(engine, home);
+    }
     resetAsrStatusCache();
     return 0;
   } finally {
@@ -328,22 +389,26 @@ export async function asrStatus(opts?: AsrStatusOptions): Promise<AsrStatus> {
   }
 
   const promise = (async (): Promise<AsrStatus> => {
+    const configured = readAsrEngine();
     const python = await sidecarPython();
     if (!python) {
       return {
         installed: false,
+        defaultEngine: (await configured) ?? DEFAULT_ENGINE,
         nextStep:
-          'Run premiere-pro-mcp --setup-asr (about 1.8 GB download; about 3.8 GB on PCs with an NVIDIA GPU, which also get the CUDA libraries).',
+          'Run premiere-pro-mcp --setup-asr (about 150 MB: the Python environment and the default Zipformer-68M model). Other engines are installed only on request with --engine <id>.',
       };
     }
 
     try {
-      const report = await runSidecar<{
+      const reportPromise = runSidecar<CheckReport & {
         cuda?: boolean;
         models?: { whisper: boolean; yunet: boolean };
       }>('check', {}, timeoutMs);
+      const report = await reportPromise;
+      const defaultEngine = (await configured) ?? DEFAULT_ENGINE;
 
-      const result: AsrStatus = { installed: true };
+      const result: AsrStatus = { installed: true, defaultEngine, engines: installedEngines(report) };
       if (report?.cuda !== undefined) result.cuda = Boolean(report.cuda);
       if (report?.models !== undefined) result.models = report.models;
       cachedStatus = { result, timestamp: Date.now() };
@@ -351,6 +416,7 @@ export async function asrStatus(opts?: AsrStatusOptions): Promise<AsrStatus> {
     } catch (error: unknown) {
       const result: AsrStatus = {
         installed: true,
+        defaultEngine: (await configured) ?? DEFAULT_ENGINE,
         nextStep: error instanceof Error ? error.message : String(error),
       };
       cachedStatus = { result, timestamp: Date.now() };

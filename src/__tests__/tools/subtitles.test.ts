@@ -9,6 +9,11 @@ jest.mock('../../analysis/sidecar.js', () => {
   return { ...actual, sidecarPython: jest.fn(), startJob: jest.fn(), jobStatus: jest.fn(), premiereMcpHome: jest.fn() };
 });
 
+jest.mock('../../setup/asr.js', () => ({
+  asrStatus: jest.fn().mockResolvedValue({ installed: true, defaultEngine: 'zipformer-68m', engines: { 'zipformer-68m': true, 'zipformer-30m': true, rover: true, 'whisper-turbo': true } }),
+}));
+
+import { asrStatus } from '../../setup/asr.js';
 import * as sidecar from '../../analysis/sidecar.js';
 
 const sidecarPython = sidecar.sidecarPython as jest.Mock;
@@ -68,6 +73,13 @@ describe('create_captions_from_transcript', () => {
     expect(importMedia).not.toHaveBeenCalled();
     expect(writes()).toEqual([]);
     expect(existsSync(join(home, 'renders'))).toBe(false);
+  });
+
+  it('passes the engine through and returns the missing-engine result without starting a job', async () => {
+    (asrStatus as jest.Mock).mockResolvedValueOnce({ installed: true, defaultEngine: 'zipformer-68m', engines: { 'zipformer-68m': true, 'zipformer-30m': true, rover: true, 'whisper-turbo': false } });
+    const r = await tools.executeTool('create_captions_from_transcript', { engine: 'whisper-turbo', dryRun: true });
+    expect(r).toMatchObject({ success: false, errorCode: 'asr.engine_not_installed', engine: 'whisper-turbo', command: 'premiere-pro-mcp --setup-asr --engine whisper-turbo' });
+    expect(startJob).not.toHaveBeenCalled();
   });
 
   it('returns running while the transcript is not ready', async () => {

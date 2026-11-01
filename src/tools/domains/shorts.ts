@@ -13,6 +13,7 @@ import {
   modelPaths,
   premiereMcpHome,
   sidecarMissingResult,
+  engineMissingResult,
   sidecarPython,
   startJob,
   runSidecar,
@@ -32,18 +33,21 @@ import {
   type Sentence,
   type TimelineWord,
 } from '../../analysis/transcript.js';
+import { resolveEngine } from '../../analysis/asr-config.js';
+import { ENGINE_IDS, usesZipformer } from '../../analysis/asr-engines.js';
+import { restoreCasing } from '../../analysis/casing.js';
+import { asrStatus } from '../../setup/asr.js';
 import { applyCaptionOverrides, groupCaptions, safeFileName, SAFE_AREA } from '../../analysis/captions.js';
 import { isError, normalizeLoudness, readSequence, uniquePaths, type SequenceSnapshot } from './cleanup.js';
 import { ensureBackup, qaSequence } from './editing.js';
 import { importMedia } from './media.js';
 
-/** The speech model; part of every transcription job key so changing it never reuses an old result. */
-export const ASR_MODEL = 'large-v3-turbo';
-
 export interface TranscriptArgs {
   sequenceId?: string | undefined;
   dialogueTrackIndices?: number[] | undefined;
   glossary?: string[] | undefined;
+  /** Speech engine; defaults to the configured one, then zipformer-68m. */
+  engine?: string | undefined;
 }
 
 export interface TranscriptReady {
@@ -103,6 +107,10 @@ export async function loadTranscript(
   args: TranscriptArgs,
 ): Promise<TranscriptReady | TranscriptPending | { success: false; error: string }> {
   if (!(await sidecarPython())) return sidecarMissingResult('transcribe_sequence') as never;
+  const engine = await resolveEngine(args.engine);
+  // Never downloads: a missing engine is reported so the user can approve it first.
+  const status = await asrStatus();
+  if (status.engines && status.engines[engine] === false) return engineMissingResult('transcribe_sequence', engine) as never;
 
   const snapshot = await readSequence(ctx, args.sequenceId);
   if (isError(snapshot)) return { success: false, error: snapshot.error };
@@ -121,7 +129,7 @@ export async function loadTranscript(
   for (const mediaPath of paths) {
     const stamp = fileStamp(mediaPath);
     if (stamp === null) return { success: false, error: `Media file not found: ${mediaPath}` };
-    keys.push(`transcribe-v2|${mediaPath}|${stamp}|${ASR_MODEL}|${glossary.join('\n')}`);
+    keys.push(`transcribe-v2|${mediaPath}|${stamp}|${engine}|${glossary.join('\n')}`);
   }
 
   // startJob replaces a failed job without reporting it, so read the state first.
@@ -135,7 +143,7 @@ export async function loadTranscript(
     jobs = await Promise.all(paths.map((mediaPath, i) => startJob(
       keys[i]!,
       'transcribe',
-      { mediaPath, modelDir: modelPaths().whisper, language: 'vi', glossary, device: 'auto', model: ASR_MODEL },
+      { mediaPath, modelDir: modelPaths().whisper, modelsDir: join(premiereMcpHome(), 'models'), language: 'vi', glossary, device: 'auto', engine },
     )));
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -164,8 +172,9 @@ export async function loadTranscript(
   const warnings: string[] = [];
   jobs.forEach((job, i) => {
     const result = (job.result ?? {}) as TranscribeResult;
-    wordsByMedia.set(paths[i]!, result.words ?? []);
-    if (result.device === 'cpu') warnings.push('CPU fallback: transcription is 3-4× slower');
+    const heard = result.words ?? [];
+    wordsByMedia.set(paths[i]!, usesZipformer(engine) ? restoreCasing(heard, glossary) : heard);
+    if (result.device === 'cpu' && !usesZipformer(engine)) warnings.push('CPU fallback: transcription is 3-4× slower');
   });
 
   const mapped = mapWordsToTimeline(clips, wordsByMedia, snapshot.frameDuration);
@@ -744,15 +753,20 @@ async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unkno
   }
 }
 
+const ENGINE_SCHEMA = z.enum(ENGINE_IDS).optional().describe(
+  'Speech engine; use the same value as transcribe_sequence. Defaults to the configured engine, then zipformer-68m (about 80 MB, Apache-2.0, CPU, no punctuation). Others: zipformer-30m (30 MB, CC-BY-NC-ND-4.0 non-commercial), rover (both zipformers, non-commercial), whisper-turbo (1.6 GB, MIT, punctuation, GPU recommended). An engine that is not installed is never downloaded here: the result asks the user to approve it.',
+);
+
 export const shortsTools: ToolModule[] = [
   {
     name: 'transcribe_sequence',
     description:
-      'Transcribes the dialogue audio of a sequence into a word-level Vietnamese transcript on sequence time, split into sentences. Runs speech recognition (faster-whisper) in a background job per media file: the first call starts it and returns status "running" with progress; call again with the same arguments until status is "done". Words heard on several mics are de-duplicated. Returns paged sentences plus wordsFile, a JSON file holding every word. Read-only. If the analysis sidecar is not installed the result has nextStep/command.',
+      'Transcribes the dialogue audio of a sequence into a word-level Vietnamese transcript on sequence time, split into sentences. Runs speech recognition (Zipformer-68M on the CPU by default; engine selects another that the user installed) in a background job per media file: the first call starts it and returns status "running" with progress; call again with the same arguments until status is "done". Words heard on several mics are de-duplicated. Returns paged sentences plus wordsFile, a JSON file holding every word. Read-only. If the analysis sidecar or the chosen engine is not installed the result has nextStep/command; an engine is never downloaded by a tool, the user must approve it. Zipformer engines output no punctuation: sentences end at pauses.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech. Defaults to every audio track that has a clip with a media file.'),
       glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward, e.g. guest names or brands.'),
+      engine: ENGINE_SCHEMA,
       page: z.number().int().min(0).default(0).describe('Sentence page to return (default 0).'),
       pageSize: z.number().int().min(1).default(200).describe('Sentences per page (default 200).'),
     }),
@@ -766,6 +780,7 @@ export const shortsTools: ToolModule[] = [
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech. Defaults to every audio track that has a clip with a media file.'),
       glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward; use the same list as transcribe_sequence.'),
+      engine: ENGINE_SCHEMA,
       minSec: z.number().positive().default(20).describe('Shortest window in seconds (default 20).'),
       maxSec: z.number().positive().default(90).describe('Longest window in seconds (default 90).'),
       limit: z.number().int().min(1).default(20).describe('Maximum candidates to return (default 20).'),
@@ -781,6 +796,7 @@ export const shortsTools: ToolModule[] = [
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as transcribe_sequence. Defaults to every audio track that has a clip with a media file.'),
       glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward; use the same list as transcribe_sequence.'),
+      engine: ENGINE_SCHEMA,
       expectedFingerprint: z.string().optional().describe('fingerprint from find_highlight_candidates (or transcribe_sequence). If the sequence has changed since, build_short refuses instead of cutting the wrong range.'),
       startSentenceId: z.number().int().min(0).describe('Id of the first sentence of the short.'),
       endSentenceId: z.number().int().min(0).describe('Id of the last sentence of the short (inclusive).'),

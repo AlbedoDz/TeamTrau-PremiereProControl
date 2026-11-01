@@ -12,6 +12,7 @@ import { appendFileSync, closeSync, existsSync, openSync, statSync, writeFileSyn
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
+import { ENGINES, downloadMb, type EngineId } from './asr-engines.js';
 
 export interface JobState {
   status: 'running' | 'done' | 'failed';
@@ -61,7 +62,27 @@ export function sidecarMissingResult(tool: string): Record<string, unknown> {
     errorCode: 'asr.not_installed',
     error: `The speech and face analysis sidecar is not installed, and ${tool} needs it.`,
     command: SETUP_COMMAND,
-    nextStep: `The analysis sidecar is not installed. Run this in a terminal on this machine (it downloads about 1.8 GB, or about 3.8 GB with an NVIDIA GPU), then retry ${tool} once: ${SETUP_COMMAND}`,
+    nextStep: `The analysis sidecar is not installed. Run this in a terminal on this machine (it downloads about 150 MB to several hundred MB: the Python packages and the 80 MB Zipformer-68M model; larger models are optional), then retry ${tool} once: ${SETUP_COMMAND}`,
+  };
+}
+
+/** The chosen engine's models are not installed. Nothing is downloaded: the user must approve it first. */
+export function engineMissingResult(tool: string, engine: EngineId): Record<string, unknown> {
+  const info = ENGINES[engine];
+  const mb = downloadMb(engine);
+  const cuda = info.needsCuda ? ' (plus about 2 GB of CUDA libraries if an NVIDIA GPU is found)' : '';
+  return {
+    success: false,
+    retry: false,
+    status: 'engine_not_installed',
+    userActionRequired: true,
+    errorCode: 'asr.engine_not_installed',
+    error: `The speech engine ${engine} is not installed, and ${tool} needs it.`,
+    engine,
+    approxDownloadMb: mb,
+    license: info.license,
+    command: `${SETUP_COMMAND} --engine ${engine}`,
+    nextStep: `Ask the user to approve a download of about ${mb} MB${cuda} (${info.license}), then run the command in a terminal.`,
   };
 }
 
@@ -92,7 +113,7 @@ function sidecarArgs(command: string, files: { input: string; output: string; pr
 }
 
 /** Write via a temp file and rename so a reader never sees a half-written file. */
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   const tmp = `${path}.tmp`;
   await writeFile(tmp, JSON.stringify(value));
   await rename(tmp, path);
