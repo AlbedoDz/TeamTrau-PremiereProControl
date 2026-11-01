@@ -15,16 +15,16 @@ Use this skill to convert an edited 16:9 podcast sequence (20–90 minutes, mult
 
 ## Prerequisites and Setup
 
-The transcription, visual analysis, and caption rendering pipeline uses a local Python sidecar (`faster-whisper` with `large-v3`, OpenCV YuNet for face detection, and Pillow/ffmpeg for ProRes 4444 alpha caption video generation).
+The transcription, visual analysis, and caption rendering pipeline uses a local Python sidecar (`faster-whisper` with `large-v3-turbo` in `int8_float16` on NVIDIA GPU or `int8` on CPU, optional OpenCV YuNet for face detection, and Pillow/ffmpeg for ProRes 4444 alpha caption video generation).
 
 1. Install the ASR dependencies:
    ```bash
    premiere-pro-mcp --setup-asr
    ```
-2. **Disk space**: Requires ~3 GB of free disk space in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows) for the virtual environment and Whisper `large-v3` model weights.
+2. **Disk space**: Setup downloads about 2 GB in total (Python packages + 1.6 GB model) in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows) for the virtual environment and Whisper `large-v3-turbo` model weights.
 3. **Hardware acceleration**:
-   - An NVIDIA GPU with CUDA is optional but recommended (transcribes 60 minutes in ≤ 15 minutes).
-   - If CUDA is not available, inference automatically falls back to CPU (`int8`), which is functional but runs approximately 3–4x slower.
+   - An NVIDIA GPU with CUDA (`int8_float16`) is optional but recommended (measured on a 9-minute Vietnamese podcast: ~51 s on an RTX 3070 using ~1.4 GB VRAM).
+   - If CUDA is not available, inference automatically falls back to CPU (`int8`), which works but is ~7× slower.
 4. If the sidecar is not installed when calling shorts tools, the tool returns error code `asr.not_installed` with instructions to run `premiere-pro-mcp --setup-asr`. Other MCP tools remain fully functional.
 
 ## Tool Execution Order and 3-Review Process
@@ -38,7 +38,7 @@ verify_premiere_connection
 transcribe_sequence (ask user for glossary first; poll while running)
   │
   ▼
-find_highlight_candidates (extracts signals)
+find_highlight_candidates (extracts signals, returns fingerprint)
   │
   ▼
 Score candidates with Rubric
@@ -46,17 +46,17 @@ Score candidates with Rubric
   ▼
 [Review 1] Present proposed candidate list to user for selection
   │
-  ▼
-build_short (dryRun: true) -> plan caption groupings
+  ▼ (after Review 1: pass expectedFingerprint)
+build_short (dryRun: true, pass expectedFingerprint) -> plan caption groupings
   │
   ▼
 [Review 2] Present caption text to user for review/edits
   │
   ▼
-build_short (dryRun: false, pass edited captions if any)
+build_short (dryRun: false, pass expectedFingerprint, pass edited captions if any)
   │
   ▼
-[Review 3] Notify user of warning markers on timeline
+[Review 3] Notify user of warning markers on timeline (if detectFaces enabled)
 ```
 
 ### 1. Connection Verification (`verify_premiere_connection`)
@@ -90,20 +90,23 @@ Tool arguments:
 - `minSec` (optional): Minimum duration in seconds (default: 20).
 - `maxSec` (optional): Maximum duration in seconds (default: 90).
 - `limit` (optional): Maximum number of candidate windows to return (default: 20).
+- `detectFaces?: boolean = false` (optional): Face counting is opt-in (default `false`). Turn it on ONLY when the podcast has wide two-person shots, because it decodes video (uses GPU decoding of keyframes only). When `false`, `multiFaceRatio` is 0 and no "Cảnh nhiều người — kiểm tra khung reframe" markers are added.
 
-Returns an array of candidates, where each candidate has:
-- `startSentenceId`: First sentence ID.
-- `endSentenceId`: Final sentence ID.
-- `start`: Start timestamp in seconds.
-- `end`: End timestamp in seconds.
-- `text`: Spoken text within the window.
-- `signals`: Ranking signals:
-  - `wordsPerSec`: Speaking cadence.
-  - `loudnessRel`: Short-term LUFS relative to episode median.
-  - `hasQuestion`, `hasExclaim`: Engagement markers.
-  - `fillerRate`: Frequency of filler words ("ờ", "à", "ừ", "kiểu", "thì là").
-  - `maxPauseSec`: Longest internal silence pause.
-  - `multiFaceRatio`: Fraction of video duration with ≥ 2 detected faces.
+Returns `{ fingerprint: string, candidates: Candidate[] }` (or candidates with `fingerprint`), where:
+- `fingerprint`: Sequence timeline fingerprint. Agents MUST pass this fingerprint as `expectedFingerprint` to every `build_short` call.
+- Candidates array, where each candidate has:
+  - `startSentenceId`: First sentence ID.
+  - `endSentenceId`: Final sentence ID.
+  - `start`: Start timestamp in seconds.
+  - `end`: End timestamp in seconds.
+  - `text`: Spoken text within the window.
+  - `signals`: Ranking signals:
+    - `wordsPerSec`: Speaking cadence.
+    - `loudnessRel`: Short-term LUFS relative to episode median.
+    - `hasQuestion`, `hasExclaim`: Engagement markers.
+    - `fillerRate`: Frequency of filler words ("ờ", "à", "ừ", "kiểu", "thì là").
+    - `maxPauseSec`: Longest internal silence pause.
+    - `multiFaceRatio`: Fraction of video duration with ≥ 2 detected faces (0 if `detectFaces` is false).
 
 ### 4. Candidate Scoring & Review 1
 
@@ -114,7 +117,7 @@ The server's rough score only filters candidates. The **Agent must evaluate and 
 2. **Has payoff / resolution**: Delivers a clear answer, story conclusion, or insight within the 20–90 second window.
 3. **Self-contained**: Makes sense standalone without context from earlier in the episode. Avoid clips that refer to prior discussions (e.g., "như tôi nói lúc nãy" / "as I mentioned earlier").
 4. **Complete thought at the end**: Ends on a clean sentence boundary with no abrupt cutoff mid-thought.
-5. **Low `multiFaceRatio`**: Prefer low `multiFaceRatio` for cleaner 9:16 Auto Reframe composition without awkward two-shot crops.
+5. **Low `multiFaceRatio`**: When `detectFaces` is enabled, prefer low `multiFaceRatio` for cleaner 9:16 Auto Reframe composition without awkward two-shot crops (`multiFaceRatio` is 0 if `detectFaces` is false).
 
 #### Review 1: Proposed List
 Present the ranked highlight candidates to the user:
@@ -122,6 +125,11 @@ Present the ranked highlight candidates to the user:
 - Topic summary and spoken text excerpt.
 - Key signals (speaking pace, loudness, multi-face ratio).
 - Ask the user to choose which highlight(s) to build, suggest sequence names (e.g., `Short_01_AI_Ethics`), and select a caption style (`clean`, `pop`, or `karaoke`).
+
+**After Review 1**:
+Agents MUST pass the `fingerprint` from the `find_highlight_candidates` result as `expectedFingerprint` to every `build_short` call (dry run and real run). A mismatch returns:
+`"The sequence changed since it was transcribed. Run transcribe_sequence again."`
+Then re-run `transcribe_sequence` and `find_highlight_candidates` and re-pick. Without `expectedFingerprint`, `build_short` only warns.
 
 ### 5. Dry Run & Review 2 (`build_short` with `dryRun: true`)
 
@@ -132,6 +140,8 @@ Tool arguments:
 - `startSentenceId`: First sentence ID of the highlight.
 - `endSentenceId`: Final sentence ID of the highlight.
 - `name`: Target sequence name (e.g., `Short_01_AI_Ethics`).
+- `expectedFingerprint?: string` (optional): Timeline fingerprint from `find_highlight_candidates`. Agents MUST pass this to every `build_short` call (dry run and real run).
+- `detectFaces?: boolean = false` (optional): Face counting is opt-in (default `false`). Turn it on ONLY when the podcast has wide two-person shots, because it decodes video (uses GPU decoding of keyframes only). When `false`, `multiFaceRatio` is 0 and no "Cảnh nhiều người — kiểm tra khung reframe" markers are added.
 - `captions?: {start, end, text}[]` (optional): Edited caption groups from the dry run; an empty text removes that group.
 - `captionStyle` (optional): `"clean"` (default), `"pop"`, or `"karaoke"`.
   - `clean`: White text, 6 px black stroke, active word highlighted in `#FFD400`.
@@ -161,18 +171,18 @@ Execution steps performed by the tool:
 4. **Caption import & placement**: Imports the `.mov` into bin `Shorts/<name>`, adds a video track above existing footage, and aligns the caption clip at time 0.0s.
 5. **Loudness normalisation**: Runs `normalize_loudness` to `targetLufs` (-14 LUFS) on the short sequence.
 6. **Sequence QA**: Runs `qa_sequence` to verify no flash frames, gaps, or offline media.
-7. **Warning markers**: Places timeline markers on any ranges where `multiFaceRatio > 0`: `"Cảnh nhiều người — kiểm tra khung reframe"`.
+7. **Warning markers**: Places timeline markers on any ranges where `multiFaceRatio > 0`: `"Cảnh nhiều người — kiểm tra khung reframe"` (only if `detectFaces: true`; when `false`, `multiFaceRatio` is 0 and no markers are added).
 8. **Verification readback**: Readback waits for the "Auto Reframe" effect's Generated Keyframes (up to 30 s, polled every 2 s) and only warns on timeout — it is not a failure. Verifies a 9:16 aspect ratio within ±1 px (not a fixed 1080×1920), duration matches the source range within ±1 frame, and that the caption clip is present on the top track (`verified: true`).
 
 #### Failure Contract (Spec §4.3)
 - **Caption render failure** (Step 1): Execution stops immediately before Premiere is touched; the project remains completely unchanged.
-- **Premiere step failure** (Steps 2–7): Execution stops, keeps what was created so the user can inspect it, and returns `verified: false`, `failedStep`, and the backup path (`backupPath`).
+- **Premiere step failure** (Steps 3–7): Execution stops, keeps what was created so the user can inspect it, and returns `verified: false`, `failedStep`, and the backup path (`backupPath`).
 - **Reporting to user**: The agent must report failures honestly to the user. Never hide errors, guess, or claim success. State what failed, which step failed (`failedStep`), that the created partial sequence was preserved for inspection, and provide the backup path for restoration if desired.
 
 ### 7. Review 3: Warning Markers
 After creation:
 - Report the created sequence name and verification status.
-- Direct the user to review any warning markers on the timeline: `"Cảnh nhiều người — kiểm tra khung reframe"`.
+- If `detectFaces` was enabled, direct the user to review any warning markers on the timeline: `"Cảnh nhiều người — kiểm tra khung reframe"`. (When `detectFaces: false`, no markers are added).
 - Advise the user to inspect those timestamps in Premiere Pro to manually adjust Auto Reframe framing if a speaker was partially cut off.
 
 ## Core Rules

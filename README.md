@@ -188,7 +188,7 @@ The skill teaches agents how to install the MCP, start and verify the CEP bridge
 
 ### Podcast to Shorts (optional ASR)
 
-The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`) uses a local Python sidecar for automated speech recognition and animated caption rendering.
+The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`) uses a local Python sidecar for automated speech recognition (`large-v3-turbo` in `int8_float16` on NVIDIA GPU or `int8` on CPU) and animated caption rendering.
 
 To install the sidecar and model weights:
 
@@ -196,8 +196,8 @@ To install the sidecar and model weights:
 premiere-pro-mcp --setup-asr
 ```
 
-- **Disk space:** Requires ~3 GB of free disk space in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows).
-- **GPU acceleration:** An NVIDIA GPU (CUDA) is recommended for fast transcription (~15 minutes for a 60-minute sequence). If CUDA is absent, inference automatically falls back to CPU (`int8`), which is about 3–4x slower.
+- **Disk space:** Setup downloads about 2 GB in total (Python packages + 1.6 GB model) into `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows).
+- **GPU acceleration:** An NVIDIA GPU (`int8_float16`) is recommended for fast transcription (measured on a 9-minute Vietnamese podcast: ~51 s on an RTX 3070 using ~1.4 GB VRAM). CPU-only inference (`int8`) works automatically if CUDA is absent, but runs ~7× slower.
 - All other Premiere MCP tools continue to work without this setup.
 
 ## Advanced Setup and Verification
