@@ -141,3 +141,13 @@ Kiểm chứng live trên Project-Temp (Premiere 25.6.3):
 - `qa_sequence`: sequence sau khi cắt lặng báo sạch, không khoảng trống.
 
 Chưa kiểm chứng: thời gian keyframe khi clip nhạc không bắt đầu ở 0 hoặc có in-point khác 0 (tài liệu `setup_ducking` nói thời gian nguồn tuyệt đối, đã truyền theo quy ước đó); tên hiệu ứng trên Premiere không phải tiếng Anh (truyền qua `effects`); `speed_ramp` chưa làm.
+
+## 9. Tiến độ giai đoạn E (2026-11-01)
+
+Xong `score_clips` và `assemble_rough_cut` (catalog 293). Logic chọn nằm ở `src/analysis/roughcut.ts` (có test thuần). Đo bằng ffmpeg trên keyframe thu nhỏ 320 px (hai lượt: độ sáng và mật độ cạnh), tự chuyển sang 1 khung hình/giây nếu keyframe quá thưa.
+
+Kiểm chứng live (Project-Temp, Premiere 25.6.3), thư mục 4 clip giả (rõ nét, tối, mờ, rõ nét 2):
+- Xếp hạng đúng: rõ nét 0,632 > mờ 0,49 > tối 0,083.
+- `assemble_rough_cut` 9 s: chọn 3 cảnh tốt nhất, bỏ clip tối, đặt liền nhau, track video kết thúc đúng 9 s, `verified: true`, `qa_sequence` báo sạch, sao lưu tự động.
+
+Giới hạn đã biết: chưa đo rung và chuyển động (mẫu quá thưa); ngưỡng độ nét (cạnh trung bình 12 ở 320 px) hiệu chỉnh trên ảnh giả, nên cần chỉnh lại trên footage DJI thật; `select_golden_windows`, `match_clip_exposure` chưa làm. `pack_to_duration` đã gộp vào `assemble_rough_cut`.

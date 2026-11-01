@@ -9,6 +9,9 @@ All notable changes are documented here. Releases use semantic versioning.
   - `qa_sequence` is a read-only pre-export check for flash frames, gaps, overlaps and missing media.
   - `apply_dialogue_chain` applies a list of audio effects (default DeNoise, Dynamics) to the dialogue tracks and normalises loudness.
   - `auto_punch_in` scales every nth clip on a video track so a single-camera cut reads as two angles.
+- Rough cut from a folder of footage:
+  - `score_clips` ranks the best stretches of each video file by exposure and sharpness, measured with ffmpeg on keyframes (one frame per second for sparse footage). Shake and motion are not measured.
+  - `assemble_rough_cut` takes the best stretches (each once, at most `maxPerFile` per file), orders them by file name or score, and places them on a video track to a target length within a frame. It imports files that are not in the project and refuses to overwrite existing clips unless `overwrite=true`.
 - Every tool that changes the sequence has `dryRun` and, by default, a project backup first.
 - Analysis results are cached on disk and files are analysed in parallel; `preflight_media` lists only files with issues.
 

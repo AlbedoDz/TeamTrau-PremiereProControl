@@ -9,6 +9,7 @@ import type { ToolModule } from '../context.js';
 import { audioTools } from './audio.js';
 import { cleanupTools } from './cleanup.js';
 import { editingTools } from './editing.js';
+import { roughcutTools } from './roughcut.js';
 import { discoveryTools } from './discovery.js';
 import { effectsTools } from './effects.js';
 import { exportTools } from './export.js';
@@ -25,6 +26,7 @@ export const domainTools: ToolModule[] = [
   ...audioTools,
   ...cleanupTools,
   ...editingTools,
+  ...roughcutTools,
   ...discoveryTools,
   ...effectsTools,
   ...exportTools,
