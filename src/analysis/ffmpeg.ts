@@ -170,6 +170,8 @@ export function parseProbe(json: string): ProbedMedia {
   const raw = JSON.parse(json) as { streams?: any[]; format?: { duration?: string } };
   const streams: ProbedStream[] = [];
   for (const s of raw.streams ?? []) {
+    // Cover art embedded in an MP3 or M4A is a one-frame "video" stream, not footage.
+    if (s.codec_type === 'video' && s.disposition?.attached_pic === 1) continue;
     if (s.codec_type === 'video') {
       streams.push({
         type: 'video',

@@ -13,6 +13,8 @@ import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/p
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+/** Bump when parsing or scoring changes, so results cached by the old code are not served. */
+const CACHE_VERSION = 2;
 const MAX_ENTRY_BYTES = 256 * 1024;
 const MAX_ENTRIES = 5000;
 
@@ -71,7 +73,7 @@ export async function cached<T>(
     // Unreadable file: compute directly so the caller sees the real error.
     return compute();
   }
-  const key = `${mediaPath}|${fingerprint}|${operation}|${JSON.stringify(params)}`;
+  const key = `v${CACHE_VERSION}|${mediaPath}|${fingerprint}|${operation}|${JSON.stringify(params)}`;
   if (store.has(key)) return store.get(key) as T;
 
   const dir = cacheDir();
