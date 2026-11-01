@@ -67,6 +67,14 @@ def _add_cuda_dll_directories() -> None:
     Every ``nvidia/<lib>/bin`` that exists is added, not just cublas and cudnn:
     which libraries the pinned ctranslate2 build loads (cudart, cufft, nvrtc, ...)
     is not ours to assume, and adding a directory costs nothing.
+
+    The directories go on ``PATH`` as well as through ``os.add_dll_directory``.
+    ctranslate2 and cuBLAS open each other lazily with a plain ``LoadLibrary``,
+    which searches ``PATH`` and ignores the directories added above; on the live
+    install the DLL was there and ``check`` reported cuda, and the job still fell
+    back to the CPU until the same directories were on ``PATH``. ``PATH`` is
+    prepended, so the wheel's own copy wins over a different CUDA install, and a
+    directory already listed is moved rather than added twice.
     """
     if not windows() or not hasattr(os, "add_dll_directory"):
         return
@@ -76,6 +84,7 @@ def _add_cuda_dll_directories() -> None:
         return
     roots = {Path(path) for path in site.getsitepackages()} if hasattr(site, "getsitepackages") else set()
     roots.add(Path(sys.prefix) / "Lib" / "site-packages")
+    search_path: list[str] = []
     for root in roots:
         libraries = root / "nvidia"
         if not libraries.is_dir():
@@ -87,6 +96,18 @@ def _add_cuda_dll_directories() -> None:
                 os.add_dll_directory(str(library))
             except OSError as exc:  # pragma: no cover - a broken install
                 io.log(f"could not add {library} to the DLL search path: {exc}")
+            if str(library) not in search_path:
+                search_path.append(str(library))
+    _prepend_to_path(search_path)
+
+
+def _prepend_to_path(directories: list[str]) -> None:
+    """Put ``directories`` at the front of ``PATH``, once each, order kept."""
+    if not directories:
+        return
+    current = os.environ.get("PATH") or ""
+    rest = [entry for entry in current.split(os.pathsep) if entry and entry not in directories]
+    os.environ["PATH"] = os.pathsep.join([*directories, *rest])
 
 
 def cuda_available() -> bool:
@@ -134,6 +155,13 @@ def _transcribe(model, audio, glossary: list[str], progress: io.Heartbeat) -> tu
     progress.total_sec = duration or None
     words: list[dict] = []
     for segment in segments:
+        # Ruling R30: turbo punctuates almost nothing (15 sentence ends in 2181
+        # words on the live podcast), but every segment is a phrase, so the last
+        # word a segment actually produced is marked as ending one. Flattening the
+        # segments used to throw that boundary away and the sentences came out of
+        # punctuation alone. ``segment_end`` counts the words that survived the
+        # blank/empty filter below, not the segment's words list.
+        segment_end = len(words)
         for word in getattr(segment, "words", None) or []:
             text = (word.word or "").strip()
             if not text:
@@ -146,6 +174,8 @@ def _transcribe(model, audio, glossary: list[str], progress: io.Heartbeat) -> tu
                 "end": round(float(word.end), 3),
                 "p": round(float(word.probability), 3),
             })
+        if len(words) > segment_end:
+            words[-1]["segEnd"] = True
         progress.at(seconds=getattr(segment, "end", None))
     return words, duration
 
