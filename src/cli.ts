@@ -14,6 +14,8 @@ Usage:
   premiere-pro-mcp                 Start the MCP stdio server
   premiere-pro-mcp --install-cep   Install the CEP bridge and configure supported MCP clients
   premiere-pro-mcp --doctor        Check the local server, CEP bridge, and client configuration
+  premiere-pro-mcp --setup-asr     Install the Python analysis sidecar and ASR models
+  premiere-pro-mcp asr-status      Print speech and face analysis sidecar status as JSON
   premiere-pro-mcp --version       Print the installed package version
   premiere-pro-mcp --help          Show this help
 
@@ -64,6 +66,22 @@ async function main(): Promise<void> {
     case 'setup':
       await runPlatformScript('install-macos.sh', 'install-windows.ps1', ['-SkipBuild']);
       return;
+    case '--setup-asr':
+    case 'setup-asr': {
+      const { setupAsr } = await import('./setup/asr.js');
+      const exitCode = await setupAsr(console.log, { pkgPythonDir: join(packageRoot, 'python') });
+      if (exitCode !== 0) {
+        process.exitCode = exitCode;
+      }
+      return;
+    }
+    case 'asr-status':
+    case '--asr-status': {
+      const { asrStatus } = await import('./setup/asr.js');
+      const status = await asrStatus();
+      console.log(JSON.stringify(status, null, 2));
+      return;
+    }
     case '--doctor':
     case 'doctor':
       await runPlatformScript('doctor-macos.sh', 'doctor-windows.ps1');

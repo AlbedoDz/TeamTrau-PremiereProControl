@@ -141,6 +141,17 @@ Test-JsonServer -Path $VsCodeConfigPath -RootKey 'servers'
 Write-Host 'Claude Desktop MCP config'
 Test-JsonServer -Path $ClaudeConfigPath -RootKey 'mcpServers'
 
+Write-Host 'ASR (optional)'
+Push-Location $repoRoot
+try {
+    node dist/cli.js asr-status
+} catch {
+    Write-Host "  $_"
+} finally {
+    Pop-Location
+    $global:LASTEXITCODE = 0
+}
+
 Write-Host ''
 if ($failures -gt 0) {
     Write-Host "$failures check(s) failed."
@@ -148,3 +159,4 @@ if ($failures -gt 0) {
 }
 
 Write-Host 'All required Windows install checks passed.'
+exit 0

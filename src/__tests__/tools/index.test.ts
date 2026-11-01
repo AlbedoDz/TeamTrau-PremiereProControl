@@ -13,6 +13,14 @@ import { PremiereProTools, evaluateTextInjectionResult } from '../../tools/index
 import * as discovery from '../../tools/domains/discovery.js';
 import { PremiereProBridge } from '../../bridge/index.js';
 import { executeExpandedTool, expandedToolNames, unimplementedExpandedToolNames } from '../../tools/expanded.js';
+import { asrStatus } from '../../setup/asr.js';
+
+jest.mock('../../setup/asr.js', () => ({
+  asrStatus: jest.fn().mockResolvedValue({
+    installed: false,
+    nextStep: 'x',
+  }),
+}));
 
 jest.mock('../../bridge/index.js');
 jest.mock('child_process');
@@ -625,6 +633,24 @@ describe('PremiereProTools', () => {
       expect(result.liveConnection.checked).toBe(true);
       expect(result.liveConnection.result).toEqual({ success: true, status: 'connected' });
       expect(mockBridge.executeScript).toHaveBeenCalledTimes(1);
+    });
+
+
+    it('get_capabilities includes asr status', async () => {
+      (asrStatus as jest.Mock).mockResolvedValueOnce({
+        installed: true,
+        cuda: true,
+        models: { whisper: true, yunet: true },
+      });
+
+      const result = await tools.executeTool('get_capabilities', {});
+
+      expect(result.success).toBe(true);
+      expect(result.analysis.asr).toEqual({
+        installed: true,
+        cuda: true,
+        models: { whisper: true, yunet: true },
+      });
     });
 
     it('returns a clear error for unknown tools', async () => {

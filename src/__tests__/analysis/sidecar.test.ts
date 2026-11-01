@@ -104,8 +104,8 @@ describe('sidecar runner', () => {
       errorCode: 'asr.not_installed',
       command: 'premiere-pro-mcp --setup-asr',
     });
-    expect(String(sidecarMissingResult('x').nextStep)).toContain('3 GB');
-    expect(modelPaths().whisper).toBe(join(home, 'models', 'faster-whisper-large-v3'));
+    expect(String(sidecarMissingResult('x').nextStep)).toContain('2 GB');
+    expect(modelPaths().whisper).toBe(join(home, 'models', 'faster-whisper-large-v3-turbo'));
     expect(modelPaths().yunet).toBe(join(home, 'models', 'face_detection_yunet_2023mar.onnx'));
   });
 
