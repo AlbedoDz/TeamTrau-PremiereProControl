@@ -39,7 +39,7 @@
     "test": "jest",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write src/**/*.ts",
-    "prepack": "npm run build",
+    "prepare": "npm run build",
     "pack:check": "node scripts/verify-package.mjs",
     "bundle:mcpb": "node scripts/build-mcpb.mjs",
     "sign:zxp": "node scripts/sign-zxp.mjs",
