@@ -1,4 +1,7 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,7 +25,9 @@ setTimeout(finish, input.delayMs || 0);
 describe('sidecar runner', () => {
   let home: string;
   let spawnCount: number;
-  let killed: Set<number>;
+  let spawnMode: 'normal' | 'hang' | 'noPid' | 'errorEvent';
+  let hangKill: jest.Mock;
+  let taskkillArgs: string[][];
 
   const load = () => {
     const script = join(home, 'fake.js');
@@ -34,8 +39,21 @@ describe('sidecar runner', () => {
         const actual = jest.requireActual('node:child_process');
         return {
           ...actual,
-          spawn: (_cmd: string, args: string[], opts: unknown) => {
+          spawn: (cmd: string, args: string[], opts: unknown) => {
+            if (cmd === 'taskkill') {
+              taskkillArgs.push(args);
+              return new EventEmitter();
+            }
             spawnCount++;
+            if (spawnMode !== 'normal') {
+              const child: any = new EventEmitter();
+              child.stderr = new PassThrough();
+              child.kill = hangKill;
+              child.unref = () => undefined;
+              child.pid = spawnMode === 'hang' ? 424242 : undefined;
+              if (spawnMode === 'errorEvent') setImmediate(() => child.emit('error', new Error('spawn ENOENT')));
+              return child;
+            }
             return actual.spawn(process.execPath, [script, ...args.slice(1)], opts);
           },
         };
@@ -63,7 +81,9 @@ describe('sidecar runner', () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'premiere-mcp-home-'));
     process.env.PREMIERE_MCP_HOME = home;
-    killed = new Set();
+    spawnMode = 'normal';
+    hangKill = jest.fn();
+    taskkillArgs = [];
   });
 
   it('returns null and the install result when no venv exists', async () => {
@@ -127,5 +147,107 @@ describe('sidecar runner', () => {
   it('runSidecar rejects when the sidecar is not installed', async () => {
     const { runSidecar, SidecarError } = load();
     await expect(runSidecar('faces', {})).rejects.toBeInstanceOf(SidecarError);
+  });
+
+  const jobDirOf = (key: string) => join(home, 'jobs', createHash('sha1').update(key).digest('hex'));
+  const age = (path: string, ms: number) => {
+    const t = new Date(Date.now() - ms);
+    utimesSync(path, t, t);
+  };
+
+  it('fails a job whose process could not be spawned (error event)', async () => {
+    installVenv();
+    spawnMode = 'errorEvent';
+    const { startJob, jobStatus } = load();
+    await startJob('spawn-err', 'transcribe', {});
+    await waitFor(async () => (await jobStatus('spawn-err'))?.status === 'failed');
+    expect((await jobStatus('spawn-err'))!.error).toContain('spawn ENOENT');
+  });
+
+  it('fails a job with no pid file once input.json is older than 10 s, but not before', async () => {
+    installVenv();
+    spawnMode = 'noPid';
+    const { startJob, jobStatus } = load();
+    await startJob('nopid', 'transcribe', {});
+    // spawn-error file records the missing pid straight away
+    expect((await jobStatus('nopid'))!.status).toBe('failed');
+
+    const dir = jobDirOf('crashed');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'input.json'), '{}');
+    expect((await jobStatus('crashed'))!.status).toBe('running');
+    age(join(dir, 'input.json'), 11_000);
+    const state = (await jobStatus('crashed'))!;
+    expect(state.status).toBe('failed');
+    expect(state.error).toContain('never started');
+  });
+
+  it('two concurrent startJob calls spawn once', async () => {
+    installVenv();
+    const { startJob, jobStatus } = load();
+    const [a, b] = await Promise.all([
+      startJob('race', 'transcribe', { delayMs: 300 }),
+      startJob('race', 'transcribe', { delayMs: 300 }),
+    ]);
+    expect(a.status).toBe('running');
+    expect(b.status).toBe('running');
+    expect(spawnCount).toBe(1);
+    await waitFor(async () => (await jobStatus('race'))?.status === 'done');
+  });
+
+  it('treats a live pid with no activity for 10 minutes as failed and replaces it without deleting the dir', async () => {
+    installVenv();
+    const { startJob, jobStatus } = load();
+    const dir = jobDirOf('recycled');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'input.json'), '{}');
+    writeFileSync(join(dir, 'pid'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+    expect((await jobStatus('recycled'))!.status).toBe('running');
+    for (const f of ['input.json', 'pid']) age(join(dir, f), 11 * 60_000);
+    const state = (await jobStatus('recycled'))!;
+    expect(state.status).toBe('failed');
+    expect(state.error).toContain('no progress');
+    await startJob('recycled', 'transcribe', {});
+    expect(spawnCount).toBe(1);
+    expect(existsSync(dir)).toBe(true);
+    await waitFor(async () => (await jobStatus('recycled'))?.status === 'done');
+  });
+
+  it('reports unreadable output for a dead pid', async () => {
+    installVenv();
+    const { jobStatus } = load();
+    const dir = jobDirOf('badout');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'input.json'), '{}');
+    writeFileSync(join(dir, 'pid'), JSON.stringify({ pid: 2147483646, startedAt: 'x' }));
+    writeFileSync(join(dir, 'output.json'), '{"half');
+    expect((await jobStatus('badout'))!.error).toContain('output unreadable');
+  });
+
+  it('runSidecar times out a child that never exits and kills it', async () => {
+    installVenv();
+    spawnMode = 'hang';
+    const { runSidecar, SidecarError } = load();
+    const err = await runSidecar('faces', {}, 100).catch((e) => e);
+    expect(err).toBeInstanceOf(SidecarError);
+    expect(err.message).toContain('timed out');
+    if (process.platform === 'win32') {
+      expect(taskkillArgs).toContainEqual(['/pid', '424242', '/T', '/F']);
+    } else {
+      expect(hangKill).toHaveBeenCalledWith('SIGTERM');
+    }
+  });
+
+  it('handles spaces and Vietnamese characters in the home path and the input', async () => {
+    home = mkdtempSync(join(tmpdir(), 'premiere mcp Việt Nam '));
+    process.env.PREMIERE_MCP_HOME = home;
+    installVenv();
+    const { runSidecar, startJob, jobStatus } = load();
+    const input = { glossary: ['Trưng Trắc', 'Vietcetera'], text: 'Chào các bạn' };
+    const out: any = await runSidecar('transcribe', input);
+    expect(out.echo).toEqual(input);
+    await startJob('khóa tiếng Việt', 'transcribe', input);
+    await waitFor(async () => (await jobStatus('khóa tiếng Việt'))?.status === 'done');
+    expect(((await jobStatus('khóa tiếng Việt'))!.result as any).echo).toEqual(input);
   });
 });
