@@ -4,7 +4,7 @@
  * sidecar as one background job per media file; the tool is polled until every job is done.
  */
 import { z } from 'zod';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
@@ -17,6 +17,7 @@ import {
   sidecarPython,
   startJob,
   runSidecar,
+  writeJsonAtomic,
   type JobState,
 } from '../../analysis/sidecar.js';
 import { cached } from '../../analysis/cache.js';
@@ -102,6 +103,27 @@ function dialogueClips(
   return { indices, clips: audio.filter((c) => indices.includes(c.trackIndex)) };
 }
 
+const glossaryIndexPath = (): string => join(premiereMcpHome(), 'jobs', 'glossary-index.json');
+
+async function readGlossaryIndex(): Promise<Record<string, string[]>> {
+  try {
+    const parsed = JSON.parse(await readFile(glossaryIndexPath(), 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Remember the last glossary used per media file + engine (best effort, atomic write). */
+async function recordGlossaries(entries: ReadonlyArray<readonly [string, string[]]>): Promise<void> {
+  try {
+    const index = await readGlossaryIndex();
+    for (const [id, glossary] of entries) index[id] = glossary;
+    await mkdir(join(premiereMcpHome(), 'jobs'), { recursive: true });
+    await writeJsonAtomic(glossaryIndexPath(), index);
+  } catch { /* the index is only a convenience */ }
+}
+
 export async function loadTranscript(
   ctx: ToolContext,
   args: TranscriptArgs,
@@ -124,12 +146,29 @@ export async function loadTranscript(
     };
   }
 
-  const glossary = args.glossary ?? [];
+  const callGlossary = args.glossary ?? [];
+  const sendsGlossary = !usesZipformer(engine);
+  const index = sendsGlossary ? await readGlossaryIndex() : {};
   const keys: string[] = [];
+  const glossaries: string[][] = [];
+  const indexIds: string[] = [];
   for (const mediaPath of paths) {
     const stamp = fileStamp(mediaPath);
     if (stamp === null) return { success: false, error: `Media file not found: ${mediaPath}` };
-    keys.push(`transcribe-v2|${mediaPath}|${stamp}|${engine}|${glossary.join('\n')}`);
+    // Zipformer engines never see the glossary (casing is applied below), so it stays out of the key.
+    const keyFor = (g: string[]): string => `transcribe-v2|${mediaPath}|${stamp}|${engine}${sendsGlossary ? `|${g.join('\n')}` : '|'}`;
+    const indexId = `${mediaPath}|${stamp}|${engine}`;
+    let glossaryForJob = callGlossary;
+    // whisper: a call without a glossary reuses the finished job made with the last one used.
+    const last = index[indexId];
+    if (sendsGlossary && callGlossary.length === 0 && last && last.length > 0) {
+      try {
+        if ((await jobStatus(keyFor(last)))?.status === 'done') glossaryForJob = last;
+      } catch { /* fall back to a plain key */ }
+    }
+    keys.push(keyFor(glossaryForJob));
+    glossaries.push(glossaryForJob);
+    indexIds.push(indexId);
   }
 
   // startJob replaces a failed job without reporting it, so read the state first.
@@ -143,10 +182,13 @@ export async function loadTranscript(
     jobs = await Promise.all(paths.map((mediaPath, i) => startJob(
       keys[i]!,
       'transcribe',
-      { mediaPath, modelDir: modelPaths().whisper, modelsDir: join(premiereMcpHome(), 'models'), language: 'vi', glossary, device: 'auto', engine },
+      { mediaPath, modelDir: modelPaths().whisper, modelsDir: join(premiereMcpHome(), 'models'), language: 'vi', glossary: glossaries[i]!, device: 'auto', engine },
     )));
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  if (sendsGlossary && callGlossary.length > 0) {
+    await recordGlossaries(indexIds.map((id) => [id, callGlossary] as const));
   }
   if (failures.length > 0) {
     return {
@@ -173,7 +215,7 @@ export async function loadTranscript(
   jobs.forEach((job, i) => {
     const result = (job.result ?? {}) as TranscribeResult;
     const heard = result.words ?? [];
-    wordsByMedia.set(paths[i]!, usesZipformer(engine) ? restoreCasing(heard, glossary) : heard);
+    wordsByMedia.set(paths[i]!, usesZipformer(engine) ? restoreCasing(heard, callGlossary) : heard);
     if (result.device === 'cpu' && !usesZipformer(engine)) warnings.push('CPU fallback: transcription is 3-4× slower');
   });
 
@@ -288,7 +330,7 @@ export async function timelineLoudness(
       // Throw inside the compute so a failed run is never cached as an empty result.
       samples = await cached(mediaPath, 'ebur128-short', {}, async () => {
         const run = await runFf(ffmpeg, [
-          '-hide_banner', '-nostats', '-i', mediaPath, '-map', '0:a:0',
+          '-hide_banner', '-nostats', '-v', 'verbose', '-i', mediaPath, '-map', '0:a:0',
           '-af', 'ebur128=framelog=verbose', '-f', 'null', '-',
         ]);
         if (run.code !== 0) {

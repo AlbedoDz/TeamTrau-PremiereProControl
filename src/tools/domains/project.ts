@@ -263,6 +263,29 @@ async function saveProjectAs(ctx: ToolContext, name: string, location: string): 
   return await ctx.bridge.executeScript(script);
 }
 
+/** Create a root-level bin unless one with that name already exists. */
+export async function ensureRootBin(ctx: ToolContext, name: string): Promise<{ success: boolean; created: boolean; error?: string }> {
+  const lookup: any = await ctx.bridge.executeScript(`
+      try {
+        var root = app.project.rootItem;
+        for (var i = 0; i < root.children.numItems; i++) {
+          var c = root.children[i];
+          if (c && String(c.name) === ${JSON.stringify(name)} && c.type === ProjectItemType.BIN) {
+            return JSON.stringify({ success: true, exists: true });
+          }
+        }
+        return JSON.stringify({ success: true, exists: false });
+      } catch (e) {
+        return JSON.stringify({ success: false, error: e.toString() });
+      }
+    `);
+  if (lookup?.success === false) return { success: false, created: false, error: lookup.error ?? 'Bin lookup failed' };
+  if (lookup?.exists) return { success: true, created: false };
+  const made = await createBin(ctx, name);
+  if (!made?.success) return { success: false, created: false, error: made?.error ?? `Could not create bin ${name}` };
+  return { success: true, created: true };
+}
+
 async function createBin(ctx: ToolContext, name: string, parentBinName?: string): Promise<any> {
   const script = `
       try {
