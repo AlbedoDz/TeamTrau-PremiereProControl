@@ -131,9 +131,9 @@ def test_words_shape_with_fake_model(tmp_path, monkeypatch, no_cuda):
     assert result["words"][0] == {"w": "Chào", "start": 0.0, "end": 0.3, "p": 0.9}
     assert result["words"] == [
         {"w": "Chào", "start": 0.0, "end": 0.3, "p": 0.9},
-        {"w": "mừng", "start": 0.4, "end": 0.9, "p": 0.9},
+        {"w": "mừng", "start": 0.4, "end": 0.9, "p": 0.9, "segEnd": True},
         {"w": "đến", "start": 1.5, "end": 1.8, "p": 0.9},
-        {"w": "Vietcetera", "start": 1.9, "end": 2.6, "p": 0.9},
+        {"w": "Vietcetera", "start": 1.9, "end": 2.6, "p": 0.9, "segEnd": True},
     ]
     model = FakeWhisperModel.instances[0]
     assert model.model_size_or_path == str(tmp_path / "models" / "faster-whisper-large-v3-turbo")
@@ -342,7 +342,7 @@ def test_silence_pads_short_audio_and_skips_empty_words(tmp_path, monkeypatch, n
 
     assert result["words"] == [
         {"w": "Chào", "start": 0.1, "end": 0.4, "p": 0.9},
-        {"w": "bạn", "start": 0.6, "end": 1.1, "p": 0.9},
+        {"w": "bạn", "start": 0.6, "end": 1.1, "p": 0.9, "segEnd": True},
     ]
 
 
@@ -396,6 +396,40 @@ def test_cli_runs_transcribe(tmp_path, monkeypatch):
 
 
 # --- the DLL directories, then the import -------------------------------------
+
+
+def test_the_segment_boundaries_survive_the_flattening(tmp_path, monkeypatch, no_cuda):
+    """Ruling R30: only the last word of a segment carries ``segEnd``.
+
+    Turbo barely punctuates (15 sentence ends in 2181 words on the live podcast),
+    so the segment boundary is the reliable place where a phrase ended; flattening
+    the segments into one word list used to throw it away.
+    """
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: FakeWhisperModel)
+
+    result = transcribe.run(spec(tmp_path), None)
+
+    assert [word.get("segEnd") for word in result["words"]] == [None, True, None, True]
+    assert result["words"][1] == {"w": "mừng", "start": 0.4, "end": 0.9, "p": 0.9, "segEnd": True}
+
+
+def test_a_segment_with_no_usable_words_marks_no_word(tmp_path, monkeypatch, no_cuda):
+    """Blank words are dropped, so the boundary moves to the last word that stayed."""
+
+    class Blanky(FakeWhisperModel):
+        def transcribe(self, audio, **options):
+            self.calls.append({"audio": audio, **options})
+            segments = [
+                segment(0, 0.0, 1.0, " Chào", [word(" Chào", 0.0, 0.4), word(" ", 0.5, 0.6, 0.2)]),
+                segment(1, 1.2, 2.0, " bạn", [word(" bạn", 1.2, 1.8)]),
+            ]
+            return iter(segments), info(2.0)
+
+    monkeypatch.setattr(transcribe, "_import_whisper_model", lambda: Blanky)
+
+    result = transcribe.run(spec(tmp_path), None)
+
+    assert [(word["w"], word.get("segEnd")) for word in result["words"]] == [("Chào", True), ("bạn", True)]
 
 
 def test_cuda_dlls_are_added_before_faster_whisper_is_imported(tmp_path, monkeypatch, with_cuda):
@@ -501,6 +535,61 @@ def test_the_dll_sweep_is_a_no_op_off_windows(tmp_path, monkeypatch):
     transcribe._add_cuda_dll_directories()
 
     assert added == []
+
+
+def test_the_nvidia_bin_directories_go_on_the_path(tmp_path, monkeypatch):
+    """cublas is loaded lazily with a plain ``LoadLibrary``, which reads ``PATH``.
+
+    ``os.add_dll_directory`` only affects what the loader searches for a module
+    that is loaded after the call and through the loader's own search; the live run
+    still failed with "cublas64_12.dll is not found" while the file sat in
+    ``nvidia/cublas/bin`` and ``check`` said cuda was true. Listing the directory
+    on ``PATH`` is what made the same install run on the GPU.
+    """
+    site = _make_site_packages(tmp_path, ["cublas", "cudnn"])
+    _fake_windows_site(monkeypatch, site)
+    monkeypatch.setenv("PATH", os.pathsep.join(["C:\\Windows", "C:\\tools"]))
+
+    transcribe._add_cuda_dll_directories()
+
+    entries = os.environ["PATH"].split(os.pathsep)
+    # The sweep walks the libraries in sorted order, so cublas ends up first.
+    assert entries[:2] == [str(site / "nvidia" / "cublas" / "bin"), str(site / "nvidia" / "cudnn" / "bin")]
+    assert entries[2:] == ["C:\\Windows", "C:\\tools"]
+
+
+def test_the_path_gets_each_directory_once(tmp_path, monkeypatch):
+    """The sweep runs before every job in the same interpreter; PATH must not grow."""
+    site = _make_site_packages(tmp_path, ["cublas", "cudnn"])
+    _fake_windows_site(monkeypatch, site)
+    # cudnn is already on PATH, just not at the front: it moves, it is not added twice.
+    monkeypatch.setenv("PATH", os.pathsep.join(["C:\\Windows", str(site / "nvidia" / "cudnn" / "bin")]))
+
+    transcribe._add_cuda_dll_directories()
+    transcribe._add_cuda_dll_directories()
+
+    assert os.environ["PATH"].split(os.pathsep) == [
+        str(site / "nvidia" / "cublas" / "bin"),
+        str(site / "nvidia" / "cudnn" / "bin"),
+        "C:\\Windows",
+    ]
+
+
+def test_the_path_is_left_alone_off_windows(tmp_path, monkeypatch):
+    site = _make_site_packages(tmp_path, ["cublas"])
+
+    class FakeSite:
+        @staticmethod
+        def getsitepackages():
+            return [str(site)]
+
+    monkeypatch.setattr(transcribe, "windows", lambda: False)
+    monkeypatch.setitem(sys.modules, "site", FakeSite)
+    monkeypatch.setenv("PATH", "C:\\Windows")
+
+    transcribe._add_cuda_dll_directories()
+
+    assert os.environ["PATH"] == "C:\\Windows"
 
 
 def test_cpu_fallback_keeps_progress_moving_forward(tmp_path, monkeypatch, with_cuda):
