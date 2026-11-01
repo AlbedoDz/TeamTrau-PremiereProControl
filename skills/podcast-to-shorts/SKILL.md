@@ -92,7 +92,7 @@ Tool arguments:
 - `limit` (optional): Maximum number of candidate windows to return (default: 20).
 - `detectFaces?: boolean = false` (optional): Face counting is opt-in (default `false`). Turn it on ONLY when the podcast has wide two-person shots, because it decodes video (uses GPU decoding of keyframes only). When `false`, `multiFaceRatio` is 0 and no "Cảnh nhiều người — kiểm tra khung reframe" markers are added.
 
-Returns `{ fingerprint: string, candidates: Candidate[] }` (or candidates with `fingerprint`), where:
+Returns `{ success: true, sequenceId, fingerprint, totalCandidates, candidates: [{ startSentenceId, endSentenceId, start, end, text, signals }], detectFaces, warnings }` (or `status: "running"` while transcription is still in progress), where:
 - `fingerprint`: Sequence timeline fingerprint. Agents MUST pass this fingerprint as `expectedFingerprint` to every `build_short` call.
 - Candidates array, where each candidate has:
   - `startSentenceId`: First sentence ID.
@@ -162,7 +162,7 @@ If the user modifies captions, pass the updated array back via the `captions` ar
 
 ### 6. Timeline Assembly (`build_short` execution)
 
-Call `build_short` with `dryRun: false` and the user-approved `captions` (if modified).
+Call `build_short` with `dryRun: false`, the same `expectedFingerprint` (from `find_highlight_candidates`), and the edited captions if any.
 
 Execution steps performed by the tool:
 1. **Pre-render captions**: Sidecar renders an alpha ProRes 4444 `.mov` at the reframed sequence's real frame size (Auto Reframe follows source height, e.g. 1215×2160 from a 3840×2160 source) matching sequence framerate, with safe margins as percentages (10% top, 15% bottom, 6% sides). If rendering fails, execution stops immediately before Premiere is touched.
