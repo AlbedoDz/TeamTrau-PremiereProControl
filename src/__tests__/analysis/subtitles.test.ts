@@ -69,7 +69,46 @@ describe('buildSubtitleCues', () => {
   });
 });
 
+describe('cue timing guarantees', () => {
+  it('keeps every cue positive and ordered when words touch', () => {
+    const cues = buildSubtitleCues([
+      { w: 'a.', start: 0, end: 0.05 },
+      { w: 'b.', start: 0.05, end: 0.05 },
+      { w: 'c.', start: 0.05, end: 0.1 },
+    ]);
+    expect(cues).toHaveLength(3);
+    cues.forEach((c, i) => {
+      expect(c.end).toBeGreaterThan(c.start);
+      if (i > 0) expect(c.start).toBeGreaterThanOrEqual(cues[i - 1]!.end + 0.08 - 1e-9);
+    });
+  });
+
+  it('keeps a gap between cues in a dense run', () => {
+    const dense = Array.from({ length: 200 }, (_, i) => ({ w: 'từ.', start: i * 0.1, end: i * 0.1 + 0.1 }));
+    const cues = buildSubtitleCues(dense);
+    expect(cues).toHaveLength(200);
+    cues.forEach((c, i) => {
+      expect(c.end - c.start).toBeGreaterThanOrEqual(0.04 - 1e-9);
+      if (i > 0) expect(c.start).toBeGreaterThanOrEqual(cues[i - 1]!.end + 0.08 - 1e-9);
+    });
+  });
+
+  it('cuts mid-sentence at maxDuration with the exact text of both cues', () => {
+    const cues = buildSubtitleCues(seq('một hai ba bốn năm sáu bảy tám chín mười', 0, 0.9, 0.8));
+    expect(cues.map((c) => c.lines.join(' '))).toEqual(['một hai ba bốn năm sáu bảy', 'tám chín mười']);
+  });
+
+  it('never extends a cue beyond maxDuration for reading speed', () => {
+    const cues = buildSubtitleCues(seq('một hai ba bốn năm sáu', 0, 0.1, 0.1), { maxCps: 1, maxDuration: 3 });
+    expect(cues[0]!.end - cues[0]!.start).toBeLessThanOrEqual(3 + 1e-9);
+  });
+});
+
 describe('toSrt', () => {
+  it('rounds 0.9995 s to 00:00:01,000', () => {
+    expect(toSrt([{ index: 1, start: 0.9995, end: 2, lines: ['x'] }])).toContain('00:00:01,000 --> 00:00:02,000');
+  });
+
   it('formats times and CRLF', () => {
     const srt = toSrt([{ index: 3, start: 3725.5, end: 3727.25, lines: ['Xin chào'] }]);
     expect(srt).toContain('01:02:05,500 --> 01:02:07,250');

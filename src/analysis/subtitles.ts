@@ -32,6 +32,7 @@ export const DEFAULT_SUBTITLE_OPTIONS: SubtitleOptions = {
 interface Word { w: string; start: number; end: number }
 
 const ms = (n: number): number => Math.round(n * 1000) / 1000;
+const MIN_CUE_SEC = 0.04;
 const SENTENCE_END = /[.?!…]$/;
 
 /**
@@ -77,7 +78,7 @@ function wrap(words: string[], maxChars: number, maxLines: number): string[] | n
 export function buildSubtitleCues(words: Word[], opts: Partial<SubtitleOptions> = {}): SubtitleCue[] {
   const o = { ...DEFAULT_SUBTITLE_OPTIONS, ...opts };
   const clean: Word[] = [];
-  for (const word of words) {
+  for (const word of [...words].sort((x, y) => x.start - y.start)) {
     const w = word.w.normalize('NFC').replace(/\s+/g, ' ').trim();
     if (w) clean.push({ w, start: word.start, end: word.end });
   }
@@ -113,11 +114,19 @@ export function buildSubtitleCues(words: Word[], opts: Partial<SubtitleOptions> 
     };
   });
 
+  // Timing, in order: a cue starts no earlier than the previous end + gap, reading is
+  // extended up to maxCps (never past maxDuration or the next raw start - gap), and every
+  // cue lasts at least one 25 fps frame.
+  let prevEnd = -Infinity;
   cues.forEach((cue, i) => {
+    const rawEnd = cue.end;
+    cue.start = ms(Math.max(cue.start, prevEnd + o.gap));
     const chars = cue.lines.join(' ').length;
-    const wanted = Math.max(o.minDuration, chars / o.maxCps);
+    const wanted = Math.min(Math.max(o.minDuration, chars / o.maxCps), o.maxDuration);
     const limit = i + 1 < cues.length ? cues[i + 1]!.start - o.gap : Infinity;
-    cue.end = ms(Math.min(Math.max(cue.end, cue.start + wanted), limit));
+    const desired = Math.max(rawEnd, cue.start + wanted);
+    cue.end = ms(Math.max(Math.min(desired, limit), cue.start + MIN_CUE_SEC));
+    prevEnd = cue.end;
   });
   return cues;
 }
@@ -125,7 +134,7 @@ export function buildSubtitleCues(words: Word[], opts: Partial<SubtitleOptions> 
 const pad = (n: number, width: number): string => String(n).padStart(width, '0');
 
 function srtTime(sec: number): string {
-  const total = Math.max(0, Math.round(sec * 1000));
+  const total = Math.max(0, Math.round(sec * 1000 + 1e-6));
   const h = Math.floor(total / 3_600_000);
   const m = Math.floor((total % 3_600_000) / 60_000);
   const s = Math.floor((total % 60_000) / 1000);
