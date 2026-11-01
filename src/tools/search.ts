@@ -27,6 +27,37 @@ export const CORE_ADVERTISED_TOOL_NAMES = [
   'list_sequences',
 ] as const;
 
+/**
+ * Single-item tools whose batch sibling does the same work in one round-trip.
+ * Agents that find only the single tool call it once per item (one session
+ * placed 35 clips with 35 add_to_timeline calls), so search results and
+ * descriptions point at the sibling.
+ *
+ * `items` siblings take a list of the same items. `sequence` siblings apply
+ * one change to EVERY clip of a sequence, so they are only a substitute when
+ * that is the intent. batch_rename_clips is deliberately absent: it renames
+ * every clip to "<prefix> N", which is not a faster rename_clip.
+ */
+export const BATCH_ALTERNATIVES: Record<string, { tool: string; scope: 'items' | 'sequence' }> = {
+  add_to_timeline: { tool: 'add_to_timeline_batch', scope: 'items' },
+  set_clip_properties: { tool: 'set_clip_properties_batch', scope: 'items' },
+  delete_project_item: { tool: 'delete_multiple_project_items', scope: 'items' },
+  move_item_to_bin: { tool: 'move_items_to_bin', scope: 'items' },
+  add_track: { tool: 'add_tracks', scope: 'items' },
+  apply_effect: { tool: 'batch_apply_effect', scope: 'sequence' },
+  apply_audio_effect: { tool: 'apply_audio_effect_to_all_clips', scope: 'sequence' },
+  enable_disable_clip: { tool: 'batch_enable_disable', scope: 'sequence' },
+};
+
+/** The sentence appended to a single-item tool's description, or '' when it has no sibling. */
+export function batchHint(name: string): string {
+  const alt = BATCH_ALTERNATIVES[name];
+  if (!alt) return '';
+  return alt.scope === 'items'
+    ? `More than 3 items? Use ${alt.tool} — one round-trip for the whole list.`
+    : `Same change on EVERY clip of the sequence? Use ${alt.tool} — one round-trip.`;
+}
+
 export type ToolsetMode = 'search' | 'full';
 export type SearchDetail = 'names' | 'descriptions' | 'schema';
 export type ToolCategory =
@@ -69,6 +100,7 @@ export type ToolSearchMatch = {
   category: ToolCategory;
   score: number;
   inputSchema?: unknown;
+  batchAlternative?: string;
 };
 
 export type ToolSearchResult =
@@ -223,7 +255,28 @@ function projectMatch(tool: SearchableTool, score: number, detail: SearchDetail)
   if (detail === 'names') {
     match.description = '';
   }
+  const alt = BATCH_ALTERNATIVES[tool.name];
+  if (alt) match.batchAlternative = alt.tool;
   return match;
+}
+
+/**
+ * Append each matched tool's batch sibling when it did not rank on its own.
+ * Siblings ride along past `limit`: the whole point is that the agent sees
+ * the batch tool at the moment it has found the single one.
+ */
+function withBatchSiblings(matches: ToolSearchMatch[], tools: SearchableTool[], detail: SearchDetail): ToolSearchMatch[] {
+  const present = new Set(matches.map((match) => match.name));
+  const siblings: ToolSearchMatch[] = [];
+  for (const match of matches) {
+    const altName = match.batchAlternative;
+    if (!altName || present.has(altName)) continue;
+    const sibling = tools.find((tool) => tool.name === altName);
+    if (!sibling) continue;
+    present.add(altName);
+    siblings.push(projectMatch(sibling, 0, detail));
+  }
+  return [...matches, ...siblings];
 }
 
 export function searchPremiereTools(tools: SearchableTool[], options: SearchToolsOptions = {}): ToolSearchResult {
@@ -317,7 +370,7 @@ export function searchPremiereTools(tools: SearchableTool[], options: SearchTool
       limit,
       detail,
       nextStep: nextStep(toolset),
-      matches,
+      matches: withBatchSiblings(matches, tools, detail),
     };
   }
 
@@ -339,7 +392,7 @@ export function searchPremiereTools(tools: SearchableTool[], options: SearchTool
     limit,
     detail,
     nextStep: nextStep(toolset),
-    matches: ranked,
+    matches: withBatchSiblings(ranked, tools, detail),
   };
 }
 

@@ -229,6 +229,24 @@ const EXPANDED_REQUIRED_PROJECT_ITEM_ID = new Set([
   'delete_project_item',
 ]);
 
+// Expanded tools take a free-form record, so for these the description is the
+// only place an agent learns the arguments — and whether the tool acts on a
+// list of items or on EVERY clip of the sequence.
+const EXPANDED_DESCRIPTIONS: Record<string, string> = {
+  batch_apply_effect:
+    'Applies one effect to EVERY clip of a sequence in one call (video effect on video clips, audio effect on audio clips). Args: effectName, sequenceId (optional, defaults to active). Returns per-clip results. For specific clips only, call apply_effect per clip.',
+  batch_enable_disable:
+    'Enables or disables EVERY clip of a sequence in one call. Args: enabled (boolean, default true), sequenceId (optional, defaults to active). For specific clips only, call enable_disable_clip per clip.',
+  batch_rename_clips:
+    'Renames EVERY clip of a sequence to "<prefix> 1", "<prefix> 2", … in track order. Args: prefix (default "Clip"), sequenceId (optional, defaults to active). Not for renaming specific clips: use rename_clip.',
+  delete_multiple_project_items:
+    'Deletes many project items in one call. Args: projectItemIds (string[] from list_project_items). Returns per-item results; a missing id is reported, not fatal.',
+  move_items_to_bin:
+    'Moves many project items into one bin in one call. Args: projectItemIds (string[] from list_project_items), binId (or binName). Returns per-item results.',
+  add_tracks:
+    'Adds several tracks to a sequence in one call. Args: videoTracks (count), audioTracks (count), sequenceId (optional, defaults to active). Fails if Premiere added fewer tracks than requested.',
+};
+
 export function getExpandedTools(existingNames: Set<string>): MCPTool[] {
   return expandedToolNames
     .filter((name) => !existingNames.has(name))
@@ -243,7 +261,7 @@ export function getExpandedTools(existingNames: Set<string>): MCPTool[] {
       }
       return {
         name,
-        description: `Premiere Pro expanded operation: ${name.replace(/_/g, ' ')}.`,
+        description: EXPANDED_DESCRIPTIONS[name] ?? `Premiere Pro expanded operation: ${name.replace(/_/g, ' ')}.`,
         inputSchema,
       };
     });

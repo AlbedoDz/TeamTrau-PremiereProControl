@@ -12,13 +12,14 @@ import type { PremiereProTransport } from '../bridge/types.js';
 import { bridgeUnavailableResult, isBridgeUnavailableMessage } from '../bridge/errors.js';
 import { Logger } from '../utils/logger.js';
 import { executeExpandedTool, getExpandedTools, isExpandedTool } from './expanded.js';
-import { canonicalizeMcpArgs } from '../utils/mcp-args.js';
+import { canonicalizeMcpArgs, coerceArgsFromIssues } from '../utils/mcp-args.js';
 import type { ToolContext, ToolModule } from './context.js';
 import type { MCPTool } from './types.js';
 import { domainTools } from './domains/index.js';
 import { metaToolDefinitions } from './meta.js';
 import {
   advertisedToolNames,
+  batchHint,
   categorizeTool,
   resolveToolset,
   schemaTextFromShape,
@@ -69,6 +70,7 @@ export function findNulByteArgument(value: any, path = ''): string | null {
 export class PremiereProTools {
   private logger: Logger;
   private context: ToolContext;
+  private catalog?: MCPTool[];
 
   constructor(bridge: PremiereProTransport) {
     this.logger = new Logger('PremiereProTools');
@@ -85,11 +87,17 @@ export class PremiereProTools {
   }
 
   getAvailableTools(): MCPTool[] {
-    const localTools = this.getLocalTools();
-    return [
-      ...localTools,
-      ...getExpandedTools(new Set(localTools.map((tool) => tool.name)))
-    ];
+    if (!this.catalog) {
+      const localTools = this.getLocalTools();
+      this.catalog = [
+        ...localTools,
+        ...getExpandedTools(new Set(localTools.map((tool) => tool.name)))
+      ].map((tool) => {
+        const hint = batchHint(tool.name);
+        return hint ? { ...tool, description: `${tool.description} ${hint}` } : tool;
+      });
+    }
+    return this.catalog;
   }
 
   getAdvertisedTools(): MCPTool[] {
@@ -148,16 +156,27 @@ export class PremiereProTools {
     // Zod object schemas strip unknown keys by default, and several handlers
     // read alternate spellings (args.itemId || args.item_id), so replacing
     // outright would drop arguments callers are sending today.
-    try {
-      const validated = tool.inputSchema.parse(args);
+    //
+    // A value the key allowlist missed gets one more chance: where Zod says it
+    // expected a number or boolean and got "12" or "false", convert at exactly
+    // that path and parse once more.
+    let parsed = tool.inputSchema.safeParse(args);
+    if (!parsed.success) {
+      const coerced = coerceArgsFromIssues(args, parsed.error.issues);
+      const retried = coerced ? tool.inputSchema.safeParse(coerced) : undefined;
+      if (coerced && retried?.success) {
+        args = coerced;
+        parsed = retried;
+      }
+    }
+    if (parsed.success) {
+      const validated = parsed.data;
       if (validated && typeof validated === 'object' && !Array.isArray(validated)) {
         args = { ...args, ...(validated as Record<string, unknown>) };
       }
-    } catch (error) {
-      const issues =
-        error && typeof error === 'object' && Array.isArray((error as { issues?: unknown }).issues)
-          ? (error as { issues: Array<{ path?: unknown; code?: unknown }> }).issues
-          : [];
+    } else {
+      const error = parsed.error;
+      const issues = error.issues as Array<{ path?: unknown; code?: unknown }>;
       const errorFields = issues
         .map((issue) =>
           Array.isArray(issue.path)
