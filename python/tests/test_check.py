@@ -163,7 +163,11 @@ def test_what_download_models_writes_is_what_check_finds(tmp_path, monkeypatch):
     download_models.run({"modelsDir": str(models)}, None)
 
     report = check.run()
-    assert report["models"] == {"whisper": True, "yunet": True}
+    assert report["models"] == {
+        "whisper": True, "yunet": True,
+        # setup only fetched whisper here: the Zipformer engines are opt-in.
+        "zipformer68m": False, "zipformer30m": False, "vad": False,
+    }
 
 
 def test_cli_reports_the_models(tmp_path):

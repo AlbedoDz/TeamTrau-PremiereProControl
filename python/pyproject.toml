@@ -15,6 +15,10 @@ dependencies = [
     "opencv-python-headless>=4.10",
     "huggingface_hub>=0.25",
     "pytest>=8",
+    # CPU-friendly Zipformer engines: sherpa-onnx runs the transducer, sentencepiece
+    # rebuilds the 30M tokens.txt from its bpe.model at download time.
+    "sherpa-onnx>=2.0",
+    "sentencepiece>=0.2",
 ]
 
 [project.optional-dependencies]

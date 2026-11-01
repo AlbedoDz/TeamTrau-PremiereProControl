@@ -6,3 +6,5 @@ numpy>=2,<3
 pillow>=11
 opencv-python-headless>=4.10
 pytest>=8
+sherpa-onnx>=2.0
+sentencepiece>=0.2
