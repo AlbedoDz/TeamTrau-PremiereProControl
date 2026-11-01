@@ -9,6 +9,7 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
 import {
+  jobStatus,
   modelPaths,
   premiereMcpHome,
   sidecarMissingResult,
@@ -62,12 +63,12 @@ interface TranscribeResult {
   durationSec?: number;
 }
 
-const fileStamp = (path: string): string => {
+const fileStamp = (path: string): string | null => {
   try {
-    const s = statSync(path);
-    return `${s.size}:${s.mtimeMs}`;
+    const st = statSync(path);
+    return `${st.size}:${st.mtimeMs}`;
   } catch {
-    return '0:0';
+    return null;
   }
 };
 
@@ -98,23 +99,41 @@ export async function loadTranscript(
   }
 
   const glossary = args.glossary ?? [];
+  const keys: string[] = [];
+  for (const mediaPath of paths) {
+    const stamp = fileStamp(mediaPath);
+    if (stamp === null) return { success: false, error: `Media file not found: ${mediaPath}` };
+    keys.push(`transcribe|${mediaPath}|${stamp}|${ASR_MODEL}|${glossary.join('\n')}`);
+  }
+
+  // startJob replaces a failed job without reporting it, so read the state first.
   let jobs: JobState[];
+  const failures: string[] = [];
   try {
-    jobs = await Promise.all(paths.map((mediaPath) => startJob(
-      `transcribe|${mediaPath}|${fileStamp(mediaPath)}|${ASR_MODEL}|${glossary.join('\n')}`,
+    const before = await Promise.all(keys.map((key) => jobStatus(key)));
+    before.forEach((job, i) => {
+      if (job?.status === 'failed') failures.push(`${paths[i]}: ${job.error ?? 'unknown error'}`);
+    });
+    jobs = await Promise.all(paths.map((mediaPath, i) => startJob(
+      keys[i]!,
       'transcribe',
       { mediaPath, modelDir: modelPaths().whisper, language: 'vi', glossary, device: 'auto', model: ASR_MODEL },
     )));
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
+  if (failures.length > 0) {
+    return {
+      success: false,
+      error: failures.join('\n'),
+      retry: true,
+      nextStep: 'Call transcribe_sequence again to retry; the failed file(s) were restarted.',
+    } as never;
+  }
 
   const failed = jobs.map((job, i) => ({ job, path: paths[i]! })).filter((x) => x.job.status === 'failed');
   if (failed.length > 0) {
-    return {
-      success: false,
-      error: `Transcription failed for ${failed.map((f) => `${f.path}: ${f.job.error ?? 'unknown error'}`).join('; ')}. Call transcribe_sequence again to retry.`,
-    };
+    return { success: false, error: failed.map((f) => `${f.path}: ${f.job.error ?? 'unknown error'}`).join('\n') };
   }
 
   if (jobs.some((job) => job.status === 'running')) {
@@ -168,7 +187,8 @@ async function transcribeSequence(
   }
   const renders = join(premiereMcpHome(), 'renders');
   await mkdir(renders, { recursive: true });
-  const wordsFile = join(renders, `transcript-${loaded.sequenceId}-${loaded.fingerprint}.json`);
+  const safeId = loaded.sequenceId.replace(/[^\w.-]/g, '_');
+  const wordsFile = join(renders, `transcript-${safeId}-${loaded.fingerprint}.json`);
   await writeFile(wordsFile, JSON.stringify(loaded.words));
   const from = args.page * args.pageSize;
   return {

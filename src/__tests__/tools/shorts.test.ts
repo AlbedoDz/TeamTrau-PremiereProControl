@@ -20,6 +20,7 @@ import { ASR_MODEL } from '../../tools/domains/shorts.js';
 
 const sidecarPython = sidecar.sidecarPython as jest.Mock;
 const startJob = sidecar.startJob as jest.Mock;
+const jobStatus = sidecar.jobStatus as jest.Mock;
 const premiereMcpHome = sidecar.premiereMcpHome as jest.Mock;
 
 const FRAME = 1 / 25;
@@ -48,6 +49,7 @@ describe('transcribe_sequence', () => {
     premiereMcpHome.mockReset().mockReturnValue(home);
     sidecarPython.mockReset().mockResolvedValue('python');
     startJob.mockReset();
+    jobStatus.mockReset().mockResolvedValue(null);
     executeScript = jest.fn();
     tools = new PremiereProTools({ executeScript } as never);
   });
@@ -108,15 +110,23 @@ describe('transcribe_sequence', () => {
     expect(startJob).not.toHaveBeenCalled();
   });
 
-  it('a failed job is reported with its error and restarted on the next call', async () => {
-    executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA)]));
-    startJob.mockResolvedValueOnce({ status: 'failed', progress: 0, error: 'ffmpeg exploded' });
+  it('reports a failed job with its error and still restarts it', async () => {
+    executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA), aclip('c2', 1, 0, fileB)]));
+    jobStatus.mockImplementation(async (key: string) => (key.includes(fileA) ? { status: 'failed', progress: 0, error: 'ffmpeg exploded' } : null));
+    startJob.mockResolvedValue({ status: 'running', progress: 0 });
     const r = await tools.executeTool('transcribe_sequence', {});
-    expect(r.success).toBe(false);
-    expect(r.error).toContain('ffmpeg exploded');
-    startJob.mockResolvedValueOnce({ status: 'running', progress: 0 });
-    const again = await tools.executeTool('transcribe_sequence', {});
-    expect(again).toMatchObject({ success: true, status: 'running', files: 1 });
+    expect(r).toMatchObject({ success: false, retry: true });
+    expect(r.error).toBe(`${fileA}: ffmpeg exploded`);
+    expect(r.nextStep).toContain('restarted');
     expect(startJob).toHaveBeenCalledTimes(2);
+    expect(startJob.mock.calls.some(([key]) => String(key).includes(fileA))).toBe(true);
+  });
+
+  it('errors before starting any job when a media file does not exist', async () => {
+    const missing = join(home, 'gone.wav');
+    executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, missing)]));
+    const r = await tools.executeTool('transcribe_sequence', {});
+    expect(r).toMatchObject({ success: false, error: `Media file not found: ${missing}` });
+    expect(startJob).not.toHaveBeenCalled();
   });
 });
