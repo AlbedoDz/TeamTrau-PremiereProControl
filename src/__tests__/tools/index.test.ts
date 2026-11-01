@@ -94,7 +94,7 @@ describe('PremiereProTools', () => {
       expect(toolNames).toContain('get_tool_schema');
       expect(toolNames).toContain('invoke_tool');
       expect(toolNames).not.toContain('import_ae_comps');
-      expect(availableTools).toHaveLength(293);
+      expect(availableTools).toHaveLength(295);
       expect(unimplementedExpandedToolNames).toEqual([]);
       for (const name of expandedToolNames) {
         expect(toolNames).toContain(name);
@@ -598,7 +598,7 @@ describe('PremiereProTools', () => {
 
         expect(result.success).toBe(true);
         expect(result.catalog).toEqual({
-          tools: 293,
+          tools: 295,
           advertised: 5,
           toolset: 'search',
           search: 'search_tools',

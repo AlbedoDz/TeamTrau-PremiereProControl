@@ -19,7 +19,7 @@ const MAX_FILES = 500;
 /** Keyframe sampling below this many samples per second is too sparse to score; decode one frame per second instead. */
 const MIN_SAMPLES_PER_SECOND = 0.2;
 
-async function listFootage(args: { mediaPaths?: string[] | undefined; folderPath?: string | undefined; recursive?: boolean | undefined }): Promise<{ paths: string[] } | { error: string }> {
+export async function listFootage(args: { mediaPaths?: string[] | undefined; folderPath?: string | undefined; recursive?: boolean | undefined }): Promise<{ paths: string[] } | { error: string }> {
   if (args.mediaPaths?.length) return { paths: args.mediaPaths };
   if (!args.folderPath) return { error: 'Provide mediaPaths or folderPath.' };
   const found: string[] = [];
@@ -82,7 +82,7 @@ async function scoreFile(ffmpeg: string, ffprobe: string, mediaPath: string, win
   }
 }
 
-async function scoreAll(
+export async function scoreAll(
   paths: string[],
   windowSeconds: number,
   toolName: string,
@@ -153,6 +153,22 @@ async function projectItemIds(ctx: ToolContext): Promise<Map<string, string>> {
   return map;
 }
 
+/** Project item id for each path, importing the ones that are not in the project yet. */
+export async function ensureProjectItems(ctx: ToolContext, paths: string[]): Promise<{ ids: Map<string, string> } | { error: string }> {
+  const known = await projectItemIds(ctx);
+  const ids = new Map<string, string>();
+  for (const path of new Set(paths)) {
+    let id = known.get(norm(path));
+    if (!id) {
+      const imported: any = await ctx.bridge.importMedia(path);
+      if (!imported || imported.success === false || !imported.id) return { error: `Could not import ${path}: ${imported?.error ?? 'no id returned'}` };
+      id = String(imported.id);
+    }
+    ids.set(path, id);
+  }
+  return { ids };
+}
+
 async function assembleRoughCut(
   ctx: ToolContext,
   args: {
@@ -214,17 +230,9 @@ async function assembleRoughCut(
     backupPath = backup.path;
   }
 
-  const known = await projectItemIds(ctx);
-  const ids = new Map<string, string>();
-  for (const path of new Set(plan.shots.map((s) => s.mediaPath))) {
-    let id = known.get(norm(path));
-    if (!id) {
-      const imported: any = await ctx.bridge.importMedia(path);
-      if (!imported || imported.success === false || !imported.id) return { success: false, error: `Could not import ${path}: ${imported?.error ?? 'no id returned'}`, backupPath, ...summary };
-      id = String(imported.id);
-    }
-    ids.set(path, id);
-  }
+  const items = await ensureProjectItems(ctx, plan.shots.map((x) => x.mediaPath));
+  if ('error' in items) return { success: false, error: items.error, backupPath, ...summary };
+  const ids = items.ids;
 
   const placed: any = await ctx.bridge.addToTimelineBatch(
     before.sequenceId,

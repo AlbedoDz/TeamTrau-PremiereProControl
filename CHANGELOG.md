@@ -12,6 +12,9 @@ All notable changes are documented here. Releases use semantic versioning.
 - Rough cut from a folder of footage:
   - `score_clips` ranks the best stretches of each video file by exposure and sharpness, measured with ffmpeg on keyframes (one frame per second for sparse footage). Shake and motion are not measured.
   - `assemble_rough_cut` takes the best stretches (each once, at most `maxPerFile` per file), orders them by file name or score, and places them on a video track to a target length within a frame. It imports files that are not in the project and refuses to overwrite existing clips unless `overwrite=true`.
+- Cutting to music:
+  - `analyze_music` finds tempo, beat grid, bars and loud or quiet sections of a song from its loudness (ffmpeg), with a confidence. It assumes a steady tempo.
+  - `assemble_beat_cut` cuts on the beats (every 4, 2 or 1 beats by section loudness and preset `calm`, `balanced` or `energetic`, or a fixed `cutEveryBeats`), gives the best footage to the loudest sections, snaps cuts to the frame grid, and places the shots and the music. It reuses footage, and says so, when there are fewer good stretches than cuts.
 - Every tool that changes the sequence has `dryRun` and, by default, a project backup first.
 - Analysis results are cached on disk and files are analysed in parallel; `preflight_media` lists only files with issues.
 

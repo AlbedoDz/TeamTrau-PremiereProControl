@@ -151,3 +151,13 @@ Kiểm chứng live (Project-Temp, Premiere 25.6.3), thư mục 4 clip giả (r�
 - `assemble_rough_cut` 9 s: chọn 3 cảnh tốt nhất, bỏ clip tối, đặt liền nhau, track video kết thúc đúng 9 s, `verified: true`, `qa_sequence` báo sạch, sao lưu tự động.
 
 Giới hạn đã biết: chưa đo rung và chuyển động (mẫu quá thưa); ngưỡng độ nét (cạnh trung bình 12 ở 320 px) hiệu chỉnh trên ảnh giả, nên cần chỉnh lại trên footage DJI thật; `select_golden_windows`, `match_clip_exposure` chưa làm. `pack_to_duration` đã gộp vào `assemble_rough_cut`.
+
+## 10. Tiến độ giai đoạn D (2026-11-01)
+
+Xong `analyze_music` và `assemble_beat_cut` (catalog 295). Thuật toán thuần TypeScript, không cần Python hay GPU: ffmpeg đo độ lớn mỗi 10 ms, tự tương quan để tìm tempo (tinh chỉnh tới phần trăm khung hình để không trôi nhịp trong cả bài), tìm pha beat, ô nhịp mạnh làm downbeat, chia đoạn nơi độ lớn đổi từ 25% trở lên. Logic ở `src/analysis/music.ts` và `src/analysis/beatcut.ts`.
+
+Kiểm chứng:
+- Test thuần trên đường bao tổng hợp: 90/120/140 BPM sai dưới 1 BPM và beat không trôi sau 1 phút; chọn đúng downbeat; tách đoạn nhỏ/to; cùng đầu vào cho cùng kết quả.
+- Live (Project-Temp, Premiere 25.6.3), bài 24 s 120 BPM, nửa sau to hơn: 120,07 BPM, độ tin cậy 1, 12 ô nhịp, ranh giới đoạn ở 12,19 s (thật 12,0; lệch nửa ô nhịp vì lưới ô nhịp bắt đầu ở 0,2 s). `assemble_beat_cut` kiểu energetic: 29 cảnh + nhạc, track video kết thúc đúng 24 s, `verified: true`, `qa_sequence` sạch.
+
+Giới hạn: giả định tempo đều (bài live hoặc đổi nhịp sẽ cho độ tin cậy thấp); chỉ thử trên nhạc tổng hợp, chưa thử trên bài thật có giọng hát; chưa có `build_variants` và các preset thể loại ngoài ba mức tốc độ.

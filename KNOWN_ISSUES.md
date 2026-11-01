@@ -6,7 +6,7 @@ This file tracks current, confirmed limits. It is no longer a backlog of already
 
 The current built tool catalog exposes:
 
-- `293` tools, counted from the built catalog
+- `295` tools, counted from the built catalog
 - By default `tools/list` advertises 5 always-on tools; the rest are reached with `search_tools` then `invoke_tool`. Set `PREMIERE_MCP_TOOLSET=full` to list the whole catalog.
 
 Counted from the built catalog with `getAvailableTools().length`, not from this file.
