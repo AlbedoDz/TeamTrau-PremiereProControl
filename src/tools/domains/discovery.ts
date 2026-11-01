@@ -9,6 +9,7 @@ import { constants as fsConstants, promises as fs } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { basename, dirname, extname, join, parse } from 'node:path';
 import { checkForUpdate } from '../../utils/update-check.js';
+import { findFfTool } from '../../analysis/ffmpeg.js';
 import { resolveToolset } from '../search.js';
 import type { ToolContext, ToolModule } from '../context.js';
 import { buildSequenceResolver } from './shared.js';
@@ -446,6 +447,11 @@ async function getCapabilities(ctx: ToolContext, checkConnection = false): Promi
       invoke: 'invoke_tool',
       resources: 13,
       prompts: 10
+    },
+    analysis: {
+      ffmpeg: Boolean(await findFfTool('ffmpeg')),
+      ffprobe: Boolean(await findFfTool('ffprobe')),
+      note: 'Silence, dead-segment, loudness and media-preflight tools analyse files with ffmpeg/ffprobe; without them they return an install nextStep.'
     },
     liveConnection,
     safety: {

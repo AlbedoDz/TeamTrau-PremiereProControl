@@ -599,7 +599,7 @@ async function splitClip(ctx: ToolContext, clipId: string, splitTime: number): P
   return await ctx.bridge.executeScript(script);
 }
 
-async function razorTimelineAtTime(ctx: ToolContext, sequenceId?: string, time?: number, videoTrackIndices?: number[], audioTrackIndices?: number[]): Promise<any> {
+export async function razorTimelineAtTime(ctx: ToolContext, sequenceId?: string, time?: number, videoTrackIndices?: number[], audioTrackIndices?: number[]): Promise<any> {
   const normalizedTime = time ?? 0;
   const videoIndices = videoTrackIndices ?? [];
   const audioIndices = audioTrackIndices ?? [];

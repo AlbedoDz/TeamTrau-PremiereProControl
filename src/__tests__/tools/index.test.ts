@@ -26,6 +26,7 @@ const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
 /** Builds a fake child_process for a scripted ffmpeg run: emits stderr, then closes. */
 function fakeFfmpegProcess(stderrOutput: string, closeCode: number | null = 0): any {
   const proc: any = new EventEmitter();
+  proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
   process.nextTick(() => {
     if (stderrOutput) proc.stderr.emit('data', Buffer.from(stderrOutput));
@@ -37,6 +38,7 @@ function fakeFfmpegProcess(stderrOutput: string, closeCode: number | null = 0): 
 /** Builds a fake child_process that immediately errors (e.g. ffmpeg not on PATH). */
 function fakeMissingFfmpegProcess(): any {
   const proc: any = new EventEmitter();
+  proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
   process.nextTick(() => proc.emit('error', new Error('ENOENT')));
   return proc;
@@ -57,7 +59,8 @@ describe('PremiereProTools', () => {
     mockBridge = new PremiereProBridge() as jest.Mocked<PremiereProBridge>;
     tools = new PremiereProTools(mockBridge);
     jest.clearAllMocks();
-    mockSpawn.mockReset();
+    // get_capabilities probes for ffmpeg; default to "not installed" so no test spawns a real process.
+    mockSpawn.mockReset().mockImplementation(() => fakeMissingFfmpegProcess());
   });
 
   describe('getAvailableTools()', () => {
@@ -91,7 +94,7 @@ describe('PremiereProTools', () => {
       expect(toolNames).toContain('get_tool_schema');
       expect(toolNames).toContain('invoke_tool');
       expect(toolNames).not.toContain('import_ae_comps');
-      expect(availableTools).toHaveLength(283);
+      expect(availableTools).toHaveLength(287);
       expect(unimplementedExpandedToolNames).toEqual([]);
       for (const name of expandedToolNames) {
         expect(toolNames).toContain(name);
@@ -595,7 +598,7 @@ describe('PremiereProTools', () => {
 
         expect(result.success).toBe(true);
         expect(result.catalog).toEqual({
-          tools: 283,
+          tools: 287,
           advertised: 5,
           toolset: 'search',
           search: 'search_tools',

@@ -15,7 +15,7 @@ const requiredPaths = [
   'LICENSE.md',
 ];
 
-const { stdout } = await execFileAsync('npm', ['pack', '--dry-run', '--json'], { maxBuffer: 1024 * 1024 });
+const { stdout } = await execFileAsync('npm', ['pack', '--dry-run', '--json'], { maxBuffer: 1024 * 1024, shell: process.platform === 'win32' });
 const [pack] = JSON.parse(stdout);
 const packagedPaths = new Set(pack.files.map((file) => file.path));
 const missing = requiredPaths.filter((path) => !packagedPaths.has(path));

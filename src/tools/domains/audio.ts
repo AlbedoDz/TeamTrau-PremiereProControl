@@ -5,10 +5,7 @@
  * so the two cannot drift apart. Handlers reach Premiere through ToolContext.
  */
 import { z } from 'zod';
-import { spawn } from 'child_process';
-import { existsSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { ffmpegMissingResult, findFfTool, parseSilenceIntervals, runFf } from '../../analysis/ffmpeg.js';
 import type { ToolContext, ToolModule } from '../context.js';
 import { applyEffect } from './effects.js';
 
@@ -112,7 +109,7 @@ export const audioTools: ToolModule[] = [
   },
 ];
 
-async function resolveProjectItemMediaPath(ctx: ToolContext, projectItemId: string): Promise<{ path?: string; error?: string }> {
+export async function resolveProjectItemMediaPath(ctx: ToolContext, projectItemId: string): Promise<{ path?: string; error?: string }> {
   const script = `
       try {
         var item = __findProjectItem(${JSON.stringify(projectItemId)});
@@ -140,83 +137,6 @@ async function resolveProjectItemMediaPath(ctx: ToolContext, projectItemId: stri
   return { path: result?.mediaPath };
 }
 
-function ffmpegInstallHint(): { command: string; nextStep: string } {
-  if (platform() === 'win32') {
-    return {
-      command: 'winget install --id Gyan.FFmpeg -e',
-      nextStep:
-        'ffmpeg is not installed. Run this in a terminal on this machine, then retry detect_silence once: winget install --id Gyan.FFmpeg -e',
-    };
-  }
-  if (platform() === 'darwin') {
-    return {
-      command: 'brew install ffmpeg',
-      nextStep:
-        'ffmpeg is not installed. Run this in a terminal on this machine, then retry detect_silence once: brew install ffmpeg',
-    };
-  }
-  return {
-    command: 'sudo apt-get install -y ffmpeg',
-    nextStep:
-      'ffmpeg is not installed. Install ffmpeg with your package manager, then retry detect_silence once.',
-  };
-}
-
-function resolveFfmpegBinary(): string | null {
-  const names = platform() === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'];
-  const dirs = (process.env.PATH || '').split(delimiter);
-  if (platform() === 'darwin') {
-    dirs.push('/opt/homebrew/bin', '/usr/local/bin');
-  } else if (platform() === 'win32') {
-    dirs.push(join(homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links'));
-    dirs.push('C:\\ffmpeg\\bin');
-  }
-  for (const dir of dirs) {
-    if (!dir) continue;
-    for (const name of names) {
-      const candidate = join(dir, name);
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return null;
-}
-
-function checkFfmpegAvailable(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const proc = spawn('ffmpeg', ['-version']);
-    const fallback = (): string | null =>
-      process.env.JEST_WORKER_ID ? null : resolveFfmpegBinary();
-    proc.on('error', () => resolve(fallback()));
-    proc.on('close', (code) => resolve(code === 0 ? 'ffmpeg' : fallback()));
-  });
-}
-
-function parseSilenceIntervals(stderr: string): Array<{ start: number; end: number; duration: number }> {
-  const starts: number[] = [];
-  const ends: number[] = [];
-  const startRe = /silence_start:\s*(-?[\d.]+)/g;
-  const endRe = /silence_end:\s*(-?[\d.]+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = startRe.exec(stderr)) !== null) {
-    starts.push(parseFloat(match[1]!));
-  }
-  while ((match = endRe.exec(stderr)) !== null) {
-    ends.push(parseFloat(match[1]!));
-  }
-  const intervals: Array<{ start: number; end: number; duration: number }> = [];
-  const count = Math.min(starts.length, ends.length);
-  for (let i = 0; i < count; i++) {
-    const start = starts[i]!;
-    const end = ends[i]!;
-    intervals.push({
-      start,
-      end,
-      duration: Math.round((end - start) * 1000) / 1000,
-    });
-  }
-  return intervals;
-}
-
 async function detectSilence(ctx: ToolContext, 
   mediaPath?: string,
   projectItemId?: string,
@@ -237,59 +157,35 @@ async function detectSilence(ctx: ToolContext,
     return { success: false, error: 'Provide either mediaPath or projectItemId' };
   }
 
-  const ffmpegBin = await checkFfmpegAvailable();
-  if (!ffmpegBin) {
-    const install = ffmpegInstallHint();
-    return {
-      success: false,
-      retry: false,
-      status: 'not_found',
-      errorCode: 'ffmpeg.not_found',
-      error:
-        'ffmpeg was not found on this machine. detect_silence uses ffmpeg\'s silencedetect filter; Premiere cannot read audio levels. Install ffmpeg, then retry detect_silence once.',
-      installCommand: install.command,
-      nextStep: install.nextStep,
-    };
-  }
+  const ffmpegBin = await findFfTool('ffmpeg');
+  if (!ffmpegBin) return ffmpegMissingResult('detect_silence');
 
-  return new Promise((resolve) => {
-    const ffmpegArgs = [
+  let run;
+  try {
+    run = await runFf(ffmpegBin, [
       '-i', resolvedPath as string,
       '-af', `silencedetect=noise=${noiseThresholdDb}dB:d=${minDurationSeconds}`,
-      '-f', 'null', '-'
-    ];
-    const proc = spawn(ffmpegBin, ffmpegArgs);
-    let stderr = '';
-
-    proc.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    proc.on('error', (err) => {
-      resolve({ success: false, error: `Failed to run ffmpeg: ${err.message}` });
-    });
-
-    proc.on('close', (code) => {
-      if (code !== 0 && stderr.indexOf('silence_start') === -1) {
-        resolve({
-          success: false,
-          error: `ffmpeg exited with code ${code} and produced no silence data. This usually means the file couldn't be read.`,
-          mediaPath: resolvedPath,
-          ffmpegStderr: stderr.slice(-2000)
-        });
-        return;
-      }
-      const silenceIntervals = parseSilenceIntervals(stderr);
-      resolve({
-        success: true,
-        mediaPath: resolvedPath,
-        noiseThresholdDb,
-        minDurationSeconds,
-        silenceIntervals,
-        note: 'Detection only -- nothing was cut. Use split_clip/ripple_delete/razor_timeline_at_time on a sequence to remove any of these intervals.'
-      });
-    });
-  });
+      '-f', 'null', '-',
+    ]);
+  } catch (err) {
+    return { success: false, error: `Failed to run ffmpeg: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (run.code !== 0 && run.stderr.indexOf('silence_start') === -1) {
+    return {
+      success: false,
+      error: `ffmpeg exited with code ${run.code} and produced no silence data. This usually means the file couldn't be read.`,
+      mediaPath: resolvedPath,
+      ffmpegStderr: run.stderr.slice(-2000),
+    };
+  }
+  return {
+    success: true,
+    mediaPath: resolvedPath,
+    noiseThresholdDb,
+    minDurationSeconds,
+    silenceIntervals: parseSilenceIntervals(run.stderr),
+    note: 'Detection only -- nothing was cut. Use remove_silence_from_sequence to cut silence from a sequence, or split_clip/razor_timeline_at_time to cut manually.',
+  };
 }
 
 async function setupDucking(ctx: ToolContext, 
@@ -339,7 +235,7 @@ async function setupDucking(ctx: ToolContext,
   };
 }
 
-async function adjustAudioLevels(ctx: ToolContext, clipId: string, level: number): Promise<any> {
+export async function adjustAudioLevels(ctx: ToolContext, clipId: string, level: number): Promise<any> {
   const script = `
       try {
         var info = __findClip(${JSON.stringify(clipId)});

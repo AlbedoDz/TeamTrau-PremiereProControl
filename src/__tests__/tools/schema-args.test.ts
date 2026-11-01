@@ -36,10 +36,10 @@ describe('seeded arguments', () => {
   });
 
   it('are accepted when only the required parameters are supplied', () => {
-    // detect_silence is excluded by construction, not by convenience: it requires
-    // one of mediaPath or projectItemId and both are optional, so an object
-    // holding only required fields cannot satisfy it.
-    const CANNOT_BE_SATISFIED_BY_REQUIRED_ONLY = new Set(['detect_silence']);
+    // detect_silence and find_dead_segments are excluded by construction, not by
+    // convenience: each requires one of mediaPath or projectItemId and both are
+    // optional, so an object holding only required fields cannot satisfy them.
+    const CANNOT_BE_SATISFIED_BY_REQUIRED_ONLY = new Set(['detect_silence', 'find_dead_segments']);
     const rejected: string[] = [];
 
     for (const tool of tools) {

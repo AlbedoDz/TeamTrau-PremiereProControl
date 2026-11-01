@@ -2,6 +2,16 @@
 
 All notable changes are documented here. Releases use semantic versioning.
 
+## [1.3.0] - 2026-11-01
+
+- New footage-cleanup tools that analyse the media file with ffmpeg/ffprobe, because Premiere's scripting API cannot read audio levels or pixels:
+  - `preflight_media` flags missing or unreadable files, variable frame rate, frame-rate mismatch with the sequence, mono or multichannel audio, and sample-rate mismatch.
+  - `find_dead_segments` returns silent, black and frozen stretches of a file and the live segments between them.
+  - `remove_silence_from_sequence` cuts silence out of a sequence and closes the gaps. It cuts only where every considered audio track is silent and never inside video-only stretches, supports `dryRun`, and reports `verified: false` with a warning if the sequence did not shorten as planned.
+  - `normalize_loudness` measures each audio clip's integrated loudness (EBU R128) and sets its Volume to a target LUFS.
+- `get_capabilities` reports whether ffmpeg and ffprobe are available.
+- ffmpeg lookup and output parsing moved to `src/analysis/ffmpeg.ts`; `detect_silence` uses it and behaves as before.
+
 ## [1.2.11] - 2026-10-24
 
 - `import_media` puts the file in `binName` when that bin exists, and returns failure when it does not. The previous call imported to the project root and echoed the bin name anyway.

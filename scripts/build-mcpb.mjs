@@ -5,6 +5,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+// npm and npx are .cmd shims on Windows, which execFile cannot spawn without a shell.
+const shell = process.platform === 'win32';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 const outputDirectory = join(root, 'release-artifacts');
@@ -106,11 +108,12 @@ await writeFile(join(stagingDirectory, 'manifest.json'), `${JSON.stringify(manif
 
 await execFileAsync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--prefix', serverDirectory], {
   cwd: root,
-  maxBuffer: 1024 * 1024
+  maxBuffer: 1024 * 1024,
+  shell
 });
 await mkdir(outputDirectory, { recursive: true });
-await execFileAsync('npx', ['mcpb', 'validate', stagingDirectory], { cwd: root, maxBuffer: 1024 * 1024 });
-await execFileAsync('npx', ['mcpb', 'pack', stagingDirectory, outputPath], { cwd: root, maxBuffer: 1024 * 1024 });
-await execFileAsync('npx', ['mcpb', 'info', outputPath], { cwd: root, maxBuffer: 1024 * 1024 });
+await execFileAsync('npx', ['mcpb', 'validate', stagingDirectory], { cwd: root, maxBuffer: 1024 * 1024, shell });
+await execFileAsync('npx', ['mcpb', 'pack', stagingDirectory, outputPath], { cwd: root, maxBuffer: 1024 * 1024, shell });
+await execFileAsync('npx', ['mcpb', 'info', outputPath], { cwd: root, maxBuffer: 1024 * 1024, shell });
 
 console.log(`MCPB bundle created: ${outputPath}`);

@@ -24,7 +24,7 @@ import { useLiveStars } from "@/hooks/use-live-stars"
 import { AGENT_PROMPT, NPM, REPO } from "@/lib/snippets"
 
 const STATIC_STATS = [
-  ["1.2.11", "npm latest"],
+  ["1.3.0", "npm latest"],
   ["283", "Tools"],
 ] as const
 
