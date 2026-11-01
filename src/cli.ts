@@ -15,7 +15,7 @@ Usage:
   premiere-pro-mcp                 Start the MCP stdio server
   premiere-pro-mcp --install-cep   Install the CEP bridge and configure supported MCP clients
   premiere-pro-mcp --doctor        Check the local server, CEP bridge, and client configuration
-  premiere-pro-mcp --setup-asr     Install the Python analysis sidecar and the default Zipformer-68M model (about 150 MB)
+  premiere-pro-mcp --setup-asr     Install the Python analysis sidecar and the default Zipformer-68M model (about 300 MB)
   premiere-pro-mcp --setup-asr --engine <id> [--yes] [--no-default]
                                    Also install another engine after you approve the download:
                                    zipformer-68m, zipformer-30m, rover, whisper-turbo

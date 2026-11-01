@@ -10,6 +10,8 @@ import {
   DEFAULT_ENGINE,
   ENGINES,
   VAD_MB,
+  WHISPER_PACKAGES_MB,
+  DEFAULT_INSTALL_MB,
   downloadMb,
   installedEngines,
   usesZipformer,
@@ -222,6 +224,7 @@ export async function setupAsr(
 
   const reqTxt = join(pkgPythonDir, 'requirements.txt');
   const cudaTxt = join(pkgPythonDir, 'requirements-cuda.txt');
+  const whisperTxt = join(pkgPythonDir, 'requirements-whisper.txt');
   const engine: EngineId = options.engine ?? DEFAULT_ENGINE;
   const explicit = options.engine !== undefined;
 
@@ -238,7 +241,8 @@ export async function setupAsr(
         : 'No NVIDIA GPU found: skipping CUDA libraries; transcription will run on the CPU.');
     }
     log(`Engine ${engine}: ${info.label}`);
-    log(`Download: about ${downloadMb(engine)} MB${usesZipformer(engine) ? ` (includes a ${VAD_MB} MB voice-activity model)` : ''}${cudaNote}.`);
+    const whisperPkgs = engine === 'whisper-turbo' ? ` plus about ${WHISPER_PACKAGES_MB} MB of Python packages (faster-whisper)` : '';
+    log(`Download: about ${downloadMb(engine)} MB${usesZipformer(engine) ? ` (includes a ${VAD_MB} MB voice-activity model)` : ''}${whisperPkgs}${cudaNote}.`);
     log(`License: ${info.license}${info.nonCommercial ? ' (non-commercial use only)' : ''}.`);
     if (!options.yes) {
       const isTTY = options.isTTY ?? Boolean(process.stdin.isTTY);
@@ -253,6 +257,9 @@ export async function setupAsr(
       }
     }
   }
+
+  // faster-whisper, ctranslate2 and av only for the whisper engine, which needs explicit consent.
+  const installWhisper = explicit && engine === 'whisper-turbo';
 
   const venvExists = exists(py);
   if (venvExists) {
@@ -270,6 +277,11 @@ export async function setupAsr(
 
     code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', reqTxt], log, spawnFn);
     if (code !== 0) return code;
+
+    if (installWhisper) {
+      code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', whisperTxt], log, spawnFn);
+      if (code !== 0) return code;
+    }
 
     if (installCuda) {
       code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', cudaTxt], log, spawnFn);
@@ -300,6 +312,11 @@ export async function setupAsr(
 
     let code = await runCommand(py, ['-m', 'pip', 'install', '-r', reqTxt], log, spawnFn);
     if (code !== 0) return code;
+
+    if (installWhisper) {
+      code = await runCommand(py, ['-m', 'pip', 'install', '-r', whisperTxt], log, spawnFn);
+      if (code !== 0) return code;
+    }
 
     if (installCuda) {
       code = await runCommand(py, ['-m', 'pip', 'install', '-r', cudaTxt], log, spawnFn);
@@ -396,7 +413,7 @@ export async function asrStatus(opts?: AsrStatusOptions): Promise<AsrStatus> {
         installed: false,
         defaultEngine: (await configured) ?? DEFAULT_ENGINE,
         nextStep:
-          'Run premiere-pro-mcp --setup-asr (about 150 MB: the Python environment and the default Zipformer-68M model). Other engines are installed only on request with --engine <id>.',
+          `Run premiere-pro-mcp --setup-asr (about ${DEFAULT_INSTALL_MB} MB: the Python environment and the default Zipformer-68M model). Other engines are installed only on request with --engine <id>.`,
       };
     }
 

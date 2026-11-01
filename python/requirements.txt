@@ -1,10 +1,11 @@
-faster-whisper==1.2.1
-ctranslate2==4.8.4
-av==19.0.2
+# Default install: the Zipformer engines (sherpa-onnx), face detection (opencv + YuNet),
+# caption rendering (pillow) and model download. faster-whisper is NOT here: it is
+# installed only by `--setup-asr --engine whisper-turbo` (requirements-whisper.txt).
 huggingface_hub>=0.25
 numpy>=2,<3
 pillow>=11
 opencv-python-headless>=4.10
-pytest>=8
+# CPU-friendly Zipformer engines: sherpa-onnx runs the transducer, sentencepiece
+# rebuilds the 30M tokens.txt from its bpe.model at download time.
 sherpa-onnx>=2.0
 sentencepiece>=0.2

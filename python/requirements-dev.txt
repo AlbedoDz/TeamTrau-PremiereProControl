@@ -1,0 +1,2 @@
+# Test tooling only; never installed by --setup-asr.
+pytest>=8

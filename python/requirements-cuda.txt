@@ -1,5 +1,5 @@
 # CUDA wheels for faster-whisper/ctranslate2 on Windows and Linux. Install them
-# next to requirements.txt when the machine has an NVIDIA GPU:
+# next to requirements.txt + requirements-whisper.txt when the machine has an NVIDIA GPU:
 #   uv pip install -p <venv>/python -r requirements.txt -r requirements-cuda.txt
 # macOS has no CUDA, so install requirements.txt alone there.
 nvidia-cublas-cu12==12.9.2.10

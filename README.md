@@ -190,7 +190,7 @@ The skill teaches agents how to install the MCP, start and verify the CEP bridge
 
 The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`, `create_captions_from_transcript`) uses a local Python sidecar for automated speech recognition and animated caption rendering. The default engine, Zipformer-68M, runs on the CPU on every PC; the other engines are downloaded only when you choose and approve them.
 
-To install the sidecar and the default engine (about 150 MB, nothing else):
+To install the sidecar and the default engine (about 300 MB: about 220 MB of Python packages, 76 MB of models; nothing else):
 
 ```bash
 premiere-pro-mcp --setup-asr

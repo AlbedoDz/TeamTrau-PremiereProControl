@@ -2,8 +2,8 @@
 
 Run once by ``premiere-pro-mcp --setup-asr``, with the models folder and the
 engines wanted as input, and skipped on every later run that finds the files
-already there. ``engines`` defaults to ``["whisper-turbo"]``, which is the two
-models the sidecar has always fetched:
+already there. ``engines`` defaults to ``["zipformer-68m"]`` (what the server
+defaults to); ``whisper-turbo`` is fetched only when named. The models are:
 
 * the whisper model (Ruling R22: ``faster-whisper-large-v3-turbo``) is pulled by
   ``huggingface_hub.snapshot_download`` straight into
@@ -509,10 +509,10 @@ def failed(result: dict) -> list[str]:
 
 
 def engines_of(spec: dict) -> list[str]:
-    """The engines in ``spec`` (``whisper-turbo`` when the input names none), checked."""
+    """The engines in ``spec`` (``zipformer-68m`` when the input names none), checked."""
     engines = [str(engine) for engine in spec.get("engines") or []]
     if not engines:
-        return ["whisper-turbo"]
+        return ["zipformer-68m"]
     unknown = [engine for engine in engines if engine not in ENGINE_NAMES]
     if unknown:
         raise ValueError(f"unknown engine {unknown[0]!r}; expected one of {', '.join(ENGINE_NAMES)}")

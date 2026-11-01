@@ -147,7 +147,8 @@ def models_dir(tmp_path):
 
 
 def run(tmp_path, progress=None, **overrides):
-    spec = {"modelsDir": str(models_dir(tmp_path))}
+    # The no-engines default is the Zipformer-68M; these tests are about the whisper download.
+    spec = {"modelsDir": str(models_dir(tmp_path)), "engines": ["whisper-turbo"]}
     spec.update(overrides)
     return download_models.run(spec, progress)
 
@@ -324,7 +325,7 @@ def test_sizes_are_reported_while_streaming(tmp_path, monkeypatch):
     )
 
     download_models.run(
-        {"modelsDir": str(models_dir(tmp_path))}, tmp_path / "progress.json",
+        {"modelsDir": str(models_dir(tmp_path)), "engines": ["whisper-turbo"]}, tmp_path / "progress.json",
         chunk_size=32 * 1024,
     )
 
@@ -436,7 +437,7 @@ def test_cli_writes_the_result(tmp_path):
     import premiere_mcp_sidecar.__main__ as cli
 
     spec = tmp_path / "in.json"
-    spec.write_text(json.dumps({"modelsDir": str(models_dir(tmp_path))}), encoding="utf-8")
+    spec.write_text(json.dumps({"modelsDir": str(models_dir(tmp_path)), "engines": ["whisper-turbo"]}), encoding="utf-8")
     out = tmp_path / "out.json"
 
     code = cli.main(["download-models", "--input", str(spec), "--output", str(out)])
@@ -501,7 +502,7 @@ def test_does_not_import_huggingface_hub_when_the_model_is_present(tmp_path, mon
     monkeypatch.setattr(download_models, "snapshot_download", None)
     monkeypatch.setattr(download_models, "_snapshot_download", unavailable)
 
-    download_models.run({"modelsDir": str(models_dir(tmp_path))}, None)
+    download_models.run({"modelsDir": str(models_dir(tmp_path)), "engines": ["whisper-turbo"]}, None)
 
     assert calls == []
 

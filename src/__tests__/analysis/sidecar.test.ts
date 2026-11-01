@@ -28,6 +28,7 @@ describe('sidecar runner', () => {
   let spawnMode: 'normal' | 'hang' | 'noPid' | 'errorEvent' | 'lateStderr';
   let hangKill: jest.Mock;
   let taskkillArgs: string[][];
+  let ffPath: string | null;
 
   const load = () => {
     const script = join(home, 'fake.js');
@@ -35,6 +36,7 @@ describe('sidecar runner', () => {
     spawnCount = 0;
     let mod!: typeof import('../../analysis/sidecar.js');
     jest.isolateModules(() => {
+      jest.doMock('../../analysis/ffmpeg.js', () => ({ findFfTool: async () => ffPath }));
       jest.doMock('node:child_process', () => {
         const actual = jest.requireActual('node:child_process');
         return {
@@ -92,6 +94,7 @@ describe('sidecar runner', () => {
     spawnMode = 'normal';
     hangKill = jest.fn();
     taskkillArgs = [];
+    ffPath = null;
   });
 
   it('returns null and the install result when no venv exists', async () => {
@@ -104,7 +107,7 @@ describe('sidecar runner', () => {
       errorCode: 'asr.not_installed',
       command: 'premiere-pro-mcp --setup-asr',
     });
-    expect(String(sidecarMissingResult('x').nextStep)).toContain('150 MB to several hundred MB');
+    expect(String(sidecarMissingResult('x').nextStep)).toContain('about 300 MB');
     expect(modelPaths().whisper).toBe(join(home, 'models', 'faster-whisper-large-v3-turbo'));
     expect(modelPaths().yunet).toBe(join(home, 'models', 'face_detection_yunet_2023mar.onnx'));
   });
@@ -150,6 +153,50 @@ describe('sidecar runner', () => {
     expect(err).toBeInstanceOf(SidecarError);
     expect(err.message).toContain('model exploded');
     await expect(runSidecar('faces', { mode: 'ok' })).resolves.toMatchObject({ command: 'faces' });
+  });
+
+  it('hands the resolved ffmpeg path to commands and jobs, keeps an explicit one, omits it when none was found', async () => {
+    installVenv();
+    const { runSidecar, startJob, jobStatus } = load();
+    ffPath = 'C:\tools\ffmpeg.exe';
+    const run = await runSidecar<{ echo: any }>('faces', { mode: 'ok' });
+    expect(run.echo.ffmpegPath).toBe(ffPath);
+    expect((await runSidecar<{ echo: any }>('faces', { ffmpegPath: 'D:\mine.exe' })).echo.ffmpegPath).toBe('D:\mine.exe');
+    await startJob('ffjob', 'transcribe', {});
+    await waitFor(async () => (await jobStatus('ffjob'))?.status === 'done');
+    expect(((await jobStatus('ffjob'))!.result as any).echo.ffmpegPath).toBe(ffPath);
+    ffPath = null;
+    expect('ffmpegPath' in (await runSidecar<{ echo: any }>('faces', {})).echo).toBe(false);
+  });
+
+  it('sweeps run-* dirs older than a day and .stale-* job dirs older than 7 days, keeping the rest', async () => {
+    installVenv();
+    const jobs = join(home, 'jobs');
+    const mk = (name: string, ageMs: number) => {
+      const d = join(jobs, name);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, 'input.json'), '{}');
+      age(d, ageMs);
+      return d;
+    };
+    const DAY = 24 * 3600_000;
+    const oldRun = mk('run-old', 2 * DAY);
+    const freshRun = mk('run-fresh', 1000);
+    const oldStale = mk('abc.stale-123', 8 * DAY);
+    const freshStale = mk('abc.stale-456', 2 * DAY);
+    const liveJob = mk('0123456789abcdef', 30 * DAY);
+    const { runSidecar } = load();
+    await runSidecar('faces', { mode: 'ok' });
+    expect(existsSync(oldRun)).toBe(false);
+    expect(existsSync(oldStale)).toBe(false);
+    expect(existsSync(freshRun)).toBe(true);
+    expect(existsSync(freshStale)).toBe(true);
+    expect(existsSync(liveJob)).toBe(true);
+  });
+
+  it('the sweep never throws, even without a jobs folder', async () => {
+    const { sweepJobDirs } = load();
+    await expect(sweepJobDirs()).resolves.toBeUndefined();
   });
 
   it('runSidecar rejects when the sidecar is not installed', async () => {

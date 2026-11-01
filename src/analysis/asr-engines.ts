@@ -7,6 +7,15 @@ export type EngineId = (typeof ENGINE_IDS)[number];
 
 export const DEFAULT_ENGINE: EngineId = 'zipformer-68m';
 
+/**
+ * Measured on Windows (python 3.12, uv): the base requirements.txt venv is 218 MB of site-packages
+ * (opencv 113 MB, sherpa-onnx 28 MB, numpy 43 MB, pillow 15 MB, ...) plus about 76 MB of models
+ * (Zipformer-68M int8 incl. VAD, YuNet) = about 294 MB, shown as 300.
+ */
+export const DEFAULT_INSTALL_MB = 300;
+/** requirements-whisper.txt (faster-whisper, ctranslate2, av and their deps): measured +183 MB. */
+export const WHISPER_PACKAGES_MB = 190;
+
 /** Size of the VAD model every zipformer engine needs. */
 export const VAD_MB = 2;
 
