@@ -107,20 +107,6 @@ npm run setup:mac # macOS
 
 On Windows, use `npm run setup:win` from PowerShell after `npm install` and `npm run build`.
 
-### Podcast to Shorts (optional ASR)
-
-The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`) uses a local Python sidecar for automated speech recognition and animated caption rendering.
-
-To install the sidecar and model weights:
-
-```bash
-premiere-pro-mcp --setup-asr
-```
-
-- **Disk space:** Requires ~3 GB of free disk space in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows).
-- **GPU acceleration:** An NVIDIA GPU (CUDA) is recommended for fast transcription (~15 minutes for a 60-minute sequence). If CUDA is absent, inference automatically falls back to CPU (`int8`), which is about 3–4x slower.
-- All other Premiere MCP tools continue to work without this setup.
-
 ---
 
 ![Current MCP Bridge (CEP) panel](images/demo.png)
@@ -199,6 +185,20 @@ npx skills add https://github.com/AlbedoDz/TeamTrau-PremiereProControl/tree/main
 ```
 
 The skill teaches agents how to install the MCP, start and verify the CEP bridge, use the Premiere tools safely, import real media before editing, prefer sequence-aware operations, and run diagnostics when something fails. For extracting 9:16 vertical shorts with animated captions from podcast timelines, use the companion skill `skills/podcast-to-shorts`.
+
+### Podcast to Shorts (optional ASR)
+
+The podcast-to-shorts workflow (`transcribe_sequence`, `find_highlight_candidates`, `build_short`) uses a local Python sidecar for automated speech recognition and animated caption rendering.
+
+To install the sidecar and model weights:
+
+```bash
+premiere-pro-mcp --setup-asr
+```
+
+- **Disk space:** Requires ~3 GB of free disk space in `PREMIERE_MCP_HOME` or `~/.premiere-mcp` (`%USERPROFILE%\.premiere-mcp` on Windows).
+- **GPU acceleration:** An NVIDIA GPU (CUDA) is recommended for fast transcription (~15 minutes for a 60-minute sequence). If CUDA is absent, inference automatically falls back to CPU (`int8`), which is about 3–4x slower.
+- All other Premiere MCP tools continue to work without this setup.
 
 ## Advanced Setup and Verification
 

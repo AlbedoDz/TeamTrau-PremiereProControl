@@ -83,7 +83,7 @@ Poll by re-calling `transcribe_sequence` with the same arguments until it return
 ```
 
 ### 3. Highlight Extraction (`find_highlight_candidates`)
-Once transcription is complete (`status: "done"`), request candidate highlight windows.
+Once transcription is complete (`status: "done"`), request candidate highlight windows. If the transcript job is not finished, `find_highlight_candidates` returns `{ "status": "running" }` (call again later).
 
 Tool arguments:
 - `sequenceId` (optional): Sequence ID.
@@ -91,13 +91,19 @@ Tool arguments:
 - `maxSec` (optional): Maximum duration in seconds (default: 90).
 - `limit` (optional): Maximum number of candidate windows to return (default: 20).
 
-The server constructs candidate windows from sentence boundaries and computes signals:
-- `wordsPerSec`: Speaking cadence.
-- `loudnessRel`: Short-term LUFS relative to episode median.
-- `hasQuestion`, `hasExclaim`: Engagement markers.
-- `fillerRate`: Frequency of filler words ("ờ", "à", "ừ", "kiểu", "thì là").
-- `maxPauseSec`: Longest internal silence pause.
-- `multiFaceRatio`: Fraction of video duration with ≥ 2 detected faces.
+Returns an array of candidates, where each candidate has:
+- `startSentenceId`: First sentence ID.
+- `endSentenceId`: Final sentence ID.
+- `start`: Start timestamp in seconds.
+- `end`: End timestamp in seconds.
+- `text`: Spoken text within the window.
+- `signals`: Ranking signals:
+  - `wordsPerSec`: Speaking cadence.
+  - `loudnessRel`: Short-term LUFS relative to episode median.
+  - `hasQuestion`, `hasExclaim`: Engagement markers.
+  - `fillerRate`: Frequency of filler words ("ờ", "à", "ừ", "kiểu", "thì là").
+  - `maxPauseSec`: Longest internal silence pause.
+  - `multiFaceRatio`: Fraction of video duration with ≥ 2 detected faces.
 
 ### 4. Candidate Scoring & Review 1
 
@@ -108,7 +114,7 @@ The server's rough score only filters candidates. The **Agent must evaluate and 
 2. **Has payoff / resolution**: Delivers a clear answer, story conclusion, or insight within the 20–90 second window.
 3. **Self-contained**: Makes sense standalone without context from earlier in the episode. Avoid clips that refer to prior discussions (e.g., "như tôi nói lúc nãy" / "as I mentioned earlier").
 4. **Complete thought at the end**: Ends on a clean sentence boundary with no abrupt cutoff mid-thought.
-5. **Low `multiFaceRatio`**: Prioritize candidates with low `multiFaceRatio` (< 0.2) for cleaner 9:16 Auto Reframe composition without awkward two-shot crops.
+5. **Low `multiFaceRatio`**: Prefer low `multiFaceRatio` for cleaner 9:16 Auto Reframe composition without awkward two-shot crops.
 
 #### Review 1: Proposed List
 Present the ranked highlight candidates to the user:
@@ -126,6 +132,7 @@ Tool arguments:
 - `startSentenceId`: First sentence ID of the highlight.
 - `endSentenceId`: Final sentence ID of the highlight.
 - `name`: Target sequence name (e.g., `Short_01_AI_Ethics`).
+- `captions?: {start, end, text}[]` (optional): Edited caption groups from the dry run; an empty text removes that group.
 - `captionStyle` (optional): `"clean"` (default), `"pop"`, or `"karaoke"`.
   - `clean`: White text, 6 px black stroke, active word highlighted in `#FFD400`.
   - `pop`: Uppercase text, active word scales 1.0 -> 1.15 -> 1.0 over 120 ms.
@@ -148,14 +155,19 @@ If the user modifies captions, pass the updated array back via the `captions` ar
 Call `build_short` with `dryRun: false` and the user-approved `captions` (if modified).
 
 Execution steps performed by the tool:
-1. **Pre-render captions**: Sidecar renders a 1080×1920 ProRes 4444 `.mov` with alpha channel matching sequence framerate. Text is kept within safe margins (15% bottom, 10% top, 6% sides). If rendering fails, the tool stops immediately and leaves the project untouched.
+1. **Pre-render captions**: Sidecar renders an alpha ProRes 4444 `.mov` at the reframed sequence's real frame size (Auto Reframe follows source height, e.g. 1215×2160 from a 3840×2160 source) matching sequence framerate, with safe margins as percentages (10% top, 15% bottom, 6% sides). If rendering fails, execution stops immediately before Premiere is touched.
 2. **Project backup**: Saves a timestamped project backup.
 3. **Subsequence & Auto Reframe**: Sets in/out points on the master sequence, creates a subsequence, executes native `autoReframeSequence(9, 16)`, renames the sequence to `name`, and removes intermediate subsequences.
 4. **Caption import & placement**: Imports the `.mov` into bin `Shorts/<name>`, adds a video track above existing footage, and aligns the caption clip at time 0.0s.
 5. **Loudness normalisation**: Runs `normalize_loudness` to `targetLufs` (-14 LUFS) on the short sequence.
 6. **Sequence QA**: Runs `qa_sequence` to verify no flash frames, gaps, or offline media.
 7. **Warning markers**: Places timeline markers on any ranges where `multiFaceRatio > 0`: `"Cảnh nhiều người — kiểm tra khung reframe"`.
-8. **Verification readback**: Verifies duration matches the source range within ±1 frame, caption clip is present on the top track, and dimensions are 1080×1920 (`verified: true`).
+8. **Verification readback**: Readback waits for the "Auto Reframe" effect's Generated Keyframes (up to 30 s, polled every 2 s) and only warns on timeout — it is not a failure. Verifies a 9:16 aspect ratio within ±1 px (not a fixed 1080×1920), duration matches the source range within ±1 frame, and that the caption clip is present on the top track (`verified: true`).
+
+#### Failure Contract (Spec §4.3)
+- **Caption render failure** (Step 1): Execution stops immediately before Premiere is touched; the project remains completely unchanged.
+- **Premiere step failure** (Steps 2–7): Execution stops, keeps what was created so the user can inspect it, and returns `verified: false`, `failedStep`, and the backup path (`backupPath`).
+- **Reporting to user**: The agent must report failures honestly to the user. Never hide errors, guess, or claim success. State what failed, which step failed (`failedStep`), that the created partial sequence was preserved for inspection, and provide the backup path for restoration if desired.
 
 ### 7. Review 3: Warning Markers
 After creation:

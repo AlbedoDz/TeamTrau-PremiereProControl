@@ -4,12 +4,11 @@ All notable changes are documented here. Releases use semantic versioning.
 
 ## [Unreleased]
 
-- Podcast to 9:16 vertical shorts with automated speech recognition and dynamic captions:
-  - `transcribe_sequence` transcribes speech on dialogue tracks with a local faster-whisper sidecar (`large-v3`, Vietnamese, word timestamps). Files transcribe as background jobs with progress reporting and disk caching; overlapping multi-mic clips are deduplicated, and an optional glossary populates initial prompts for proper-noun accuracy.
-  - `find_highlight_candidates` finds self-contained highlight windows (20–90 seconds) across sentence boundaries and computes ranking signals: speaking rate, relative loudness (EBU R128), questions, exclamations, filler words, pause duration, and multi-face visual ratios.
-  - `build_short` builds a complete 9:16 short sequence: pre-renders word-timed animated captions into an alpha ProRes 4444 `.mov` within safe margins (styles: `clean`, `pop`, `karaoke`), cuts a subsequence, runs Premiere's Auto Reframe to 9:16, places captions on a top track, normalises loudness to a target LUFS (default -14), runs `qa_sequence`, and places warning markers on multi-face shots. `dryRun: true` returns planned caption groupings for user review and text corrections before modifying the project.
-- ASR sidecar environment setup:
-  - `premiere-pro-mcp --setup-asr` prepares an isolated Python virtual environment in `~/.premiere-mcp` (Windows: `%USERPROFILE%\.premiere-mcp`) and downloads Whisper `large-v3` weights (~3 GB disk required). Uses NVIDIA GPU with CUDA if present, falling back to CPU (`int8`, approx. 3–4x slower) when CUDA is missing. Missing sidecars return `asr.not_installed` with setup instructions without affecting other MCP tools.
+- Podcast to 9:16 vertical shorts:
+  - `transcribe_sequence` transcribes dialogue tracks using a local faster-whisper sidecar (`large-v3`, Vietnamese) with background jobs and disk caching.
+  - `find_highlight_candidates` extracts 20–90 s highlight windows across sentence boundaries with speaking rate, loudness, pause, and multi-face signals.
+  - `build_short` builds a 9:16 Auto Reframe sequence with pre-rendered ProRes 4444 alpha captions, loudness normalization, and QA checks (`dryRun` supported).
+- `premiere-pro-mcp --setup-asr` sets up an isolated Python environment and Whisper `large-v3` weights (~3 GB) with CUDA detection and CPU fallback.
 
 ## [1.4.0] - 2026-11-01
 
