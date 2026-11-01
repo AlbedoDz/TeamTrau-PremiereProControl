@@ -58,7 +58,7 @@ describe('create_captions_from_transcript', () => {
           clips: [{ id: 'c1', trackType: 'audio', trackIndex: 0, start: 0, end: 10, inPoint: 0, outPoint: 10, mediaPath: media }],
         };
       }
-      if (script.includes('c.type === ProjectItemType.BIN') && script.includes('exists: false')) return { success: true, exists: binExists };
+      if (script.includes('found.type === ProjectItemType.BIN') && script.includes('exists: false')) return { success: true, exists: binExists };
       if (script.includes('parentBin.createBin')) return { success: true, binName: 'Captions' };
       if (script.includes('p.save()')) return { success: true, path: join(home, 'p.prproj') };
       if (script.includes('sequence.createCaptionTrack')) return captionResult;

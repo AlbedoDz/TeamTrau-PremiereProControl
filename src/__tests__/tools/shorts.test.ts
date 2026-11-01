@@ -1,5 +1,5 @@
 import { PremiereProTools } from '../../tools/index.js';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -182,6 +182,37 @@ describe('transcribe_sequence', () => {
       await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo' });
       expect(startJob.mock.calls[0][0]).toBe(firstKey);
       expect(startJob.mock.calls[0][2]).toMatchObject({ glossary: ['Trau'] });
+    });
+  });
+
+  describe('glossary index', () => {
+    beforeEach(() => {
+      executeScript.mockResolvedValue(sequence([aclip('c1', 0, 0, fileA)]));
+      startJob.mockResolvedValue({ status: 'running', progress: 0 });
+    });
+    const indexFile = () => join(home, 'jobs', 'glossary-index.json');
+
+    it('an explicit empty glossary does not reuse the last whisper job', async () => {
+      await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo', glossary: ['Trau'] });
+      const firstKey = startJob.mock.calls[0][0] as string;
+      jobStatus.mockImplementation(async (key: string) => (key === firstKey ? { status: 'done', progress: 1, result: { words: [] } } : null));
+      startJob.mockClear();
+      await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo', glossary: [] });
+      expect(startJob.mock.calls[0][0]).not.toBe(firstKey);
+    });
+
+    it('drops entries whose media is gone and caps the index at 200', async () => {
+      const stale: Record<string, string[]> = { [`${join(home, 'gone.wav')}|1:1|whisper-turbo`]: ['x'] };
+      for (let i = 0; i < 250; i++) stale[`${fileB}|1:${i}|whisper-turbo`] = [`g${i}`];
+      mkdirSync(join(home, 'jobs'), { recursive: true });
+      writeFileSync(indexFile(), JSON.stringify(stale));
+      await tools.executeTool('transcribe_sequence', { engine: 'whisper-turbo', glossary: ['Trau'] });
+      const saved = JSON.parse(readFileSync(indexFile(), 'utf8')) as Record<string, string[]>;
+      const ids = Object.keys(saved);
+      expect(ids).toHaveLength(200);
+      expect(ids.some((id) => id.includes('gone.wav'))).toBe(false);
+      expect(ids.some((id) => id.includes('|1:0|'))).toBe(false);
+      expect(ids[ids.length - 1]).toContain(fileA);
     });
   });
 

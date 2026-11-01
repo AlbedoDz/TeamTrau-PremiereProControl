@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
 import {
@@ -103,6 +103,7 @@ function dialogueClips(
   return { indices, clips: audio.filter((c) => indices.includes(c.trackIndex)) };
 }
 
+const MAX_GLOSSARY_ENTRIES = 200;
 const glossaryIndexPath = (): string => join(premiereMcpHome(), 'jobs', 'glossary-index.json');
 
 async function readGlossaryIndex(): Promise<Record<string, string[]>> {
@@ -118,7 +119,11 @@ async function readGlossaryIndex(): Promise<Record<string, string[]>> {
 async function recordGlossaries(entries: ReadonlyArray<readonly [string, string[]]>): Promise<void> {
   try {
     const index = await readGlossaryIndex();
-    for (const [id, glossary] of entries) index[id] = glossary;
+    for (const [id, glossary] of entries) { delete index[id]; index[id] = glossary; }
+    // Drop entries whose media is gone, then keep only the newest MAX_GLOSSARY_ENTRIES.
+    const live = Object.entries(index).filter(([id]) => existsSync(id.split('|')[0]!));
+    for (const k of Object.keys(index)) delete index[k];
+    for (const [id, g] of live.slice(-MAX_GLOSSARY_ENTRIES)) index[id] = g;
     await mkdir(join(premiereMcpHome(), 'jobs'), { recursive: true });
     await writeJsonAtomic(glossaryIndexPath(), index);
   } catch { /* the index is only a convenience */ }
@@ -161,7 +166,7 @@ export async function loadTranscript(
     let glossaryForJob = callGlossary;
     // whisper: a call without a glossary reuses the finished job made with the last one used.
     const last = index[indexId];
-    if (sendsGlossary && callGlossary.length === 0 && last && last.length > 0) {
+    if (sendsGlossary && args.glossary === undefined && last && last.length > 0) {
       try {
         if ((await jobStatus(keyFor(last)))?.status === 'done') glossaryForJob = last;
       } catch { /* fall back to a plain key */ }
@@ -187,7 +192,7 @@ export async function loadTranscript(
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
-  if (sendsGlossary && callGlossary.length > 0) {
+  if (sendsGlossary && args.glossary !== undefined) {
     await recordGlossaries(indexIds.map((id) => [id, callGlossary] as const));
   }
   if (failures.length > 0) {

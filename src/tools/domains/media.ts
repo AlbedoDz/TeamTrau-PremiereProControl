@@ -54,6 +54,21 @@ export const mediaTools: ToolModule[] = [
   },
 ];
 
+/** ExtendScript helper: finds a direct child of `parent` by name (index-only collection, so it walks). */
+export const BIN_BY_NAME_JS = `
+function __binByName(parent, wanted) {
+          // children[name] does not resolve: Premiere's ProjectItemCollection is
+          // index-only, so a string key returns undefined even when a child of that
+          // name exists. Verified against 26.0.2. Walk and compare instead.
+          if (!parent || !parent.children) return null;
+          for (var i = 0; i < parent.children.numItems; i++) {
+            var child = parent.children[i];
+            if (child && String(child.name) === String(wanted)) return child;
+          }
+          return null;
+        }
+`;
+
 export async function importMedia(ctx: ToolContext, filePath: string, binName?: string): Promise<any> {
   try {
     const result: any = await ctx.bridge.importMedia(filePath, binName);
@@ -178,17 +193,7 @@ async function importFolder(ctx: ToolContext, folderPath: string, binName?: stri
         ${binName ? `
         // Same silent reparent as create_bin: an unresolved destination bin sent the
         // whole import to the project root instead of failing.
-        function __binByName(parent, wanted) {
-          // children[name] does not resolve: Premiere's ProjectItemCollection is
-          // index-only, so a string key returns undefined even when a child of that
-          // name exists. Verified against 26.0.2. Walk and compare instead.
-          if (!parent || !parent.children) return null;
-          for (var i = 0; i < parent.children.numItems; i++) {
-            var child = parent.children[i];
-            if (child && String(child.name) === String(wanted)) return child;
-          }
-          return null;
-        }
+        ${BIN_BY_NAME_JS}
         targetBin = __binByName(app.project.rootItem, ${JSON.stringify(binName)});
         if (!targetBin) {
           return JSON.stringify({

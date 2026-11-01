@@ -269,3 +269,21 @@ describe('sidecar runner', () => {
     expect(err.message).toContain('late stderr');
   });
 });
+
+describe('writeJsonAtomic', () => {
+  it('uses a unique temp name per call, in the same directory, and leaves no temp file', async () => {
+    const { writeJsonAtomic } = jest.requireActual('../../analysis/sidecar.js');
+    const fs = jest.requireActual('node:fs');
+    const dir = mkdtempSync(join(tmpdir(), 'atomic-'));
+    const target = join(dir, 'x.json');
+    const seen = new Set<string>();
+    const spy = jest.spyOn(jest.requireActual('node:fs/promises'), 'writeFile');
+    for (let i = 0; i < 5; i++) await writeJsonAtomic(target, { i });
+    spy.mock.calls.forEach((c) => seen.add(String(c[0])));
+    spy.mockRestore();
+    expect(seen.size).toBe(5);
+    seen.forEach((t) => expect(t.startsWith(target) && t !== `${target}.tmp`).toBe(true));
+    expect(typeof JSON.parse(fs.readFileSync(target, 'utf8')).i).toBe('number');
+    expect(fs.readdirSync(dir)).toEqual(['x.json']);
+  });
+});

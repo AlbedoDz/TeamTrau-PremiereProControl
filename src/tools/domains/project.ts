@@ -6,6 +6,7 @@
  */
 import { z } from 'zod';
 import type { ToolContext, ToolModule } from '../context.js';
+import { BIN_BY_NAME_JS } from './media.js';
 
 export const projectTools: ToolModule[] = [
   {
@@ -267,13 +268,9 @@ async function saveProjectAs(ctx: ToolContext, name: string, location: string): 
 export async function ensureRootBin(ctx: ToolContext, name: string): Promise<{ success: boolean; created: boolean; error?: string }> {
   const lookup: any = await ctx.bridge.executeScript(`
       try {
-        var root = app.project.rootItem;
-        for (var i = 0; i < root.children.numItems; i++) {
-          var c = root.children[i];
-          if (c && String(c.name) === ${JSON.stringify(name)} && c.type === ProjectItemType.BIN) {
-            return JSON.stringify({ success: true, exists: true });
-          }
-        }
+        ${BIN_BY_NAME_JS}
+        var found = __binByName(app.project.rootItem, ${JSON.stringify(name)});
+        if (found && found.type === ProjectItemType.BIN) return JSON.stringify({ success: true, exists: true });
         return JSON.stringify({ success: true, exists: false });
       } catch (e) {
         return JSON.stringify({ success: false, error: e.toString() });
@@ -294,17 +291,7 @@ async function createBin(ctx: ToolContext, name: string, parentBinName?: string)
         // Naming a parent that does not resolve used to fall through to the project
         // root, so the bin landed somewhere the caller never asked for while the
         // response echoed the parent name back as though it had been used.
-        function __binByName(parent, wanted) {
-          // children[name] does not resolve: Premiere's ProjectItemCollection is
-          // index-only, so a string key returns undefined even when a child of that
-          // name exists. Verified against 26.0.2. Walk and compare instead.
-          if (!parent || !parent.children) return null;
-          for (var i = 0; i < parent.children.numItems; i++) {
-            var child = parent.children[i];
-            if (child && String(child.name) === String(wanted)) return child;
-          }
-          return null;
-        }
+        ${BIN_BY_NAME_JS}
         parentBin = __binByName(app.project.rootItem, ${JSON.stringify(parentBinName)});
         if (!parentBin) {
           return JSON.stringify({
