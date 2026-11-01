@@ -59,7 +59,7 @@ echo.
 echo ==========================================
 echo  XONG. Lam tiep theo huong dan trong HUONG-DAN.md:
 echo  1. Khoi dong lai Premiere Pro
-echo  2. Window ^> Extensions ^> MCP Bridge ^(CEP^) ^> Start Bridge
+echo  2. Window ^> Extensions ^> TeamTrau PremiereProControl ^> Start Bridge
 echo  3. Khoi dong lai Claude Desktop / VS Code
 echo ==========================================
 pause
