@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
 import {
   jobStatus,
@@ -15,8 +15,13 @@ import {
   sidecarMissingResult,
   sidecarPython,
   startJob,
+  runSidecar,
   type JobState,
 } from '../../analysis/sidecar.js';
+import { cached } from '../../analysis/cache.js';
+import { ffmpegMissingResult, findFfTool, parseShortTermLoudness, runFf } from '../../analysis/ffmpeg.js';
+import { candidateWindows, pickDiverse, scoreCandidates, signalsFor } from '../../analysis/highlights.js';
+import type { FrameSample } from '../../analysis/roughcut.js';
 import {
   clipFingerprint,
   dedupeOverlaps,
@@ -27,7 +32,7 @@ import {
   type Sentence,
   type TimelineWord,
 } from '../../analysis/transcript.js';
-import { isError, readSequence, uniquePaths } from './cleanup.js';
+import { isError, readSequence, uniquePaths, type SequenceSnapshot } from './cleanup.js';
 
 /** The speech model; part of every transcription job key so changing it never reuses an old result. */
 export const ASR_MODEL = 'large-v3-turbo';
@@ -207,6 +212,142 @@ async function transcribeSequence(
   };
 }
 
+/**
+ * Face counts (about one sample per second) on timeline time, from the top-most video track
+ * that has clips. Runs the sidecar once per unique file over its clip ranges; results are cached.
+ */
+export async function timelineFaces(
+  snapshot: SequenceSnapshot,
+  range?: { start: number; end: number },
+  warnings?: string[],
+): Promise<Array<{ t: number; count: number }>> {
+  const video = snapshot.clips.filter((c) => c.trackType === 'video' && c.mediaPath);
+  if (video.length === 0) return [];
+  const top = Math.max(...video.map((c) => c.trackIndex));
+  const clips = video.filter((c) => c.trackIndex === top);
+  const out: Array<{ t: number; count: number }> = [];
+  for (const mediaPath of uniquePaths(clips, 'video')) {
+    const mine = clips.filter((c) => c.mediaPath === mediaPath);
+    const ranges = mine.map((c) => ({ start: c.inPoint, end: c.outPoint }));
+    let result: { samples?: Array<{ t: number; count: number }> };
+    try {
+      result = await cached(mediaPath, 'faces-yunet', ranges, () =>
+        runSidecar<{ samples?: Array<{ t: number; count: number }> }>('faces', {
+          mediaPath, modelPath: modelPaths().yunet, ranges, fps: 1,
+        }));
+    } catch (error) {
+      warnings?.push(`Face detection unavailable for ${basename(mediaPath)}: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    for (const sample of result.samples ?? []) {
+      for (const clip of mine) {
+        if (sample.t < clip.inPoint || sample.t >= clip.outPoint) continue;
+        const t = clip.start + sample.t - clip.inPoint;
+        if (range && (t < range.start || t > range.end)) continue;
+        out.push({ t, count: sample.count });
+        break;
+      }
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/** Short-term loudness (LUFS) of the dialogue audio files, on timeline time. */
+export async function timelineLoudness(
+  ffmpeg: string,
+  clips: SequenceSnapshot['clips'],
+  warnings?: string[],
+): Promise<FrameSample[]> {
+  const out: FrameSample[] = [];
+  for (const mediaPath of uniquePaths(clips, 'audio')) {
+    let samples: FrameSample[];
+    try {
+      // Throw inside the compute so a failed run is never cached as an empty result.
+      samples = await cached(mediaPath, 'ebur128-short', {}, async () => {
+        const run = await runFf(ffmpeg, [
+          '-hide_banner', '-nostats', '-i', mediaPath, '-map', '0:a:0',
+          '-af', 'ebur128=framelog=verbose', '-f', 'null', '-',
+        ]);
+        if (run.code !== 0) {
+          const tail = run.stderr.trim().split(/\r?\n/).pop() ?? '';
+          throw new Error(`ffmpeg exited with code ${run.code}${tail ? `: ${tail}` : ''}`);
+        }
+        const parsed = parseShortTermLoudness(run.stderr);
+        if (parsed.length === 0) throw new Error('no loudness samples were produced (no audio stream or too short)');
+        return parsed;
+      });
+    } catch (error) {
+      warnings?.push(`Loudness unavailable for ${basename(mediaPath)}: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    for (const clip of clips.filter((c) => c.mediaPath === mediaPath)) {
+      for (const sample of samples) {
+        if (sample.t < clip.inPoint || sample.t >= clip.outPoint) continue;
+        out.push({ t: clip.start + sample.t - clip.inPoint, v: sample.v });
+      }
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+export const median = (values: number[]): number => {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+};
+
+async function findHighlightCandidates(
+  ctx: ToolContext,
+  args: TranscriptArgs & { minSec: number; maxSec: number; limit: number; detectFaces: boolean },
+): Promise<unknown> {
+  const loaded = await loadTranscript(ctx, args);
+  if ('success' in loaded) return loaded;
+  if (loaded.status === 'running') {
+    return {
+      success: true,
+      ...loaded,
+      nextStep: 'Transcription is running in the background. Call find_highlight_candidates again with the same arguments to check progress.',
+    };
+  }
+  const ffmpeg = await findFfTool('ffmpeg');
+  if (!ffmpeg) return ffmpegMissingResult('find_highlight_candidates');
+
+  const snapshot = await readSequence(ctx, args.sequenceId);
+  if (isError(snapshot)) return { success: false, error: snapshot.error };
+  const audio = snapshot.clips.filter((c) => c.trackType === 'audio');
+  const indices = args.dialogueTrackIndices
+    ?? [...new Set(audio.filter((c) => c.mediaPath).map((c) => c.trackIndex))];
+  const dialogue = audio.filter((c) => indices.includes(c.trackIndex));
+
+  const warnings = [...loaded.warnings];
+  const windows = candidateWindows(loaded.sentences, args.minSec, args.maxSec);
+  if (windows.length === 0) warnings.push(`No window of whole sentences fits ${args.minSec}-${args.maxSec} s.`);
+
+  const loudness = await timelineLoudness(ffmpeg, dialogue, warnings);
+  const medianLufs = median(loudness.map((s) => s.v));
+  const faces = args.detectFaces && windows.length > 0 ? await timelineFaces(snapshot, undefined, warnings) : [];
+  if (args.detectFaces && windows.length > 0 && faces.length === 0) warnings.push('No face samples were found; multiFaceRatio is 0.');
+
+  const scored = scoreCandidates(windows.map((w) => ({
+    ...w,
+    text: '',
+    signals: signalsFor(w, loaded.words, loudness, medianLufs, faces),
+  })));
+  const candidates = pickDiverse(scored, args.limit, loaded.endTime).map((c) => ({
+    ...c,
+    text: loaded.words.filter((x) => x.start >= c.start && x.start < c.end).map((x) => x.w).join(' '),
+  }));
+  return {
+    success: true,
+    sequenceId: loaded.sequenceId,
+    totalCandidates: windows.length,
+    candidates,
+    detectFaces: args.detectFaces,
+    warnings,
+  };
+}
+
 export const shortsTools: ToolModule[] = [
   {
     name: 'transcribe_sequence',
@@ -220,5 +361,20 @@ export const shortsTools: ToolModule[] = [
       pageSize: z.number().int().min(1).default(200).describe('Sentences per page (default 200).'),
     }),
     run: (ctx, args) => transcribeSequence(ctx, args),
+  },
+  {
+    name: 'find_highlight_candidates',
+    description:
+      'Proposes 20-90 s windows of whole sentences from the transcribed dialogue of a sequence as short-form highlight candidates, each with its text, objective signals (words per second, loudness relative to the median, question/exclamation, filler rate, longest pause, multi-face ratio) and a rawScore. Candidates never overlap and are spread across the episode. Uses the transcript from transcribe_sequence (returns status "running" until it is done) and ffmpeg for loudness. Face counting is off by default (detectFaces) to save CPU/GPU. Read-only. The agent reads the text and picks the best.',
+    inputSchema: z.object({
+      sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
+      dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech. Defaults to every audio track that has a clip with a media file.'),
+      glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward; use the same list as transcribe_sequence.'),
+      minSec: z.number().positive().default(20).describe('Shortest window in seconds (default 20).'),
+      maxSec: z.number().positive().default(90).describe('Longest window in seconds (default 90).'),
+      limit: z.number().int().min(1).default(20).describe('Maximum candidates to return (default 20).'),
+      detectFaces: z.boolean().default(false).describe('Count faces (YuNet) to set multiFaceRatio. Uses more CPU/GPU; default false, then multiFaceRatio is 0.'),
+    }),
+    run: (ctx, args) => findHighlightCandidates(ctx, args),
   },
 ];
