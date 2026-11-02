@@ -179,6 +179,20 @@ describe('setupAsr and asrStatus', () => {
       expect(spawned.some((s) => s.args.includes('check'))).toBe(true);
     });
 
+    it('recreates an existing venv whose interpreter does not start', async () => {
+      uvAvailable = true;
+      failTarget = join(fakeHome, 'venv', 'Scripts', 'python.exe');
+      const logs: string[] = [];
+      await setupAsr((l) => logs.push(l), {
+        pkgPythonDir: fakePkgPythonDir,
+        platform: 'win32',
+        home: fakeHome,
+        exists: () => true,
+      });
+      expect(logs).toContain('The existing Python environment does not start; recreating it.');
+      expect(spawned.some((s) => s.cmd === 'uv' && s.args[0] === 'venv')).toBe(true);
+    });
+
     it('uses uv when available', async () => {
       uvAvailable = true;
       const logsWin: string[] = [];

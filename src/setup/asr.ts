@@ -261,9 +261,16 @@ export async function setupAsr(
   // faster-whisper, ctranslate2 and av only for the whisper engine, which needs explicit consent.
   const installWhisper = explicit && engine === 'whisper-turbo';
 
-  const venvExists = exists(py);
+  let venvExists = exists(py);
   if (venvExists) {
     log(`Reusing the existing Python environment at ${py}`);
+    // A venv left by an earlier install can point at an interpreter that no longer runs here
+    // (moved, removed, or behind a link this process may not follow); rebuild it instead of failing.
+    if ((await runCommand(py, ['-c', 'pass'], () => undefined, spawnFn)) !== 0) {
+      log('The existing Python environment does not start; recreating it.');
+      await rm(venvDir, { recursive: true, force: true });
+      venvExists = false;
+    }
   }
 
   const uv = await isUvAvailable(spawnFn);
