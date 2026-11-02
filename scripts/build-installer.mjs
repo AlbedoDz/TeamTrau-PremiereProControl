@@ -147,7 +147,7 @@ async function writeCrlf(target, text) {
 
 async function bundleLaunchers(ffmpegVersion) {
   await mkdir(join(stage, 'bin'), { recursive: true });
-  for (const [from, to] of [['premiere-pro-mcp.cmd', join('bin', 'premiere-pro-mcp.cmd')], ['post-install.cmd', 'post-install.cmd'], ['HUONG-DAN.md', 'HUONG-DAN.md']]) {
+  for (const [from, to] of [['premiere-pro-mcp.cmd', join('bin', 'premiere-pro-mcp.cmd')], ['post-install.cmd', 'post-install.cmd'], ['HUONG-DAN.md', 'HUONG-DAN.md'], ['HUONG-DAN-SU-DUNG.md', 'HUONG-DAN-SU-DUNG.md']]) {
     await writeCrlf(join(stage, to), await readFile(join(root, 'installer', from), 'utf8'));
   }
   await writeFile(join(stage, 'THIRD-PARTY-NOTICES.txt'), [

@@ -29,7 +29,8 @@ Source: "{#Stage}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs i
 
 [Icons]
 Name: "{autoprograms}\TeamTrau\Tải thêm Whisper và CUDA"; Filename: "{cmd}"; Parameters: "/k ""{app}\bin\premiere-pro-mcp.cmd"" --setup-asr --engine whisper-turbo"
-Name: "{autoprograms}\TeamTrau\Hướng dẫn sử dụng"; Filename: "{app}\HUONG-DAN.md"
+Name: "{autoprograms}\TeamTrau\Hướng dẫn sử dụng"; Filename: "{app}\HUONG-DAN-SU-DUNG.md"
+Name: "{autoprograms}\TeamTrau\Hướng dẫn cài đặt"; Filename: "{app}\HUONG-DAN.md"
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; Check: NeedsPath(ExpandConstant('{app}\bin'))

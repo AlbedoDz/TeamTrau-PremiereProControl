@@ -11,6 +11,8 @@ Bộ cài này đã gồm sẵn mọi thứ: máy chủ MCP, Node, ffmpeg bản 
 
 Bộ cài tự thêm mục `premiere-pro` vào những ứng dụng tìm thấy trên máy: Claude Desktop, Claude Code, Codex, VS Code Copilot, Antigravity (desktop, CLI, IDE), opencode (CLI, desktop) và DeepSeek Harness. Mỗi file cấu hình được sao lưu một lần thành `*.bak-premiere` trước khi sửa.
 
+Cách dùng với Claude Code, Antigravity và các ví dụ dựng (highlight, nhiều phiên bản) nằm trong `HUONG-DAN-SU-DUNG.md`.
+
 ## Bật cầu nối trong Premiere (một lần)
 
 1. Mở `Window > Extensions > TeamTrau PremiereProControl`.
