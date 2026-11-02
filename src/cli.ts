@@ -14,6 +14,13 @@ function printHelp(): void {
 Usage:
   premiere-pro-mcp                 Start the MCP stdio server
   premiere-pro-mcp --install-cep   Install the CEP bridge and configure supported MCP clients
+  premiere-pro-mcp --register-clients [--temp-dir <dir>]
+                                   Add premiere-pro to Claude Desktop/Code, Codex, VS Code, Antigravity,
+                                   opencode and DeepSeek Harness (only those installed here)
+  premiere-pro-mcp --unregister-clients
+                                   Remove premiere-pro from those clients
+  premiere-pro-mcp --clients-status
+                                   Show which clients are up to date, without changing anything
   premiere-pro-mcp --doctor        Check the local server, CEP bridge, and client configuration
   premiere-pro-mcp --setup-asr     Install the Python analysis sidecar and the default Zipformer-68M model (about 300 MB)
   premiere-pro-mcp --setup-asr --engine <id> [--yes] [--no-default]
@@ -98,6 +105,19 @@ async function main(): Promise<void> {
       const { asrStatus } = await import('./setup/asr.js');
       const status = await asrStatus();
       console.log(JSON.stringify(status, null, 2));
+      return;
+    }
+    case '--register-clients':
+    case '--unregister-clients':
+    case '--clients-status': {
+      const { defaultServerSpec, syncClients } = await import('./setup/clients.js');
+      const mode = command === '--register-clients' ? 'register' : command === '--unregister-clients' ? 'remove' : 'check';
+      const rest = process.argv.slice(3);
+      const at = rest.indexOf('--temp-dir');
+      const tempDir = at >= 0 ? rest[at + 1] : undefined;
+      const results = await syncClients(defaultServerSpec(packageRoot, tempDir), mode);
+      for (const r of results) console.log(`${r.label}: ${r.state}${r.detail ? ` (${r.detail})` : ''}`);
+      if (results.some((r) => r.state === 'error')) process.exitCode = 1;
       return;
     }
     case '--doctor':

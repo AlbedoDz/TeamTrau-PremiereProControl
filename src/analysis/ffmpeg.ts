@@ -8,7 +8,7 @@
 import { spawn } from 'child_process';
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import type { FrameSample } from './roughcut.js';
 
 export type FfTool = 'ffmpeg' | 'ffprobe';
@@ -44,6 +44,8 @@ function resolveBinary(tool: FfTool): string | null {
   if (platform() === 'darwin') {
     dirs.push('/opt/homebrew/bin', '/usr/local/bin');
   } else if (platform() === 'win32') {
+    // The Windows installer puts node at <app>\node\node.exe and ffmpeg at <app>\ffmpeg\bin.
+    dirs.push(join(dirname(process.execPath), '..', 'ffmpeg', 'bin'));
     dirs.push(join(homedir(), 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links'));
     dirs.push('C:\\ffmpeg\\bin');
   }

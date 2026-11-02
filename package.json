@@ -44,6 +44,7 @@
     "pack:check": "node scripts/verify-package.mjs",
     "bundle:mcpb": "node scripts/build-mcpb.mjs",
     "share:package": "node scripts/make-share-package.mjs",
+    "build:installer": "node scripts/build-installer.mjs",
     "sign:zxp": "node scripts/sign-zxp.mjs",
     "create:self-signed-zxp-cert": "node scripts/create-self-signed-zxp-cert.mjs"
   },
@@ -65,8 +66,10 @@
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
     "fs-extra": "^11.2.0",
+    "jsonc-parser": "^3.3.1",
     "path": "^0.12.7",
     "ws": "^8.18.0",
+    "yaml": "^2.9.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

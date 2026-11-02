@@ -23,3 +23,7 @@ python/.venv/
 
 # Cloudflare
 .wrangler/
+
+# Windows installer build
+.installer-staging/
+.installer-cache/

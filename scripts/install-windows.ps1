@@ -162,7 +162,7 @@ if ($nodeMajor -lt 20) {
 
 $npmPath = Resolve-CommandPath 'npm.cmd'
 if (-not $npmPath) { $npmPath = Resolve-CommandPath 'npm' }
-if (-not $npmPath) {
+if (-not $npmPath -and -not $SkipBuild) {
     throw "npm was not found on PATH."
 }
 
