@@ -177,7 +177,13 @@ export function findRetakeRanges(
  * moves past the original edge of the range beside it, and a range never
  * shrinks to nothing. Ranges are returned in input order.
  */
-export function snapEdges(ranges: FillerRange[], rms: FrameSample[], windowSec: number): FillerRange[] {
+export function snapEdges(
+  ranges: FillerRange[],
+  rms: FrameSample[],
+  windowSec: number,
+  /** Per range: `lo` is the end of the previous word kept in the audio, `hi` the start of the next one. */
+  bounds?: Array<{ lo: number; hi: number }>,
+): FillerRange[] {
   if (rms.length === 0) return ranges.map((r) => ({ ...r }));
   const order = ranges.map((_, i) => i).sort((a, b) => ranges[a]!.start - ranges[b]!.start);
   const quietest = (from: number, to: number, anchor: number): number => {
@@ -196,9 +202,9 @@ export function snapEdges(ranges: FillerRange[], rms: FrameSample[], windowSec: 
     const prev = pos > 0 ? ranges[order[pos - 1]!]! : null;
     const next = pos + 1 < order.length ? ranges[order[pos + 1]!]! : null;
     const mid = (r.start + r.end) / 2;
-    const startLo = Math.min(r.start, Math.max(r.start - windowSec, prev ? prev.end : -Infinity));
+    const startLo = Math.min(r.start, Math.max(r.start - windowSec, prev ? prev.end : -Infinity, bounds?.[idx]?.lo ?? -Infinity));
     const startHi = Math.max(r.start, Math.min(r.start + windowSec, mid));
-    const endHi = Math.max(r.end, Math.min(r.end + windowSec, next ? next.start : Infinity));
+    const endHi = Math.max(r.end, Math.min(r.end + windowSec, next ? next.start : Infinity, bounds?.[idx]?.hi ?? Infinity));
     const endLo = Math.min(r.end, Math.max(r.end - windowSec, mid));
     out[idx]!.start = quietest(startLo, startHi, r.start);
     out[idx]!.end = quietest(endLo, endHi, r.end);

@@ -95,6 +95,7 @@ export async function findFillersAndRetakes(
   if (args.retakes) ranges.push(...findRetakeRanges(loaded.sentences, loaded.words, { windowSec: 10, jaccard: 0.6 }));
   ranges.sort((a, b) => a.start - b.start || a.end - b.end);
 
+  const found = [...ranges];
   // Each range belongs to the dialogue clip that holds it; a clip we cannot map exactly is never cut.
   const dialogue = snapshot.clips.filter((c) => c.trackType === 'audio' && loaded.dialogueTrackIndices.includes(c.trackIndex));
   const tolerance = snapshot.frameDuration;
@@ -125,12 +126,23 @@ export async function findFillersAndRetakes(
   if (ranges.length > 0) {
     const ffmpeg = await findFfTool('ffmpeg');
     if (!ffmpeg) return ffmpegMissingResult('find_fillers_and_retakes') as never;
-    // Only the media around each clip's ranges is measured, not the whole file.
-    const samples: FrameSample[] = [];
+    // Words that stay in the audio: an edge never snaps into one of them.
+    const keptWords = loaded.words.filter((w) => {
+      const mid = (w.start + w.end) / 2;
+      return !found.some((r) => mid >= r.start && mid <= r.end);
+    });
+    const boundsFor = (r: FillerRange): { lo: number; hi: number } => ({
+      lo: Math.max(-Infinity, ...keptWords.filter((w) => w.start < r.start).map((w) => w.end)),
+      hi: Math.min(Infinity, ...keptWords.filter((w) => w.end > r.end).map((w) => w.start)),
+    });
+    // Only the media around each clip's ranges is measured, not the whole file. Each range snaps
+    // against the samples of the clip that owns it, never another mic's.
+    const snapped = new Map<FillerRange, FillerRange>();
     for (const { clip, ranges: mine } of byClip.values()) {
       const toSource = (t: number): number => clip.inPoint + (t - clip.start);
       const from = Math.max(clip.inPoint, toSource(Math.min(...mine.map((r) => r.start))) - RMS_PAD_SEC);
       const to = Math.min(clip.outPoint, toSource(Math.max(...mine.map((r) => r.end))) + RMS_PAD_SEC);
+      const samples: FrameSample[] = [];
       try {
         const rms = await sourceRms(ffmpeg, clip.mediaPath!, from, to);
         for (const s of rms) {
@@ -140,8 +152,10 @@ export async function findFillersAndRetakes(
       } catch (error) {
         warnings.push(`Không đo được mức âm thanh của ${clip.mediaPath}, giữ nguyên mép cắt: ${error instanceof Error ? error.message : String(error)}`);
       }
+      const result = snapEdges(mine, samples, SNAP_WINDOW_SEC, mine.map(boundsFor));
+      mine.forEach((r, i) => snapped.set(r, result[i]!));
     }
-    ranges = snapEdges(ranges, samples, SNAP_WINDOW_SEC);
+    ranges = ranges.map((r) => snapped.get(r) ?? r);
   }
 
   return {

@@ -122,6 +122,36 @@ describe('find_fillers_and_retakes', () => {
     expect(result.ranges[0].start).toBeCloseTo(0.94, 5);
   });
 
+  it('does not snap into a kept word that ends 20 ms before the filler', async () => {
+    const tight = [word('tôi', 0, 0.3), word('nói', 0.68, 0.98), word('ờ', 1.0, 1.3), word('rằng', 1.5, 1.8), word('xong', 1.82, 2.1)];
+    loadTranscript.mockResolvedValue({
+      ...ready,
+      words: tight,
+      sentences: [{ id: 0, start: 0, end: 2.1, text: 'tôi nói ờ rằng xong', firstWord: 0, lastWord: 4 }],
+    });
+    const result: any = await findFillersAndRetakes(ctxWith([clip()]), baseArgs); // quietest sample at 0.94, inside "nói"
+    expect(result.ranges[0].start).toBeGreaterThanOrEqual(0.98);
+  });
+
+  it('snaps a range only against the samples of the clip that owns it', async () => {
+    // a2 (track 1) overlaps a1 and is quieter at 0.96 s; a1 is quietest at 0.92 s
+    loadTranscript.mockResolvedValue({ ...ready, dialogueTrackIndices: [0, 1] });
+    runFf.mockImplementation(async (_bin: string, args: string[]) => {
+      const media = args[args.indexOf('-i') + 1];
+      let out = '';
+      for (let i = 0; i < 1100; i++) {
+        const v = media === 'C:/m.wav' ? (i === 92 ? '-60.0' : '-20.0') : (i === 96 ? '-inf' : '-20.0');
+        out += `pts_time:${(i / 100).toFixed(2)}
+lavfi.astats.Overall.RMS_level=${v}
+`;
+      }
+      return { code: 0, stdout: out, stderr: '' };
+    });
+    const other = clip({ id: 'a2', trackIndex: 1, mediaPath: 'C:/n.wav' });
+    const result: any = await findFillersAndRetakes(ctxWith([clip(), other]), baseArgs);
+    expect(result.ranges[0].start).toBeCloseTo(0.92, 5);
+  });
+
   it('lists a speed-changed clip in skippedClips and returns none of its ranges', async () => {
     const result: any = await findFillersAndRetakes(ctxWith([clip({ outPoint: 20 })]), baseArgs);
     expect(result.success).toBe(true);

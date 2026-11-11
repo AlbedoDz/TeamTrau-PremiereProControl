@@ -289,6 +289,23 @@ describe('snapEdges', () => {
     expect(out[0]!.end).toBeLessThanOrEqual(out[1]!.start);
   });
 
+  it('keeps the start edge out of a previous kept word (quietest sample lies inside it)', () => {
+    // previous word ends at 0.98 s, filler starts at 1.00 s, quietest sample at 0.94 s (inside the word)
+    const out = snapEdges([{ start: 1.0, end: 1.5, reason: 'filler-A', text: 'ờ' }], rms({ 94: -60 }), 0.08, [{ lo: 0.98, hi: 9 }]);
+    expect(out[0]!.start).toBeGreaterThanOrEqual(0.98);
+  });
+
+  it('keeps the end edge out of the next kept word (quietest sample lies inside it)', () => {
+    // next word starts at 1.52 s, filler ends at 1.50 s, quietest sample at 1.56 s (inside the word)
+    const out = snapEdges([{ start: 1.0, end: 1.5, reason: 'filler-A', text: 'ờ' }], rms({ 156: -60 }), 0.08, [{ lo: 0, hi: 1.52 }]);
+    expect(out[0]!.end).toBeLessThanOrEqual(1.52);
+  });
+
+  it('still moves the end edge to a quiet sample inside the window and bounds', () => {
+    const out = snapEdges([{ start: 1.0, end: 1.5, reason: 'filler-A', text: 'ờ' }], rms({ 154: -60 }), 0.08, [{ lo: 0, hi: 1.6 }]);
+    expect(out[0]!.end).toBeCloseTo(1.54, 5);
+  });
+
   it('keeps an edge when there are no samples near it', () => {
     const out = snapEdges([{ start: 1.0, end: 1.5, reason: 'retake', text: 'x' }], [], 0.08);
     expect(out[0]).toEqual({ start: 1.0, end: 1.5, reason: 'retake', text: 'x' });
