@@ -8,6 +8,7 @@ import {
   type CandidateSignals,
   type Window,
 } from '../../analysis/highlights.js';
+import { DEFAULT_FILLER_LEXICON } from '../../analysis/fillers-vi.js';
 import { parseShortTermLoudness } from '../../analysis/ffmpeg.js';
 import type { FrameSample } from '../../analysis/roughcut.js';
 import type { Sentence, TimelineWord } from '../../analysis/transcript.js';
@@ -59,8 +60,8 @@ describe('candidateWindows', () => {
 });
 
 describe('signalsFor', () => {
-  it('filler rate counts the two-word filler "thì là"', () => {
-    // 10 từ có "ờ" và "thì là" → fillerRate === 0.3
+  it('filler rate counts the two-word filler "kiểu như"', () => {
+    // 10 từ có "ờ" và "kiểu như" → fillerRate === 0.3
     const words: TimelineWord[] = [
       tw('Tôi', 0.0, 0.5),
       tw('ờ', 0.5, 1.0),
@@ -68,8 +69,8 @@ describe('signalsFor', () => {
       tw('rằng', 1.5, 2.0),
       tw('chúng', 2.0, 2.5),
       tw('ta', 2.5, 3.0),
-      tw('thì', 3.0, 3.5),
-      tw('là', 3.5, 4.0),
+      tw('kiểu', 3.0, 3.5),
+      tw('như', 3.5, 4.0),
       tw('nên', 4.0, 4.5),
       tw('đi', 4.5, 5.0),
     ];
@@ -78,18 +79,18 @@ describe('signalsFor', () => {
     expect(signals.fillerRate).toBeCloseTo(0.3, 5);
   });
 
-  it('fillers are matched after NFC/lowercase/punctuation stripping ("Ờ," and "Thì là." count)', () => {
+  it('fillers are matched after NFC/lowercase/punctuation stripping ("Ờ," and "Kiểu như." count)', () => {
     const words: TimelineWord[] = [
       tw('Tôi', 0.0, 1.0),
       tw('Ờ,', 1.0, 2.0),
       tw('nghĩ', 2.0, 3.0),
-      tw('Thì', 3.0, 4.0),
-      tw('là.', 4.0, 5.0),
+      tw('Kiểu', 3.0, 4.0),
+      tw('như.', 4.0, 5.0),
       tw('đúng.', 5.0, 6.0),
     ];
     const w: Window = { startSentenceId: 0, endSentenceId: 0, start: 0.0, end: 6.0 };
     const signals = signalsFor(w, words, [], -14, []);
-    // 6 words total, 3 filler words ("Ờ,", "Thì", "là.") -> fillerRate = 3 / 6 = 0.5
+    // 6 words total, 3 filler words ("Ờ,", "Kiểu", "như.") -> fillerRate = 3 / 6 = 0.5
     expect(signals.fillerRate).toBeCloseTo(0.5, 5);
   });
 
@@ -127,7 +128,8 @@ describe('signalsFor', () => {
   });
 
   it('FILLERS export includes required filler phrases', () => {
-    expect(FILLERS).toEqual(['ờ', 'à', 'ừ', 'kiểu', 'thì là']);
+    expect(FILLERS).toEqual([...DEFAULT_FILLER_LEXICON.A, ...DEFAULT_FILLER_LEXICON.B]);
+    expect(FILLERS).toEqual(expect.arrayContaining(['ờ', 'à', 'kiểu', 'kiểu như']));
   });
 });
 
@@ -328,7 +330,7 @@ function naiveSignalsFor(
   );
   let fillerWords = 0;
   let idx = 0;
-  const fillers = [['thì', 'là'], ['kiểu'], ['ờ'], ['à'], ['ừ']];
+  const fillers = FILLERS.map((f) => f.split(' ')).sort((a, b) => b.length - a.length);
   while (idx < tokens.length) {
     let matchedLength = 0;
     for (const filler of fillers) {
