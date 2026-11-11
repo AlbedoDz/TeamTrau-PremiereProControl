@@ -55,7 +55,7 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
   let snapshot: SequenceSnapshot | undefined;
   let dialogueTracks: number[] = [];
   let silenceCuts: Interval[] = [];
-  let fillerRanges: Array<{ start: number; end: number; reason: string }> = [];
+  let fillerRanges: Array<{ start: number; end: number; reason: string; text?: string }> = [];
   let merged: Interval[] = [];
   let copyId = '';
   let backupPath: string | undefined;
@@ -127,6 +127,10 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
         ...silenceCuts,
         ...fillerRanges.map((r) => ({ start: r.start, end: r.end, duration: r.end - r.start })),
       ]);
+      summary.cuts = [
+        ...silenceCuts.map((r) => ({ start: round3(r.start), end: round3(r.end), reason: 'silence' })),
+        ...fillerRanges.map((r) => ({ start: r.start, end: r.end, reason: r.reason, ...(r.text !== undefined ? { text: r.text } : {}) })),
+      ].sort((a, b) => a.start - b.start);
       summary.cutCount = merged.length;
       summary.plannedRemovedSeconds = round3(merged.reduce((sum, r) => sum + r.duration, 0));
       if (merged.length === 0) warnings.push('Không có khoảng nào cần cắt.');

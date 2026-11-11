@@ -136,6 +136,10 @@
                 if (line) onRunnerLine(line, state);
             }
         });
+        child.stdin.on('error', function (err) {
+            // EPIPE after the child died: the exit handler reports the failure.
+            pushStderr('stdin: ' + err.message);
+        });
         child.stderr.setEncoding('utf8');
         child.stderr.on('data', function (chunk) { pushStderr(chunk); });
         child.on('error', function (err) {
@@ -204,6 +208,18 @@
         } else {
             dispatch({ type: 'runner-exit', error: text });
         }
+        var dropped = runState.failedJobs;
+        var box = $('guiResult');
+        for (var d = 0; d < dropped.length; d++) {
+            delete jobs[dropped[d].id];
+            box.hidden = false;
+            box.appendChild(el('div', { className: 'gui-error', text: cardTitle(dropped[d].cardId) + ': ' + dropped[d].error }));
+        }
+    }
+
+    function cardTitle(cardId) {
+        for (var i = 0; i < cards.length; i++) if (cards[i].id === cardId) return cards[i].title;
+        return 'Quy trình';
     }
 
     function send(message) {
@@ -217,6 +233,13 @@
             try { runner.child.stdin.end(); } catch (e) {}
             var old = runner;
             runner = null;
+            var stopped = 'Runner đã được dừng. Thử lại để khởi động lại.';
+            var waiting = old.readyWaiters;
+            old.readyWaiters = [];
+            for (var w = 0; w < waiting.length; w++) waiting[w].fail(stopped);
+            var pending = calls;
+            calls = {};
+            for (var id in pending) pending[id]({ success: false, error: stopped });
             setTimeout(function () { try { old.child.kill(); } catch (e) {} }, 3000);
         }
     }
@@ -241,8 +264,18 @@
         return runState.status === 'starting' || runState.status === 'running' || runState.status === 'cancelling';
     }
 
+    var cardButtons = {};          // card id -> [Xem trước, Chạy trên bản sao]
+
+    function updateCardLocks() {
+        for (var id in cardButtons) {
+            var locked = Core.isCardLocked(runState, id);
+            for (var i = 0; i < cardButtons[id].length; i++) cardButtons[id][i].disabled = locked;
+        }
+    }
+
     function dispatch(message) {
         runState = Core.reduceRunState(runState, message);
+        updateCardLocks();
         renderProgress();
     }
 
@@ -323,6 +356,19 @@
         // The panel starts the bridge when it opens; make sure it is up before the runner uses it.
         if (window.bridge && !window.bridge.isConnected && window.bridge.startBridge) window.bridge.startBridge();
         ensureRunner(function () {
+            if (!Core.shouldSendRun(runState, job.id)) {
+                // Cancelled while the runner was starting: it never ran, so finish it here.
+                if (runState.current && runState.current.id === job.id) {
+                    var cancelled = Core.cancelledResult();
+                    delete jobs[job.id];
+                    lastRun = { job: job, result: cancelled };
+                    dispatch({ type: 'result', id: job.id, result: cancelled });
+                    renderResult(job, cancelled, false);
+                } else {
+                    delete jobs[job.id];
+                }
+                return;
+            }
             if (!send({ type: 'run', id: job.id, tool: job.card.tool, args: job.args })) {
                 failJob(job, 'Không gửi được lệnh tới runner.');
             }
@@ -524,10 +570,10 @@
         for (var i = 0; i < card.fields.length; i++) {
             if (!card.fields[i].hidden) node.appendChild(fieldNode(card, card.fields[i]));
         }
-        node.appendChild(el('div', { className: 'gui-actions' }, [
-            el('button', { type: 'button', className: 'secondary', text: 'Xem trước', onclick: function () { runCard(card, true); } }),
-            el('button', { type: 'button', className: 'primary', text: 'Chạy trên bản sao', onclick: function () { runCard(card, false); } })
-        ]));
+        var preview = el('button', { type: 'button', className: 'secondary', text: 'Xem trước', onclick: function () { runCard(card, true); } });
+        var runButton = el('button', { type: 'button', className: 'primary', text: 'Chạy trên bản sao', onclick: function () { runCard(card, false); } });
+        cardButtons[card.id] = [preview, runButton];
+        node.appendChild(el('div', { className: 'gui-actions' }, [preview, runButton]));
         return node;
     }
 
@@ -620,7 +666,12 @@
     }
 
     function openFile(file, note) {
-        var url = 'file:///' + file.replace(/\\/g, '/').replace(/^\/+/, '');
+        var parts = file.replace(/\\/g, '/').replace(/^\/+/, '').split('/');
+        for (var p = 0; p < parts.length; p++) {
+            if (p === 0 && /^[A-Za-z]:$/.test(parts[p])) continue;
+            parts[p] = encodeURIComponent(parts[p]);
+        }
+        var url = 'file:///' + parts.join('/');
         try {
             window.cep.util.openURLInDefaultBrowser(url);
             note.textContent = 'Đã mở ' + file + '. Sửa, lưu, rồi chạy lại quy trình.';

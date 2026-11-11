@@ -265,6 +265,16 @@ describe('workflow_clean_voiceover', () => {
     expect(result.summary.cutCount).toBe(3);
   });
 
+  it('lists every cut before merging, with its reason and sentence', async () => {
+    const result = await runTool('workflow_clean_voiceover', ctxWith(), { dryRun: true });
+    expect(result.summary.cuts).toEqual([
+      { start: 10.12, end: 11.88, reason: 'silence' },
+      { start: 30, end: 30.4, reason: 'filler-A', text: 'ờ' },
+      { start: 50, end: 52, reason: 'retake', text: 'x' },
+    ]);
+    expect(result.summary.plan).toHaveLength(3);
+  });
+
   it('cuts only silence, with a warning, when the transcript is empty', async () => {
     loadTranscript.mockResolvedValue(transcript([]));
     const result = await runTool('workflow_clean_voiceover', ctxWith(), {});

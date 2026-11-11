@@ -194,6 +194,50 @@ describe('gui-core reduceRunState', () => {
     state = core.reduceRunState(state, { type: 'runner-exit', error: 'boom' });
     expect(state).toMatchObject({ status: 'failed', error: 'boom', queue: [], current: null });
   });
+
+  it('reports every queued job as failed, in Vietnamese, when the runner exits', () => {
+    let state = core.reduceRunState(core.initialRunState(), run('a'));
+    state = core.reduceRunState(state, { ...run('b'), cardId: 'shorts' });
+    state = core.reduceRunState(state, run('c'));
+    state = core.reduceRunState(state, { type: 'runner-exit', error: 'boom' });
+    expect(state.failedJobs.map((j: any) => [j.id, j.cardId])).toEqual([['b', 'shorts'], ['c', 'recap']]);
+    expect(state.failedJobs[0].error).toContain('chưa chạy được');
+    expect(state.failedJobs[0].error).toContain('boom');
+    state = core.reduceRunState(state, run('d'));
+    expect(state.failedJobs).toEqual([]);
+  });
+
+  it('does not send a job that was cancelled while the runner was starting', () => {
+    let state = core.reduceRunState(core.initialRunState(), run('a'));
+    expect(core.shouldSendRun(state, 'a')).toBe(true);
+    state = core.reduceRunState(state, { type: 'cancel', id: 'a' });
+    expect(state.status).toBe('cancelling');
+    expect(core.shouldSendRun(state, 'a')).toBe(false);
+    // Completing it locally reaches a terminal state.
+    state = core.reduceRunState(state, { type: 'result', id: 'a', result: core.cancelledResult() });
+    expect(state).toMatchObject({ status: 'done', cancelled: true, current: null });
+  });
+
+  it('does not send a queued job that was removed, but sends one still queued', () => {
+    let state = core.reduceRunState(core.initialRunState(), run('a'));
+    state = core.reduceRunState(state, run('b'));
+    state = core.reduceRunState(state, run('c'));
+    state = core.reduceRunState(state, { type: 'cancel', id: 'b' });
+    expect(core.shouldSendRun(state, 'b')).toBe(false);
+    expect(core.shouldSendRun(state, 'c')).toBe(true);
+  });
+
+  it('locks only the card whose job is active', () => {
+    let state = core.initialRunState();
+    expect(core.isCardLocked(state, 'recap')).toBe(false);
+    state = core.reduceRunState(state, run('a'));
+    expect(core.isCardLocked(state, 'recap')).toBe(true);
+    expect(core.isCardLocked(state, 'shorts')).toBe(false);
+    state = core.reduceRunState(state, { type: 'cancel', id: 'a' });
+    expect(core.isCardLocked(state, 'recap')).toBe(true);
+    state = core.reduceRunState(state, { type: 'result', id: 'a', result: { success: true } });
+    expect(core.isCardLocked(state, 'recap')).toBe(false);
+  });
 });
 
 describe('gui-core describeResult', () => {
@@ -237,6 +281,22 @@ describe('gui-core describeResult', () => {
     });
     expect(cuts).toEqual([{ time: '1:23.4 - 1:24.1', reason: 'từ ngập ngừng', text: 'ờ thì' }]);
     expect(core.listCuts({ summary: { plan: [{ start: 1, end: 2, duration: 1 }] } })).toHaveLength(1);
+    const withCuts = core.listCuts({
+      steps: [{ label: 'x', ok: true, detail: { ranges: 3 } }],
+      summary: {
+        plan: [{ start: 1, end: 2, duration: 1 }],
+        cuts: [
+          { start: 1, end: 2, reason: 'silence' },
+          { start: 30, end: 30.4, reason: 'filler-B', text: 'kiểu như' },
+          { start: 50, end: 52, reason: 'retake', text: 'x' },
+        ],
+      },
+    });
+    expect(withCuts).toEqual([
+      { time: '0:01.0 - 0:02.0', reason: 'khoảng lặng', text: '' },
+      { time: '0:30.0 - 0:30.4', reason: 'từ câu giờ', text: 'kiểu như' },
+      { time: '0:50.0 - 0:52.0', reason: 'câu vấp', text: 'x' },
+    ]);
     expect(core.listCuts({ steps: [] })).toEqual([]);
   });
 });

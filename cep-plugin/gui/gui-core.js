@@ -180,7 +180,8 @@
             result: null,
             cancelled: false,
             error: '',
-            runnerReady: false
+            runnerReady: false,
+            failedJobs: []       // queued jobs dropped because the runner exited
         };
     }
 
@@ -206,6 +207,26 @@
         return status === 'starting' || status === 'running' || status === 'cancelling';
     }
 
+    /** The Xem trước and Chạy buttons of a card are locked while that card's own job is active. */
+    function isCardLocked(state, cardId) {
+        return !!(state && state.current && isActive(state.status) && state.current.cardId === cardId);
+    }
+
+    /**
+     * Whether a job that was waiting for the runner to start should still be sent. A job the
+     * editor cancelled meanwhile (cancelling, or removed from the queue) must not run.
+     */
+    function shouldSendRun(state, id) {
+        if (state.current && state.current.id === id) return state.status !== 'cancelling';
+        for (var i = 0; i < state.queue.length; i++) if (state.queue[i].id === id) return true;
+        return false;
+    }
+
+    /** Result a job gets when it was cancelled before it ever reached the runner. */
+    function cancelledResult() {
+        return { success: false, cancelled: true, steps: [], outputSequenceIds: [], warnings: [] };
+    }
+
     /**
      * State machine for one runner. Messages:
      *   { type: 'run', id, tool, cardId?, dryRun? }  the editor pressed a run button
@@ -224,6 +245,7 @@
         switch (message.type) {
             case 'run': {
                 var job = { id: id, tool: message.tool, cardId: message.cardId, dryRun: !!message.dryRun };
+                next.failedJobs = [];
                 if (isActive(next.status)) next.queue.push(job);
                 else begin(next, job);
                 return next;
@@ -264,12 +286,16 @@
             }
             case 'runner-exit': {
                 next.runnerReady = false;
+                var exitError = message.error || 'Trình chạy quy trình đã dừng đột ngột.';
+                next.failedJobs = next.queue.map(function (j) {
+                    return { id: j.id, cardId: j.cardId, error: 'Quy trình xếp hàng chưa chạy được vì runner đã dừng. ' + exitError };
+                });
                 next.queue = [];
                 if (!next.current) return next;
                 next.result = null;
                 next.cancelled = false;
                 next.status = 'failed';
-                next.error = message.error || 'Trình chạy quy trình đã dừng đột ngột.';
+                next.error = exitError;
                 next.current = null;
                 return next;
             }
@@ -374,15 +400,16 @@
 
     /**
      * The cuts of a Dọn voice-over preview, one entry each: { time, reason, text }.
-     * Reads steps[].detail.ranges when a step lists them, else summary.plan.
+     * Reads summary.cuts (reason and sentence per cut); falls back to steps[].detail.ranges, then summary.plan.
      */
     function listCuts(result) {
         var r = result || {};
         var ranges = null;
+        if (r.summary && Array.isArray(r.summary.cuts)) ranges = r.summary.cuts;
         var steps = Array.isArray(r.steps) ? r.steps : [];
-        for (var i = 0; i < steps.length; i++) {
+        for (var i = 0; !ranges && i < steps.length; i++) {
             var d = steps[i] && steps[i].detail;
-            if (d && Array.isArray(d.ranges)) { ranges = d.ranges; break; }
+            if (d && Array.isArray(d.ranges)) ranges = d.ranges;
         }
         if (!ranges && r.summary && Array.isArray(r.summary.plan)) ranges = r.summary.plan;
         if (!ranges) return [];
@@ -478,6 +505,9 @@
         applySettings: applySettings,
         initialRunState: initialRunState,
         reduceRunState: reduceRunState,
+        isCardLocked: isCardLocked,
+        shouldSendRun: shouldSendRun,
+        cancelledResult: cancelledResult,
         describeResult: describeResult,
         listCuts: listCuts,
         formatDuration: formatDuration,
