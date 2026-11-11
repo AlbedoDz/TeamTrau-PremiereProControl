@@ -80,7 +80,7 @@ class MCPPremiereProServer {
     });
 
     // Execute tool calls
-    server.setRequestHandler('tools/call', async (request) => {
+    server.setRequestHandler('tools/call', async (request, ctx) => {
       const { name, arguments: args } = request.params;
       const startedAt = Date.now();
       const innerName =
@@ -89,7 +89,22 @@ class MCPPremiereProServer {
           : undefined;
 
       try {
-        const result = await this.tools.executeTool(name, args || {});
+        const progressToken = ctx.mcpReq._meta?.progressToken;
+        const progress =
+          progressToken === undefined
+            ? undefined
+            : (step: number, stepCount: number, label: string): void => {
+                void ctx.mcpReq
+                  .notify({
+                    method: 'notifications/progress',
+                    params: { progressToken, progress: step, total: stepCount, message: label },
+                  })
+                  .catch(() => {});
+              };
+        const result = await this.tools.executeTool(name, args || {}, {
+          ...(progress ? { progress } : {}),
+          signal: ctx.mcpReq.signal,
+        });
         this.recordToolCall(innerName || name, result, Date.now() - startedAt);
         const toolResult: CallToolResult = {
           content: [
