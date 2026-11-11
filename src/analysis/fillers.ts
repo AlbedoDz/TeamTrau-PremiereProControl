@@ -93,17 +93,24 @@ export function findFillerRanges(
       const gapBefore = i === 0 ? Infinity : firstWordObj.start - words[firstIdx - 1]!.end;
       // Past the last word of the transcript there is no neighbour: count it as a pause.
       const gapAfter = lastIdx + 1 < words.length ? words[lastIdx + 1]!.start - lastWordObj.end : Infinity;
-      const atEdge = i === 0 || i + len === tokens.length;
+      const atStart = i === 0;
+      const atEnd = i + len === tokens.length;
 
       let cut: boolean;
       if (tier === 'A') {
-        cut = atEdge || gapBefore >= opts.minPauseSec || gapAfter >= opts.minPauseSec;
+        const questionParticle = atEnd && (tokens[i] === 'à' || tokens[i] === 'ư');
+        // Sentence-final "à"/"ư" are question particles ("Anh đi à"): cut only when they stand alone.
+        cut = questionParticle
+          ? gapBefore >= opts.minPauseSec
+          : atStart || atEnd || gapBefore >= opts.minPauseSec || gapAfter >= opts.minPauseSec;
       } else {
         const phrase = tokens.slice(i, i + len).join(' ');
         const repeated = i + 2 * len <= tokens.length && tokens.slice(i + len, i + 2 * len).join(' ') === phrase;
-        cut = gapAfter >= opts.minPauseSec || repeated;
+        // A sentence-final B phrase has the sentence boundary as its pause, which says nothing: only a repeat cuts it.
+        cut = repeated || (!atEnd && gapAfter >= opts.minPauseSec);
       }
-      if (cut && wordCount - removed - len < 2) cut = false;
+      // Cutting may empty a filler-only sentence, but must not leave a lone word.
+      if (cut && wordCount - removed - len === 1) cut = false;
       if (cut) {
         removed += len;
         ranges.push({

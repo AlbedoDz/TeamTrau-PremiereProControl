@@ -101,7 +101,45 @@ describe('findFillerRanges', () => {
 
   it('does not cut when fewer than 2 words would remain', () => {
     expect(run(['ờ', 'thôi'])).toEqual([]);
-    expect(run(['ờ'])).toEqual([]);
+    expect(run(['ờ', 'tôi', 'à'])).toHaveLength(1); // only one of the two fillers may go
+  });
+
+  it('cuts a sentence made only of a filler', () => {
+    const a = build(['tôi', 'nghĩ', 'vậy']);
+    const b = build([['ờ', 0.5]], 3, 3);
+    const c = build(['được', 'rồi', 'nhé'], 5, 4);
+    const sentences = [a.sentences[0]!, { ...b.sentences[0]!, id: 1 }, { ...c.sentences[0]!, id: 2 }];
+    const r = findFillerRanges([...a.words, ...b.words, ...c.words], sentences, LEX, { tiers: ['A'], minPauseSec: 0.15 });
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ reason: 'filler-A', text: 'ờ' });
+  });
+
+  it('keeps a sentence-final B phrase followed by a 2 s gap', () => {
+    for (const tail of [['xong', 'rồi'], ['kiểu']]) {
+      const a = build(['em', 'làm', ...tail]);
+      const b = build(['sau', 'đó', 'đi', 'ngủ'], a.words[a.words.length - 1]!.end + 2, a.words.length);
+      const sentences = [a.sentences[0]!, { ...b.sentences[0]!, id: 1 }];
+      expect(findFillerRanges([...a.words, ...b.words], sentences, LEX, { tiers: ['A', 'B'], minPauseSec: 0.15 })).toEqual([]);
+    }
+    expect(run(['tôi', 'thích', 'kiểu'])).toEqual([]);
+  });
+
+  it('still cuts a repeated sentence-final B phrase', () => {
+    const r = run(['tôi', 'thích', 'kiểu', 'kiểu']);
+    expect(r).toHaveLength(1);
+    expect(r[0].text).toBe('kiểu');
+  });
+
+  it('keeps sentence-final question particles "à" and "ư" unless they stand alone', () => {
+    expect(run(['anh', 'đi', 'à'])).toEqual([]);
+    expect(run(['thật', 'ư'])).toEqual([]);
+    const r = run(['anh', 'đi', ['à', 0.3]]);
+    expect(r).toHaveLength(1);
+    expect(r[0].text).toBe('à');
+  });
+
+  it('still cuts sentence-final "ờ" (not a question particle)', () => {
+    expect(run(['anh', 'đi', 'ờ'])).toHaveLength(1);
   });
 
   it('matches the longest phrase: "ừm hứm" is one range', () => {
