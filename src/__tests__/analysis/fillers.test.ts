@@ -2,7 +2,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_FILLER_LEXICON, loadFillerLexicon } from '../../analysis/fillers-vi.js';
-import { findFillerRanges, findRetakeRanges } from '../../analysis/fillers.js';
+import { findFillerRanges, findRetakeRanges, snapEdges } from '../../analysis/fillers.js';
 import type { Sentence, TimelineWord } from '../../analysis/transcript.js';
 
 type Spec = Array<string | [string, number]>;
@@ -255,5 +255,42 @@ describe('loadFillerLexicon', () => {
     expect(lex.A).toEqual(LEX.A);
     expect(lex.B).toEqual(['x y']);
     expect(lex.warning).toBeDefined();
+  });
+});
+
+describe('snapEdges', () => {
+  // RMS every 10 ms from 0 to 2 s, loud (-20 dB) except for the given quiet points.
+  const rms = (quiet: Record<number, number>) =>
+    Array.from({ length: 200 }, (_, i) => ({ t: i / 100, v: quiet[i] ?? -20 }));
+
+  it('moves an edge to the quietest sample within the window (60 ms away)', () => {
+    // start edge at 1.00 s; the quiet sample is at 0.94 s
+    const out = snapEdges([{ start: 1.0, end: 1.5, reason: 'filler-A', text: 'ờ' }], rms({ 94: -60 }), 0.08);
+    expect(out[0]!.start).toBeCloseTo(0.94, 5);
+    expect(out[0]!.end).toBe(1.5);
+  });
+
+  it('leaves an edge alone when the quiet sample is 120 ms away', () => {
+    const out = snapEdges([{ start: 1.0, end: 1.5, reason: 'filler-A', text: 'ờ' }], rms({ 88: -60 }), 0.08);
+    expect(out[0]!.start).toBe(1.0);
+  });
+
+  it('never crosses the edge of a neighbouring range', () => {
+    const out = snapEdges(
+      [
+        { start: 0.5, end: 1.0, reason: 'filler-A', text: 'a' },
+        { start: 1.03, end: 1.5, reason: 'filler-A', text: 'b' },
+      ],
+      rms({ 100: -60 }),
+      0.08,
+    );
+    // the quiet sample at 1.00 s lies before the second range's start edge but not past the first range's end
+    expect(out[1]!.start).toBeGreaterThanOrEqual(out[0]!.end);
+    expect(out[0]!.end).toBeLessThanOrEqual(out[1]!.start);
+  });
+
+  it('keeps an edge when there are no samples near it', () => {
+    const out = snapEdges([{ start: 1.0, end: 1.5, reason: 'retake', text: 'x' }], [], 0.08);
+    expect(out[0]).toEqual({ start: 1.0, end: 1.5, reason: 'retake', text: 'x' });
   });
 });

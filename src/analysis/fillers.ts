@@ -4,6 +4,7 @@
  * word is the worst failure, so every rule here errs toward keeping.
  */
 import type { FillerLexicon } from './fillers-vi.js';
+import type { FrameSample } from './roughcut.js';
 import type { Sentence, TimelineWord } from './transcript.js';
 
 export type { FillerLexicon } from './fillers-vi.js';
@@ -168,4 +169,39 @@ export function findRetakeRanges(
     }
   }
   return ranges;
+}
+
+/**
+ * Moves each edge of every range to the quietest RMS sample within
+ * `windowSec`, so a cut lands in a gap instead of in a phoneme. An edge never
+ * moves past the original edge of the range beside it, and a range never
+ * shrinks to nothing. Ranges are returned in input order.
+ */
+export function snapEdges(ranges: FillerRange[], rms: FrameSample[], windowSec: number): FillerRange[] {
+  if (rms.length === 0) return ranges.map((r) => ({ ...r }));
+  const order = ranges.map((_, i) => i).sort((a, b) => ranges[a]!.start - ranges[b]!.start);
+  const quietest = (from: number, to: number, anchor: number): number => {
+    let best = anchor;
+    let bestV = Infinity;
+    for (const s of rms) {
+      if (s.t < from || s.t > to) continue;
+      const better = s.v < bestV || (s.v === bestV && Math.abs(s.t - anchor) < Math.abs(best - anchor));
+      if (better) { bestV = s.v; best = s.t; }
+    }
+    return best;
+  };
+  const out = ranges.map((r) => ({ ...r }));
+  order.forEach((idx, pos) => {
+    const r = ranges[idx]!;
+    const prev = pos > 0 ? ranges[order[pos - 1]!]! : null;
+    const next = pos + 1 < order.length ? ranges[order[pos + 1]!]! : null;
+    const mid = (r.start + r.end) / 2;
+    const startLo = Math.min(r.start, Math.max(r.start - windowSec, prev ? prev.end : -Infinity));
+    const startHi = Math.max(r.start, Math.min(r.start + windowSec, mid));
+    const endHi = Math.max(r.end, Math.min(r.end + windowSec, next ? next.start : Infinity));
+    const endLo = Math.min(r.end, Math.max(r.end - windowSec, mid));
+    out[idx]!.start = quietest(startLo, startHi, r.start);
+    out[idx]!.end = quietest(endLo, endHi, r.end);
+  });
+  return out;
 }
