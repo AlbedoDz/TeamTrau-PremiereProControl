@@ -6,6 +6,11 @@ jest.mock('../../tools/domains/shorts.js', () => ({
   reframeToVertical: jest.fn(),
   addAlphaCaptions: jest.fn(),
 }));
+jest.mock('../../analysis/sidecar.js', () => ({
+  ...jest.requireActual('../../analysis/sidecar.js'),
+  sidecarPython: jest.fn(),
+  sidecarMissingResult: jest.fn(),
+}));
 jest.mock('../../tools/domains/cleanup.js', () => ({
   ...jest.requireActual('../../tools/domains/cleanup.js'),
   readSequence: jest.fn(),
@@ -22,6 +27,7 @@ jest.mock('../../tools/domains/editing.js', () => ({
   qaSequence: jest.fn(),
 }));
 
+import * as sidecar from '../../analysis/sidecar.js';
 import * as shorts from '../../tools/domains/shorts.js';
 import * as cleanup from '../../tools/domains/cleanup.js';
 import * as sequence from '../../tools/domains/sequence.js';
@@ -37,6 +43,9 @@ const normalizeLoudness = cleanup.normalizeLoudness as jest.Mock;
 const duplicateSequence = sequence.duplicateSequence as jest.Mock;
 const ensureBackup = editing.ensureBackup as jest.Mock;
 const qaSequence = editing.qaSequence as jest.Mock;
+
+const sidecarPython = sidecar.sidecarPython as jest.Mock;
+const sidecarMissingResult = sidecar.sidecarMissingResult as jest.Mock;
 
 const tool = recapTools.find((t) => t.name === 'build_recap')!;
 const run = (ctx: ToolContext, args: Record<string, unknown>): Promise<any> => tool.run(ctx, tool.inputSchema.parse({ name: 'Recap', ...args })) as Promise<any>;
@@ -61,6 +70,7 @@ const shotsFingerprint = (): string => {
 beforeEach(() => {
   jest.resetAllMocks();
   readSequence.mockImplementation(async (_c: unknown, id?: string) => (id === 'new' || id === 'vert' ? { ...snapshot(), sequenceId: id, endTime: 20 } : snapshot()));
+  sidecarPython.mockResolvedValue('python');
   ensureBackup.mockResolvedValue({ path: 'C:/backup.prproj' });
   duplicateSequence.mockResolvedValue({ success: true, newSequenceId: 'new' });
   removeRanges.mockResolvedValue({
@@ -75,7 +85,7 @@ beforeEach(() => {
 
 describe('build_recap', () => {
   it('duplicates once, then removes ranges once with invert and exactly the segments', async () => {
-    const result = await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint() });
+    const result = await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), dialogueTrackIndices: [0] });
 
     expect(result).toMatchObject({ success: true, sequenceId: 'new', durationSec: 20, verified: true, audioLeadSupported: false });
     expect(duplicateSequence).toHaveBeenCalledTimes(1);
@@ -94,7 +104,7 @@ describe('build_recap', () => {
     expect(ensureBackup).toHaveBeenCalledTimes(1);
     expect(result.backupPath).toBe('C:/backup.prproj');
     expect(reframeToVertical).not.toHaveBeenCalled();
-    expect(normalizeLoudness).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sequenceId: 'new', targetLufs: -14, backup: false }));
+    expect(normalizeLoudness).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sequenceId: 'new', targetLufs: -14, backup: false, audioTrackIndices: [0] }));
   });
 
   it('refuses a stale fingerprint without touching anything', async () => {
@@ -200,5 +210,59 @@ describe('build_recap', () => {
     const result = await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint() });
     expect(result.verified).toBe(false);
     expect(result.warnings).toContain('Track khóa');
+  });
+
+  describe('fix round 1', () => {
+    const vertical = { aspect: '9:16' };
+    const deleteScripts = (ctx: ToolContext): string[] =>
+      (ctx.bridge.executeScript as jest.Mock).mock.calls.map((c) => String(c[0])).filter((x) => x.includes('build_recap:delete_copy'));
+
+    it('deletes the intermediate 16:9 copy after a 9:16 reframe', async () => {
+      const ctx = ctxWith();
+      const result = await run(ctx, { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), ...vertical });
+      const scripts = deleteScripts(ctx);
+      expect(scripts).toHaveLength(1);
+      expect(scripts[0]).toContain('"new"');
+      expect(result.warnings.some((w: string) => w.includes('trung gian'))).toBe(false);
+    });
+
+    it('warns once, without a doubled (16:9), when the copy cannot be deleted', async () => {
+      const ctx = ctxWith();
+      (ctx.bridge.executeScript as jest.Mock).mockImplementation(async (script: string) =>
+        script.includes('build_recap:delete_copy') ? { success: false, error: 'locked' } : { success: true, names: ['Tap 1'] });
+      const result = await run(ctx, { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), ...vertical });
+      const warning = result.warnings.find((w: string) => w.includes('trung gian'));
+      expect(warning).toContain('"Recap (16:9)"');
+      expect(warning).not.toContain('(16:9)" (16:9)');
+    });
+
+    it('does not delete anything for 16:9', async () => {
+      const ctx = ctxWith();
+      await run(ctx, { segments: SEGMENTS, expectedFingerprint: shotsFingerprint() });
+      expect(deleteScripts(ctx)).toHaveLength(0);
+    });
+
+    it('returns the sidecar-missing result before any change when captions are wanted', async () => {
+      sidecarPython.mockResolvedValue(null);
+      sidecarMissingResult.mockReturnValue({ success: false, error: 'sidecar missing' });
+      const result = await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), captionStyle: 'clean' });
+      expect(result).toEqual({ success: false, error: 'sidecar missing' });
+      expect(sidecarMissingResult).toHaveBeenCalledWith('build_recap');
+      expect(ensureBackup).not.toHaveBeenCalled();
+      expect(duplicateSequence).not.toHaveBeenCalled();
+    });
+
+    it('normalises only the transcript dialogue tracks when a transcript was loaded', async () => {
+      loadTranscript.mockResolvedValue({ status: 'done', fingerprint: shotsFingerprint(), words: [], sentences: [], dialogueTrackIndices: [1] });
+      await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), captionStyle: 'clean', dialogueTrackIndices: [0, 2] });
+      expect(normalizeLoudness.mock.calls[0][1].audioTrackIndices).toEqual([1]);
+    });
+
+    it('skips loudness with a warning when no dialogue tracks are known', async () => {
+      const result = await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint() });
+      expect(normalizeLoudness).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(result.warnings.some((w: string) => w.includes('loudness'))).toBe(true);
+    });
   });
 });

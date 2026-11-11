@@ -26,6 +26,7 @@ import type { SequenceClip } from '../../analysis/cleanup.js';
 import { isError, normalizeLoudness, readSequence, removeRanges, type SequenceSnapshot } from './cleanup.js';
 import { ensureBackup, qaSequence } from './editing.js';
 import { duplicateSequence } from './sequence.js';
+import { sidecarMissingResult, sidecarPython } from '../../analysis/sidecar.js';
 import { scoreAll } from './roughcut.js';
 import {
   addAlphaCaptions,
@@ -308,6 +309,25 @@ async function uniqueRecapName(ctx: ToolContext, name: string): Promise<string> 
   }
 }
 
+/** Deletes a sequence, as the Auto Reframe script deletes its subsequence; true when it is gone. */
+async function deleteSequenceById(ctx: ToolContext, sequenceId: string): Promise<boolean> {
+  try {
+    const result: any = await ctx.bridge.executeScript(`
+      // build_recap:delete_copy
+      try {
+        var seq = __findSequence(${JSON.stringify(sequenceId)});
+        if (!seq) return JSON.stringify({ success: true, deleted: true });
+        return JSON.stringify({ success: true, deleted: app.project.deleteSequence(seq) !== false });
+      } catch (e) {
+        return JSON.stringify({ success: false, error: e.toString() });
+      }
+    `);
+    return !!result && result.success !== false && result.deleted !== false;
+  } catch {
+    return false;
+  }
+}
+
 export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promise<BuildRecapResult> {
   const warnings: string[] = [];
   const fail = (error: string, extra: Partial<BuildRecapResult> = {}): BuildRecapResult => ({
@@ -333,6 +353,8 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   // Fingerprint: plan_recap returns the transcript fingerprint (speech) or a hash of the video
   // clips (shots). Captions need the transcript anyway, so it is loaded first when wanted.
   const needWords = args.captionStyle !== 'none';
+  // Captions are rendered by the sidecar late in the run; check it before anything is changed.
+  if (needWords && !(await sidecarPython())) return sidecarMissingResult('build_recap') as unknown as BuildRecapResult;
   let transcript: TranscriptReady | null = null;
   const loadWords = async (): Promise<BuildRecapResult | null> => {
     const loaded = await loadTranscript(ctx, args);
@@ -413,7 +435,9 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
     const reframed = await reframeToVertical(ctx, sequenceId, finalName);
     if ('error' in reframed) return fail(reframed.error, withBackup({ failedStep: 'reframe', sequenceId }));
     sequenceId = reframed.sequenceId;
-    warnings.push(`Sequence trung gian "${copyName}" (16:9) vẫn còn trong project; xóa tay nếu không cần.`);
+    if (!(await deleteSequenceById(ctx, String(copy.newSequenceId)))) {
+      warnings.push(`Không xóa được sequence trung gian "${copyName}"; xóa tay trong project nếu không cần.`);
+    }
     if (!reframed.deleted) warnings.push('Không xóa được subsequence trung gian của Auto Reframe; xóa tay trong project.');
   }
 
@@ -426,15 +450,21 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   }
 
   // 5. Loudness and QA on the result.
-  const loudness = await normalizeLoudness(ctx, {
-    sequenceId,
-    targetLufs: args.targetLufs,
-    ...(args.dialogueTrackIndices ? { audioTrackIndices: args.dialogueTrackIndices } : {}),
-    dryRun: false,
-    backup: false,
-  });
-  if (!loudness || loudness.success === false) {
-    warnings.push(`Chưa chỉnh được loudness về ${args.targetLufs} LUFS: ${loudness?.error ?? 'lỗi không rõ'}`);
+  // Dialogue tracks only (as build_short), so music is not pushed to the target.
+  const dialogueTracks = ready?.dialogueTrackIndices ?? args.dialogueTrackIndices;
+  if (!dialogueTracks || dialogueTracks.length === 0) {
+    warnings.push('Không biết track thoại nào, nên bỏ qua chỉnh loudness để không đẩy nhạc nền lên mức đích. Truyền dialogueTrackIndices để chỉnh loudness.');
+  } else {
+    const loudness = await normalizeLoudness(ctx, {
+      sequenceId,
+      targetLufs: args.targetLufs,
+      audioTrackIndices: dialogueTracks,
+      dryRun: false,
+      backup: false,
+    });
+    if (!loudness || loudness.success === false) {
+      warnings.push(`Chưa chỉnh được loudness về ${args.targetLufs} LUFS: ${loudness?.error ?? 'lỗi không rõ'}`);
+    }
   }
   const qa: any = await qaSequence(ctx, { sequenceId, minClipFrames: 6, checkMedia: true });
   if (!qa || qa.success === false) warnings.push(`qa_sequence lỗi: ${qa?.error ?? 'lỗi không rõ'}`);
