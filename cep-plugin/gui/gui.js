@@ -299,7 +299,8 @@
         if (!isActive()) return;
 
         var count = runState.stepCount || 1;
-        var done = runState.step > 0 ? runState.step - 1 : 0;
+        // progress is the amount done (fractional while a step waits); step is the step being run.
+        var done = typeof runState.progress === 'number' ? Math.min(runState.progress, count) : (runState.step > 0 ? runState.step - 1 : 0);
         $('guiBarFill').style.width = (done / count * 100) + '%';
         var pulse = $('guiBarPulse');
         pulse.style.left = (done / count * 100) + '%';
@@ -501,9 +502,11 @@
                 }));
             })(ids[i], i);
         }
-        if (result && result.cancelled && ids.length > 0) {
+        // Only the unfinished copies of a cancelled or failed run; finished outputs are kept.
+        var partial = Core.describeResult(result).partialSequenceIds;
+        if (partial.length > 0 && !(job && job.dryRun)) {
             var del = el('button', { type: 'button', className: 'utility', text: 'Xóa bản sao' });
-            del.onclick = function () { deleteCopies(ids, del, note); };
+            del.onclick = function () { deleteCopies(partial, del, note); };
             actions.appendChild(del);
         }
         if ((runnerCrashed || (failed && result.userActionRequired)) && job) {

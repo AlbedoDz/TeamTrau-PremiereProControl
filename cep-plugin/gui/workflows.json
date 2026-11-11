@@ -93,7 +93,7 @@
       "hint": "Chọn clip hay trong một thư mục và dựng vào sequence mới \"… - rough cut\".",
       "fields": [
         { "key": "folderPath", "label": "Thư mục footage", "type": "path", "default": "", "required": true, "placeholder": "footage" },
-        { "key": "targetSec", "label": "Thời lượng mong muốn (giây)", "type": "number", "default": 60, "min": 5 },
+        { "key": "targetSec", "label": "Thời lượng mong muốn (giây, bỏ qua khi có nhạc)", "type": "number", "default": "", "min": 5 },
         { "key": "musicPath", "label": "File nhạc (để trống: không theo nhạc)", "type": "path", "default": "", "placeholder": "nhac.mp3" },
         {
           "key": "pace", "label": "Nhịp cắt", "type": "select", "default": "balanced",

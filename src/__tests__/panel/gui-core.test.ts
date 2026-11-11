@@ -45,9 +45,12 @@ describe('gui-core resolveRunner', () => {
     expect(result.error).toContain('--doctor');
   });
 
-  it('returns an error that names --doctor when nothing is found', () => {
+  it('returns an error that names the repair command when nothing is found', () => {
     const result = core.resolveRunner({}, { PATH: '/usr/bin' }, () => false);
+    expect(result.error).toContain('premiere-pro-mcp --register-panel-runner');
     expect(result.error).toContain('--doctor');
+    // Setup.exe is only the Windows option.
+    expect(result.error).toMatch(/Windows[^.]*Setup\.exe/);
     expect(result.cliPath).toBeUndefined();
   });
 
@@ -87,10 +90,22 @@ describe('gui-core buildArgs', () => {
     expect(core.buildArgs(card('subtitles'), {})).toEqual({ output: 'srt', maxCharsPerLine: 42 });
   });
 
-  it('asks for the footage folder of the rough cut', () => {
+  it('asks for the footage folder of the rough cut, and a length when there is no music', () => {
     const args = core.buildArgs(card('rough_cut'), {});
-    expect(core.missingRequired(card('rough_cut'), args)).toEqual(['Cần điền: Thư mục footage.']);
-    expect(core.missingRequired(card('rough_cut'), core.buildArgs(card('rough_cut'), { folderPath: ' D:\\clips ' }))).toEqual([]);
+    expect(core.missingRequired(card('rough_cut'), args)).toEqual([
+      'Cần điền: Thư mục footage.',
+      'Cần điền: Thời lượng mong muốn (giây), hoặc chọn file nhạc.',
+    ]);
+    expect(core.missingRequired(card('rough_cut'), core.buildArgs(card('rough_cut'), { folderPath: ' D:\\clips ', targetSec: '45' }))).toEqual([]);
+    expect(core.missingRequired(card('rough_cut'), core.buildArgs(card('rough_cut'), { folderPath: 'D:/c', musicPath: 'D:/m.mp3' }))).toEqual([]);
+  });
+
+  it('rough cut: targetSec defaults to empty and is never sent with a music file', () => {
+    expect(core.buildArgs(card('rough_cut'), { folderPath: 'D:/c' }).targetSec).toBeUndefined();
+    expect(core.buildArgs(card('rough_cut'), { folderPath: 'D:/c', targetSec: '45' }).targetSec).toBe(45);
+    const withMusic = core.buildArgs(card('rough_cut'), { folderPath: 'D:/c', musicPath: 'D:/m.mp3', targetSec: '45' });
+    expect(withMusic.targetSec).toBeUndefined();
+    expect(withMusic.musicPath).toBe('D:/m.mp3');
   });
 
   it('adds the engine and the output folder from the settings', () => {
@@ -137,6 +152,16 @@ describe('gui-core reduceRunState', () => {
     state = core.reduceRunState(state, run('b'));
     expect(state.current.id).toBe('a');
     expect(state.queue.map((j: any) => j.id)).toEqual(['b']);
+  });
+
+  it('keeps the rising progress value next to the 1-based step', () => {
+    let state = core.reduceRunState(core.initialRunState(), run('a'));
+    expect(state.progress).toBe(0);
+    state = core.reduceRunState(state, { type: 'progress', id: 'a', step: 2, progress: 1.4, stepCount: 3, label: 'Nhận dạng 40%' });
+    expect(state).toMatchObject({ step: 2, progress: 1.4, stepCount: 3 });
+    // An older runner without `progress`: the amount done is step - 1.
+    state = core.reduceRunState(state, { type: 'progress', id: 'a', step: 3, stepCount: 3, label: 'x' });
+    expect(state.progress).toBe(2);
   });
 
   it('moves starting to running on progress and keeps the step', () => {
@@ -270,6 +295,74 @@ describe('gui-core describeResult', () => {
     expect(out.warnings[1]).toContain('Không có từ nào');
   });
 
+  it('shows the clean voice-over QA count (a number)', () => {
+    const none = core.describeResult({ success: true, steps: [], summary: { qaFindings: 0 }, outputSequenceIds: [], warnings: [] });
+    expect(none.lines).toContain('QA: không có vấn đề');
+    const some = core.describeResult({ success: true, steps: [], summary: { qaFindings: 3 }, outputSequenceIds: [], warnings: [] });
+    expect(some.lines).toContain('QA: 3 vấn đề');
+    const list = core.describeResult({ success: true, steps: [], summary: { qaFindings: [{}, {}] }, outputSequenceIds: [], warnings: [] });
+    expect(list.lines).toContain('Kiểm tra chất lượng: 2 lưu ý');
+  });
+
+  it('offers only the unfinished copies for deletion', () => {
+    const out = core.describeResult({
+      success: false, cancelled: true, steps: [], summary: {},
+      outputSequenceIds: ['s1', 's2', 's3'], partialSequenceIds: ['s3'], warnings: [],
+    });
+    expect(out.sequenceIds).toEqual(['s1', 's2', 's3']);
+    expect(out.partialSequenceIds).toEqual(['s3']);
+    expect(core.describeResult({ success: true, outputSequenceIds: ['s1'] }).partialSequenceIds).toEqual([]);
+    expect(core.cancelledResult().partialSequenceIds).toEqual([]);
+  });
+
+  it('translates the English warnings of remove_ranges, transcription and build_short', () => {
+    const out = core.describeResult({
+      success: true, steps: [], summary: {}, outputSequenceIds: [],
+      warnings: [
+        'Only 3 of 5 audio crossfades were placed and verified (x). The cuts themselves are fine.',
+        'The sequence shortened by 12.5s but 14s was planned. Tracks may be locked or sync lock off, leaving audio and video out of step. Use undo, unlock tracks, and retry.',
+        'CPU fallback: transcription is 3-4× slower',
+        'Skipped 2 clip(s): its speed is not 100%; it has no media file.',
+        'Repaired 4 word timestamp(s) that had no duration.',
+        'No speech was recognised in the dialogue tracks.',
+        'Short 2: The short lasts 41.2 s, expected 40 s.',
+        'Short 1: Captions were rendered at 1080×1920 but the short is 1215×2160; Premiere scales the caption overlay.',
+        'Short 3: qa_sequence found 2 error(s) on the short; see qa.findings.',
+        'Short 1: The short is 1920×1080, not 9:16.',
+        'Short 1: Auto Reframe had no subject-tracking keyframes after 120 s; check the framing in Premiere.',
+        'Short 1: The caption clip was not found on the top video track.',
+        'Short 1: The caption file could not be moved into the Shorts bin.',
+        'Short 1: The intermediate subsequence could not be deleted; remove it from the project by hand.',
+        'Short 1: No words fall in this range, so the caption track is empty.',
+        'Short 4: không xác nhận được kết quả sau khi dựng.',
+      ],
+    });
+    expect(out.warnings).toEqual([
+      'Chỉ đặt được 3/5 crossfade âm thanh. Các vết cắt vẫn đúng.',
+      expect.stringMatching(/^Sequence chỉ ngắn đi 12\.5 giây, dự kiến 14 giây\./),
+      'Không dùng được GPU: nhận dạng giọng nói chạy bằng CPU, chậm hơn 3-4 lần.',
+      'Bỏ qua 2 clip: tốc độ khác 100%; không có file media.',
+      'Đã sửa mốc thời gian của 4 từ không có độ dài.',
+      'Không nhận dạng được lời thoại nào trên các track thoại.',
+      'Short 2: Short dài 41.2 giây, dự kiến 40 giây.',
+      'Short 1: Phụ đề được dựng ở 1080×1920 nhưng short là 1215×2160; Premiere sẽ co giãn lớp phụ đề.',
+      'Short 3: qa_sequence thấy 2 lỗi trên short; xem qa.findings.',
+      'Short 1: Short có kích thước 1920×1080, không phải 9:16.',
+      'Short 1: Sau 120 giây Auto Reframe vẫn chưa có keyframe bám chủ thể; kiểm tra khung hình trong Premiere.',
+      'Short 1: Không thấy clip phụ đề trên track video trên cùng.',
+      'Short 1: Không chuyển được file phụ đề vào bin Shorts.',
+      'Short 1: Không xóa được subsequence trung gian; xóa tay trong project.',
+      'Short 1: Không có từ nào trong đoạn này, nên không có phụ đề để tạo.',
+      'Short 4: không xác nhận được kết quả sau khi dựng.',
+    ]);
+  });
+
+  it('keeps the "Short N: " prefix around unknown English text', () => {
+    const out = core.describeResult({ success: true, steps: [], summary: {}, outputSequenceIds: [], warnings: ['Short 2: Something odd'] });
+    expect(out.warnings).toEqual(['Short 2: Something odd']);
+    expect(core.vi({ success: false, error: 'Short 2: Something odd' })).toBe('Lỗi: Short 2: Something odd');
+  });
+
   it('warns when the result could not be verified', () => {
     const out = core.describeResult({ success: true, steps: [], summary: { verified: false }, outputSequenceIds: [], warnings: [] });
     expect(out.warnings.join(' ')).toContain('Chưa xác nhận');
@@ -306,6 +399,15 @@ describe('gui-core vi', () => {
     expect(core.vi({ success: false, error: 'Caption render failed: disk full' })).toBe('Không dựng được phụ đề burn-in: disk full');
     expect(core.vi({ success: false, error: 'Auto Reframe did not return a sequence.' })).toContain('Auto Reframe');
     expect(core.vi({ success: false, error: 'No words fall in the sequence, so the caption track is empty.' })).toContain('Không có từ nào');
+  });
+
+  it('turns a backup failure into panel advice, without the backup=false hint', () => {
+    const text = core.vi({
+      success: false,
+      steps: [{ label: 'Nhân bản sequence', ok: false, detail: { error: 'Backup failed, nothing was changed: save failed Fix this, or pass backup=false to edit without a backup.' } }],
+    });
+    expect(text).toContain('Nhân bản sequence: Không sao lưu được project: hãy lưu project (Ctrl+S) rồi chạy lại.');
+    expect(text).not.toContain('backup=false');
   });
 
   it('prefixes unknown English text with "Lỗi: "', () => {

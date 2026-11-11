@@ -90,19 +90,22 @@
             }
         }
         return {
-            error: 'Không tìm thấy trình chạy quy trình (runner). Chạy "premiere-pro-mcp --doctor" để kiểm tra, ' +
-                'hoặc cài lại bằng Setup.exe rồi mở lại panel.'
+            error: 'Không tìm thấy trình chạy quy trình (runner). Chạy "premiere-pro-mcp --register-panel-runner" ' +
+                'để đăng ký lại rồi mở lại panel (trên Windows cũng có thể cài lại bằng Setup.exe). ' +
+                'Chạy "premiere-pro-mcp --doctor" nếu vẫn lỗi.'
         };
     }
 
     // ------------------------------------------------------------------- buildArgs
 
+    /** The form value as the tool expects it; undefined for a number field left empty with no default. */
     function coerceField(field, raw) {
         var value = hasValue(raw) ? raw : field.default;
         if (field.type === 'toggle') return value === 'false' ? false : !!value;
         if (field.type === 'number') {
             var n = typeof value === 'number' ? value : parseFloat(String(value).replace(',', '.'));
             if (isNaN(n)) n = field.default;
+            if (!isNumber(n)) return undefined;
             if (field.integer) n = Math.round(n);
             if (isNumber(field.min) && n < field.min) n = field.min;
             if (isNumber(field.max) && n > field.max) n = field.max;
@@ -112,7 +115,11 @@
         return value;
     }
 
-    /** Form values (by field key) to tool arguments, with the card defaults applied. Empty paths are left out. */
+    /**
+     * Form values (by field key) to tool arguments, with the card defaults applied. Empty paths and
+     * empty number fields without a default are left out. Rough cut: with a music file the cut
+     * follows the music, so targetSec is not sent (it would cap the cut).
+     */
     function buildArgs(card, formValues) {
         var form = formValues || {};
         var args = {};
@@ -120,11 +127,13 @@
         for (var i = 0; i < fields.length; i++) {
             var field = fields[i];
             var value = coerceField(field, form[field.key]);
+            if (value === undefined) continue;
             if (field.type === 'path' && value === '') continue;
             if (hasValue(field.omitValue) && value === field.omitValue) continue;
             if (field.map && Object.prototype.hasOwnProperty.call(field.map, value)) value = field.map[value];
             args[field.key] = value;
         }
+        if (card.tool === 'workflow_rough_cut' && hasValue(args.musicPath)) delete args.targetSec;
         return args;
     }
 
@@ -137,6 +146,9 @@
         }
         if (card.tool === 'workflow_shorts' && args.minSec > args.maxSec) {
             out.push('"Ngắn nhất" không được lớn hơn "Dài nhất".');
+        }
+        if (card.tool === 'workflow_rough_cut' && !hasValue(args.musicPath) && !hasValue(args.targetSec)) {
+            out.push('Cần điền: Thời lượng mong muốn (giây), hoặc chọn file nhạc.');
         }
         return out;
     }
@@ -174,7 +186,8 @@
             status: 'idle',      // idle | starting | running | cancelling | done | failed
             current: null,       // { id, tool, cardId, dryRun }
             queue: [],           // jobs waiting behind the current one
-            step: 0,
+            step: 0,            // 1-based step being run
+            progress: 0,        // amount done, 0..stepCount (fractional while a step waits)
             stepCount: 0,
             label: '',
             result: null,
@@ -196,6 +209,7 @@
         next.status = 'starting';
         next.current = job;
         next.step = 0;
+        next.progress = 0;
         next.stepCount = 0;
         next.label = '';
         next.result = null;
@@ -224,7 +238,7 @@
 
     /** Result a job gets when it was cancelled before it ever reached the runner. */
     function cancelledResult() {
-        return { success: false, cancelled: true, steps: [], outputSequenceIds: [], warnings: [] };
+        return { success: false, cancelled: true, steps: [], outputSequenceIds: [], partialSequenceIds: [], warnings: [] };
     }
 
     /**
@@ -265,6 +279,7 @@
                 if (!next.current || next.current.id !== id) return next;
                 if (next.status === 'starting') next.status = 'running';
                 next.step = message.step;
+                next.progress = isNumber(message.progress) ? message.progress : Math.max(0, (message.step || 0) - 1);
                 next.stepCount = message.stepCount;
                 next.label = message.label || '';
                 return next;
@@ -362,6 +377,9 @@
         if (s.ducked) lines.push('Đã hạ nhạc khi có voice-over');
         if (Array.isArray(s.qaFindings)) {
             lines.push(s.qaFindings.length === 0 ? 'Kiểm tra chất lượng: không có lưu ý' : 'Kiểm tra chất lượng: ' + s.qaFindings.length + ' lưu ý');
+        } else if (isNumber(s.qaFindings)) {
+            // workflow_clean_voiceover reports the number of findings.
+            lines.push(s.qaFindings === 0 ? 'QA: không có vấn đề' : 'QA: ' + s.qaFindings + ' vấn đề');
         }
         if (s.outputName) lines.push('Sequence mới: ' + s.outputName);
         if (s.backupPath) lines.push('Bản backup: ' + s.backupPath);
@@ -394,7 +412,9 @@
             title: title,
             lines: lines,
             warnings: warnings,
-            sequenceIds: Array.isArray(r.outputSequenceIds) ? r.outputSequenceIds.slice() : []
+            sequenceIds: Array.isArray(r.outputSequenceIds) ? r.outputSequenceIds.slice() : [],
+            // Only these are offered for deletion (Xóa bản sao); finished outputs are kept.
+            partialSequenceIds: Array.isArray(r.partialSequenceIds) ? r.partialSequenceIds.slice() : []
         };
     }
 
@@ -427,11 +447,54 @@
 
     // -------------------------------------------------------------------------- vi
 
+    var SKIP_REASONS_VI = {
+        'its speed is not 100%': 'tốc độ khác 100%',
+        'it has no media file': 'không có file media'
+    };
+
     /**
      * English messages the earlier tools pass through, as [pattern, Vietnamese, keepDetail].
-     * First match wins. With keepDetail the text captured after a colon is appended.
+     * First match wins. With keepDetail the text captured after a colon is appended. The
+     * Vietnamese part may be a function of the match, to keep the numbers of the message.
      */
     var KNOWN_MESSAGES = [
+        [/^Backup failed/i, 'Không sao lưu được project: hãy lưu project (Ctrl+S) rồi chạy lại.'],
+        [/^Only (\d+) of (\d+) audio crossfades/i, function (m) {
+            return 'Chỉ đặt được ' + m[1] + '/' + m[2] + ' crossfade âm thanh. Các vết cắt vẫn đúng.';
+        }],
+        [/^The sequence shortened by ([\d.]+)s but ([\d.]+)s was planned/i, function (m) {
+            return 'Sequence chỉ ngắn đi ' + m[1] + ' giây, dự kiến ' + m[2] + ' giây. Có thể track bị khóa hoặc sync lock tắt ' +
+                'làm lệch hình và tiếng. Hãy Undo (Ctrl+Z), mở khóa track rồi chạy lại.';
+        }],
+        [/^CPU fallback/i, 'Không dùng được GPU: nhận dạng giọng nói chạy bằng CPU, chậm hơn 3-4 lần.'],
+        [/^Skipped (\d+) clip\(s\): (.*?)\.?$/i, function (m) {
+            var reasons = m[2].split('; ');
+            for (var i = 0; i < reasons.length; i++) reasons[i] = SKIP_REASONS_VI[reasons[i]] || reasons[i];
+            return 'Bỏ qua ' + m[1] + ' clip: ' + reasons.join('; ') + '.';
+        }],
+        [/^Repaired (\d+) word timestamp/i, function (m) {
+            return 'Đã sửa mốc thời gian của ' + m[1] + ' từ không có độ dài.';
+        }],
+        [/^No speech was recognised/i, 'Không nhận dạng được lời thoại nào trên các track thoại.'],
+        [/^Pass expectedFingerprint/i, 'Nên truyền expectedFingerprint để phát hiện sequence bị sửa sau khi chọn đoạn.'],
+        [/^The intermediate subsequence could not be deleted/i, 'Không xóa được subsequence trung gian; xóa tay trong project.'],
+        [/^Captions were rendered at (\S+) but the short is (\S+?);/i, function (m) {
+            return 'Phụ đề được dựng ở ' + m[1] + ' nhưng short là ' + m[2] + '; Premiere sẽ co giãn lớp phụ đề.';
+        }],
+        [/^The caption file could not be moved into the Shorts bin/i, 'Không chuyển được file phụ đề vào bin Shorts.'],
+        [/^qa_sequence found (\d+) error/i, function (m) {
+            return 'qa_sequence thấy ' + m[1] + ' lỗi trên short; xem qa.findings.';
+        }],
+        [/^Auto Reframe had no subject-tracking keyframes after (\d+) s/i, function (m) {
+            return 'Sau ' + m[1] + ' giây Auto Reframe vẫn chưa có keyframe bám chủ thể; kiểm tra khung hình trong Premiere.';
+        }],
+        [/^The short is (\S+), not 9:16/i, function (m) {
+            return 'Short có kích thước ' + m[1] + ', không phải 9:16.';
+        }],
+        [/^The short lasts ([\d.]+) s, expected ([\d.]+) s/i, function (m) {
+            return 'Short dài ' + m[1] + ' giây, dự kiến ' + m[2] + ' giây.';
+        }],
+        [/^The caption clip was not found on the top video track/i, 'Không thấy clip phụ đề trên track video trên cùng.'],
         [/^Caption render failed(?:, nothing in the project was changed)?(?::\s*(.*))?$/i, 'Không dựng được phụ đề burn-in', true],
         [/^Auto Reframe did not return a sequence/i, 'Premiere không trả về sequence sau khi Auto Reframe. Thử lại, hoặc kiểm tra Auto Reframe trong Premiere.'],
         [/^No words fall in (?:the sequence|this range)/i, 'Không có từ nào trong đoạn này, nên không có phụ đề để tạo.'],
@@ -449,15 +512,27 @@
         return /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(text);
     }
 
-    /** One message in Vietnamese; unknown English text is kept and prefixed with "Lỗi: ". */
+    /**
+     * One message in Vietnamese; unknown English text is kept and prefixed with "Lỗi: ".
+     * A "Short N: " prefix (workflow_shorts) is kept around the translated message.
+     */
     function viMessage(text) {
         var raw = String(text === undefined || text === null ? '' : text).trim();
         if (!raw) return '';
+        var prefixed = /^(Short \d+): (.+)$/.exec(raw);
+        if (prefixed) {
+            var inner = viMessage(prefixed[2]);
+            return inner.indexOf('Lỗi: ') === 0
+                ? 'Lỗi: ' + prefixed[1] + ': ' + inner.slice('Lỗi: '.length)
+                : prefixed[1] + ': ' + inner;
+        }
         if (raw.indexOf('music-chopped') === 0) return raw.replace(/^music-chopped:\s*/, 'Nhạc nền bị cắt đứt: ');
         for (var i = 0; i < KNOWN_MESSAGES.length; i++) {
             var entry = KNOWN_MESSAGES[i];
             var m = entry[0].exec(raw);
-            if (m) return entry[1] + (entry[2] && m[1] ? ': ' + m[1] : '');
+            if (!m) continue;
+            if (typeof entry[1] === 'function') return entry[1](m);
+            return entry[1] + (entry[2] && m[1] ? ': ' + m[1] : '');
         }
         return hasVietnamese(raw) ? raw : 'Lỗi: ' + raw;
     }
