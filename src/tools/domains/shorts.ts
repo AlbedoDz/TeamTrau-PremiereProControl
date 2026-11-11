@@ -493,7 +493,7 @@ const probeScript = (sequenceId: string): string => `
   }
 `;
 
-const reframeScript = (sequenceId: string, start: number, end: number, name: string): string => `
+const reframeScript = (sequenceId: string, range: { start: number; end: number } | null, name: string): string => `
   // build_short:reframe
   try {
     var seq = __findSequence(${JSON.stringify(sequenceId)});
@@ -507,9 +507,9 @@ const reframeScript = (sequenceId: string, start: number, end: number, name: str
     } catch (eEnd) {}
     var sub = null, r = null, err = null, deleted = false;
     try {
-      seq.setInPoint(__secondsToTicks(${start}));
-      seq.setOutPoint(__secondsToTicks(${end}));
-      sub = seq.createSubsequence(true);
+${range ? `      seq.setInPoint(__secondsToTicks(${range.start}));
+      seq.setOutPoint(__secondsToTicks(${range.end}));
+` : ''}      sub = seq.createSubsequence(true);
       if (!sub) throw new Error("createSubsequence returned no sequence");
       r = sub.autoReframeSequence(9, 16, "default", ${JSON.stringify(name)}, false);
     } catch (e1) { err = e1.toString(); }
@@ -634,6 +634,135 @@ const readbackScript = (sequenceId: string): string => `
   }
 `;
 
+export interface ReframeResult {
+  sequenceId: string;
+  /** False when the intermediate subsequence could not be deleted. */
+  deleted: boolean;
+  frameSizeHorizontal: number;
+  frameSizeVertical: number;
+}
+
+/**
+ * Auto Reframe to 9:16 through a subsequence of `range` (the whole sequence when omitted). The
+ * source sequence is not changed; the new sequence is named `name`.
+ */
+export async function reframeToVertical(
+  ctx: ToolContext,
+  sequenceId: string,
+  name: string,
+  range?: { start: number; end: number },
+): Promise<ReframeResult | { error: string }> {
+  const reframe: any = await ctx.bridge.executeScript(reframeScript(sequenceId, range ?? null, name));
+  if (!reframe || reframe.success === false || !reframe.sequenceID) {
+    return { error: reframe?.error ?? 'Auto Reframe did not return a sequence.' };
+  }
+  return {
+    sequenceId: String(reframe.sequenceID),
+    deleted: reframe.deleted !== false,
+    frameSizeHorizontal: Number(reframe.frameSizeHorizontal),
+    frameSizeVertical: Number(reframe.frameSizeVertical),
+  };
+}
+
+export type CaptionStyle = 'clean' | 'pop' | 'karaoke';
+
+/** Renders the caption groups to a ProRes 4444 alpha .mov under the renders folder; throws on failure. */
+async function renderCaptionFile(opts: {
+  groups: unknown[];
+  style: CaptionStyle;
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  name: string;
+  font?: string | undefined;
+}): Promise<string> {
+  const renders = join(premiereMcpHome(), 'renders');
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+  const outPath = join(renders, `${safeFileName(opts.name)}-${stamp}.mov`);
+  await mkdir(renders, { recursive: true });
+  const rendered = await runSidecar<{ path?: string; frames?: number }>('captions', {
+    groups: opts.groups,
+    style: opts.style,
+    width: opts.width,
+    height: opts.height,
+    fps: opts.fps,
+    duration: opts.duration,
+    ...(opts.font ? { font: opts.font } : {}),
+    safeArea: SAFE_AREA,
+    outPath,
+  });
+  return rendered.path ?? outPath;
+}
+
+/** Imports a caption file into bin Shorts/<name> and places it on a new top video track at 0. */
+async function placeCaptionFile(
+  ctx: ToolContext,
+  sequenceId: string,
+  captionFile: string,
+  name: string,
+): Promise<{ binMoved: boolean } | { error: string; step: 'import_captions' | 'place_captions' }> {
+  let step: 'import_captions' | 'place_captions' = 'import_captions';
+  try {
+    const imported = await importMedia(ctx, captionFile);
+    if (!imported?.success || !imported.id) return { step, error: imported?.error ?? 'The caption file was not imported.' };
+    step = 'place_captions';
+    const placed: any = await ctx.bridge.executeScript(placeScript(sequenceId, String(imported.id), safeFileName(name)));
+    if (!placed || placed.success === false) return { step, error: placed?.error ?? 'The caption clip was not placed.' };
+    return { binMoved: placed.binMoved !== false };
+  } catch (error) {
+    return { step, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Burns word-timed alpha captions onto a sequence: groups the words, renders them at the
+ * sequence's frame size and length, and places them on a new top video track. `timeMap` turns a
+ * word's time into sequence time and returns null for a word that is not in the sequence.
+ */
+export async function addAlphaCaptions(
+  ctx: ToolContext,
+  sequenceId: string,
+  words: TimelineWord[],
+  style: CaptionStyle,
+  timeMap: (t: number) => number | null,
+): Promise<{ ok: true; warnings?: string[] } | { error: string }> {
+  const snapshot = await readSequence(ctx, sequenceId);
+  if (isError(snapshot)) return { error: snapshot.error };
+  const probe: any = await ctx.bridge.executeScript(probeScript(sequenceId));
+  if (!probe || probe.success === false || !(probe.frameSizeVertical > 0)) {
+    return { error: probe?.error ?? 'Could not read the sequence frame size.' };
+  }
+  const mapped: Array<{ w: string; start: number; end: number }> = [];
+  for (const word of words) {
+    const start = timeMap(word.start);
+    if (start === null) continue;
+    const end = timeMap(word.end);
+    mapped.push({ w: word.w, start, end: end !== null && end > start ? end : start + Math.max(0.05, word.end - word.start) });
+  }
+  const groups = groupCaptions(mapped, 0);
+  const warnings: string[] = [];
+  if (groups.length === 0) warnings.push('No words fall in the sequence, so the caption track is empty.');
+  let captionFile: string;
+  try {
+    captionFile = await renderCaptionFile({
+      groups,
+      style,
+      width: Math.round(Number(probe.frameSizeHorizontal)),
+      height: Math.round(Number(probe.frameSizeVertical)),
+      fps: round3(1 / snapshot.frameDuration),
+      duration: round3(snapshot.endTime),
+      name: snapshot.sequenceName,
+    });
+  } catch (error) {
+    return { error: `Caption render failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const placed = await placeCaptionFile(ctx, sequenceId, captionFile, snapshot.sequenceName);
+  if ('error' in placed) return { error: placed.error };
+  if (!placed.binMoved) warnings.push('The caption file could not be moved into the Shorts bin.');
+  return { ok: true, ...(warnings.length > 0 ? { warnings } : {}) };
+}
+
 async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unknown> {
   if (!(await sidecarPython())) return sidecarMissingResult('build_short');
   const loaded = await loadTranscript(ctx, args);
@@ -692,24 +821,18 @@ async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unkno
   if (captions.length === 0) warnings.push('No words fall in this range, so the caption track is empty.');
 
   // 1. Render the captions first: a failure here leaves the project untouched.
-  const renders = join(premiereMcpHome(), 'renders');
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
-  const outPath = join(renders, `${safeFileName(args.name)}-${stamp}.mov`);
   let captionFile: string;
   try {
-    await mkdir(renders, { recursive: true });
-    const rendered = await runSidecar<{ path?: string; frames?: number }>('captions', {
+    captionFile = await renderCaptionFile({
       groups: captions,
       style: args.captionStyle,
       width,
       height,
       fps: round3(1 / fd),
       duration: durationSec,
-      ...(args.font ? { font: args.font } : {}),
-      safeArea: SAFE_AREA,
-      outPath,
+      name: args.name,
+      font: args.font,
     });
-    captionFile = rendered.path ?? outPath;
   } catch (error) {
     return {
       success: false,
@@ -735,22 +858,19 @@ async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unkno
 
     // 3. Subsequence of the range, Auto Reframe to 9:16, drop the intermediate subsequence.
     step = 'reframe';
-    const reframe: any = await ctx.bridge.executeScript(reframeScript(loaded.sequenceId, start, end, args.name));
-    if (!reframe || reframe.success === false || !reframe.sequenceID) return fail(step, reframe?.error ?? 'Auto Reframe did not return a sequence.');
-    shortSequenceId = String(reframe.sequenceID);
-    if (reframe.deleted === false) warnings.push('The intermediate subsequence could not be deleted; remove it from the project by hand.');
+    const reframe = await reframeToVertical(ctx, loaded.sequenceId, args.name, { start, end });
+    if ('error' in reframe) return fail(step, reframe.error);
+    shortSequenceId = reframe.sequenceId;
+    if (!reframe.deleted) warnings.push('The intermediate subsequence could not be deleted; remove it from the project by hand.');
     if (Number(reframe.frameSizeHorizontal) !== width || Number(reframe.frameSizeVertical) !== height) {
       warnings.push(`Captions were rendered at ${width}×${height} but the short is ${reframe.frameSizeHorizontal}×${reframe.frameSizeVertical}; Premiere scales the caption overlay.`);
     }
 
     // 4. Import the caption file and place it on a new top video track at 0, in bin Shorts/<name>.
     step = 'import_captions';
-    const imported = await importMedia(ctx, captionFile);
-    if (!imported?.success || !imported.id) return fail(step, imported?.error ?? 'The caption file was not imported.');
-    step = 'place_captions';
-    const placed: any = await ctx.bridge.executeScript(placeScript(shortSequenceId, String(imported.id), safeFileName(args.name)));
-    if (!placed || placed.success === false) return fail(step, placed?.error ?? 'The caption clip was not placed.');
-    if (placed.binMoved === false) warnings.push('The caption file could not be moved into the Shorts bin.');
+    const placed = await placeCaptionFile(ctx, shortSequenceId, captionFile, args.name);
+    if ('error' in placed) return fail(placed.step, placed.error);
+    if (!placed.binMoved) warnings.push('The caption file could not be moved into the Shorts bin.');
 
     // 5. Loudness, on the dialogue tracks only so music is not pushed to the target.
     step = 'loudness';

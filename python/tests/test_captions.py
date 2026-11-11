@@ -53,7 +53,7 @@ def make_spec(tmp_path, groups, **overrides):
         "fps": 25,
         "duration": max(group["end"] for group in groups) + 0.4,
         "outPath": str(tmp_path / "captions.mov"),
-        "safeArea": {"top": 0.10, "bottom": 0.15, "side": 0.06},
+        "safeArea": {"top": 250 / 1920, "bottom": 350 / 1920, "side": 80 / 1080},
     }
     spec.update(overrides)
     return spec
@@ -192,8 +192,8 @@ def test_vietnamese_glyphs_render():
 def test_text_inside_safe_area(tmp_path):
     image = render_frame(tmp_path, TWO_GROUPS, frame=10)
     left, top, right, bottom = alpha_box(image)
-    assert left >= 64.8 and right <= 1015.2, f"x range {left}..{right} escapes the side safe area"
-    assert top >= 192 and bottom <= 1632, f"y range {top}..{bottom} escapes the vertical safe area"
+    assert left >= 80 and right <= 1000, f"x range {left}..{right} escapes the side safe area"
+    assert top >= 250 and bottom <= 1920 - 350, f"y range {top}..{bottom} escapes the vertical safe area"
 
 
 def test_five_word_group_wraps_to_two_rows_inside_the_safe_area(tmp_path):
@@ -201,8 +201,8 @@ def test_five_word_group_wraps_to_two_rows_inside_the_safe_area(tmp_path):
     # it wraps to two balanced rows that stay inside the side and vertical margins.
     image = render_frame(tmp_path, TWO_GROUPS, frame=25)
     left, top, right, bottom = alpha_box(image)
-    assert left >= 64.8 and right <= 1015.2, f"x range {left}..{right} escapes the side safe area"
-    assert top >= 192 and bottom <= 1632, f"y range {top}..{bottom} escapes the vertical safe area"
+    assert left >= 80 and right <= 1000, f"x range {left}..{right} escapes the side safe area"
+    assert top >= 250 and bottom <= 1920 - 350, f"y range {top}..{bottom} escapes the vertical safe area"
 
     rows = text_rows(image)
     assert len(rows) == 2, f"expected two text rows, got {rows}"
@@ -214,7 +214,7 @@ def test_wrap_balances_the_lines_near_the_middle():
     # rule has to move the break back to the boundary that splits it most evenly.
     words = "chuyện anh đời chị em".split()
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
-    limit = captions.side_safe_width(1080, 0.06)
+    limit = captions.side_safe_width(1080, 80 / 1080)
     greedy = captions._greedy_lines(font, words, limit)
     assert len(greedy) == 2 and len(greedy[1]) == 1, f"the fixture should wrap greedily: {greedy}"
 
@@ -410,3 +410,12 @@ def test_repeated_frames_fall_back_to_copy_when_links_are_refused(tmp_path, monk
 )
 def test_framerate_rational(fps, rational):
     assert captions.framerate(fps) == rational
+
+
+def test_bottom_line_sits_one_gap_above_the_350px_bottom_margin(tmp_path):
+    # 9:16 at 1080x1920: the lowest text row ends at 1920 - 350 - gap (stroke may add a few px).
+    image = render_frame(tmp_path, TWO_GROUPS, frame=10)
+    _, _, _, bottom = alpha_box(image)
+    gap = captions.bottom_gap_for(1920)
+    assert bottom <= 1920 - 350 - gap + captions.STROKE_WIDTH * 2
+    assert bottom >= 1920 - 350 - gap - 150, f"caption bottom {bottom} is far from the safe line"

@@ -183,7 +183,7 @@ async function createSequence(ctx: ToolContext, name: string, presetPath: string
   }
 }
 
-async function duplicateSequence(ctx: ToolContext, sequenceId: string, newName: string, clearContents = false): Promise<any> {
+export async function duplicateSequence(ctx: ToolContext, sequenceId: string, newName: string, clearContents = false): Promise<any> {
   const safeName = JSON.stringify(newName);
   const script = `
       try {

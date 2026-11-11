@@ -7,8 +7,8 @@
 /** Minimal word shape needed here; the transcript's TimelineWord is assignable to it. */
 export type CaptionWord = { w: string; start: number; end: number };
 
-/** Fractions of the 1080x1920 frame kept clear of captions. */
-export const SAFE_AREA = { top: 0.10, bottom: 0.15, side: 0.06 } as const;
+/** Fractions of the 1080x1920 frame kept clear of captions: 250 px top, 350 px bottom, 80 px side. */
+export const SAFE_AREA = { top: 250 / 1920, bottom: 350 / 1920, side: 80 / 1080 } as const;
 
 export interface CaptionGroup {
   start: number;

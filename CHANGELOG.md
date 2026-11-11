@@ -2,6 +2,11 @@
 
 All notable changes are documented here. Releases use semantic versioning.
 
+## 1.5.0 (chưa phát hành)
+
+- `build_recap` builds a recap sequence from the segments of `plan_recap`: it never edits the original (backup, duplicate, one `remove_ranges` call that keeps exactly the segments with 30 ms audio crossfades), optionally Auto Reframes to 9:16, burns transcript captions (`captionStyle`), normalises loudness (default -14 LUFS), runs `qa_sequence` and reads the result back (`verified`). A sequence edited after `plan_recap` is refused (`expectedFingerprint`), a taken name gets " (2)", " (3)", and a long audio clip (background music) that would be cut into 3+ pieces raises a `music-chopped` warning. `audioLeadSec` (J-cut) is not supported yet: the result reports `audioLeadSupported: false` and builds hard cuts.
+- 9:16 captions now sit higher than before: the safe zone is 250 px top, 350 px bottom and 80 px at the sides on a 1920 px frame (was 10% / 15% / 6%), which keeps them clear of the TikTok, Reels and Shorts interface. This also applies to `build_short`.
+
 ## [Unreleased]
 
 - The Premiere panel and its menu entry are now called **TeamTrau PremiereProControl** (Window > Extensions). Existing installs keep working; only the displayed name changed.

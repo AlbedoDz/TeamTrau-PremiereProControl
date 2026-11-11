@@ -23,9 +23,20 @@ import {
   type ScoredShot,
 } from '../../analysis/recap.js';
 import type { SequenceClip } from '../../analysis/cleanup.js';
-import { isError, readSequence, type SequenceSnapshot } from './cleanup.js';
+import { isError, normalizeLoudness, readSequence, removeRanges, type SequenceSnapshot } from './cleanup.js';
+import { ensureBackup, qaSequence } from './editing.js';
+import { duplicateSequence } from './sequence.js';
 import { scoreAll } from './roughcut.js';
-import { loadTranscript, median, timelineLoudness, type TranscriptArgs, type TranscriptPending } from './shorts.js';
+import {
+  addAlphaCaptions,
+  loadTranscript,
+  median,
+  reframeToVertical,
+  timelineLoudness,
+  type TranscriptArgs,
+  type TranscriptPending,
+  type TranscriptReady,
+} from './shorts.js';
 
 export type PlanRecapArgs = TranscriptArgs & {
   targetSec: number;
@@ -37,7 +48,7 @@ export type PlanRecapArgs = TranscriptArgs & {
 export interface PlanRecapResult {
   success: true;
   mode: 'speech' | 'shots';
-  segments: RecapSegment[];
+  segments: Array<{ id?: string | undefined; start: number; end: number; text?: string | undefined; score?: number | undefined }>;
   candidates: RecapSegment[];
   totalSec: number;
   fingerprint: string;
@@ -61,6 +72,13 @@ function shortfallWarning(segments: RecapSegment[], targetSec: number, warnings:
 }
 
 const roundSegment = (s: RecapSegment): RecapSegment => ({ ...s, start: round3(s.start), end: round3(s.end), score: round3(s.score) });
+
+/** plan_recap's shots-mode fingerprint: the video clips (ids, positions, source ranges, media). */
+function shotsFingerprint(video: SequenceClip[]): string {
+  return createHash('sha1')
+    .update(video.map((c) => [c.id, c.start, c.end, c.inPoint, c.outPoint, c.mediaPath ?? ''].join('|')).sort().join('\n') + '\nrecap-shots')
+    .digest('hex');
+}
 
 async function planShots(
   snapshot: SequenceSnapshot,
@@ -131,9 +149,7 @@ async function planShots(
   const segments = planShotRecap(scored, total, opts);
   shortfallWarning(segments, opts.targetSec, warnings);
   const candidates = recapCandidates(shotPool(scored, opts), segments, opts);
-  const fingerprint = createHash('sha1')
-    .update(video.map((c) => [c.id, c.start, c.end, c.inPoint, c.outPoint, c.mediaPath ?? ''].join('|')).sort().join('\n') + '\nrecap-shots')
-    .digest('hex');
+  const fingerprint = shotsFingerprint(video);
   return {
     success: true,
     mode: 'shots',
@@ -213,6 +229,234 @@ export async function planRecap(
   };
 }
 
+// ---------------------------------------------------------------------------- build_recap
+
+export interface BuildRecapArgs extends TranscriptArgs {
+  segments: Array<{ id?: string | undefined; start: number; end: number; text?: string | undefined; score?: number | undefined }>;
+  expectedFingerprint?: string | undefined;
+  name: string;
+  aspect: '16:9' | '9:16';
+  captionStyle: 'none' | 'clean' | 'pop' | 'karaoke';
+  audioLeadSec: number;
+  targetLufs: number;
+  dryRun: boolean;
+  backup: boolean;
+}
+
+export interface BuildRecapResult {
+  success: boolean;
+  sequenceId?: string;
+  durationSec?: number;
+  warnings: string[];
+  audioLeadSupported: boolean;
+  verified?: boolean;
+  error?: string;
+  dryRun?: boolean;
+  backupPath?: string | undefined;
+  failedStep?: string;
+  qa?: unknown;
+}
+
+/** J-cut placement (audio starting before its picture) is not implemented: Task 1's spike was deferred. */
+const JCUT_SUPPORTED = false;
+const RECAP_CROSSFADE_MS = 30;
+const RECAP_MERGE_GAP_SEC = 0.4;
+const RECAP_MIN_KEEP_SEC = 0.4;
+const MUSIC_MIN_SEC = 30;
+const MUSIC_CHOPPED_CUTS = 3;
+
+/** The stretches of [0, total] that the kept segments leave out. */
+function gapsBetween(segments: Array<{ start: number; end: number }>, total: number): Array<{ start: number; end: number }> {
+  const gaps: Array<{ start: number; end: number }> = [];
+  let at = 0;
+  for (const s of segments) {
+    if (s.start > at) gaps.push({ start: at, end: s.start });
+    at = Math.max(at, s.end);
+  }
+  if (total > at) gaps.push({ start: at, end: total });
+  return gaps;
+}
+
+/** Source time to recap time, given the removed stretches (sorted); null inside a removed stretch. */
+function mapAfterRemoval(removed: Array<{ start: number; end: number }>): (t: number) => number | null {
+  return (t) => {
+    let shift = 0;
+    for (const r of removed) {
+      if (t > r.start && t < r.end) return null;
+      if (r.end <= t) shift += r.end - r.start;
+    }
+    return t - shift;
+  };
+}
+
+/** A name not used by any sequence yet: "name", then "name (2)", "name (3)", ... (accents kept). Task 9 replaces this with a shared helper. */
+async function uniqueRecapName(ctx: ToolContext, name: string): Promise<string> {
+  const result: any = await ctx.bridge.executeScript(`
+    try {
+      var names = [];
+      for (var i = 0; i < app.project.sequences.numSequences; i++) names.push(String(app.project.sequences[i].name));
+      return JSON.stringify({ success: true, names: names });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: e.toString() });
+    }
+  `);
+  const taken = new Set<string>(Array.isArray(result?.names) ? result.names : []);
+  if (!taken.has(name)) return name;
+  for (let n = 2; ; n++) {
+    const candidate = `${name} (${n})`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promise<BuildRecapResult> {
+  const warnings: string[] = [];
+  const fail = (error: string, extra: Partial<BuildRecapResult> = {}): BuildRecapResult => ({
+    success: false,
+    audioLeadSupported: JCUT_SUPPORTED,
+    error,
+    warnings: [...new Set(warnings)],
+    ...extra,
+  });
+
+  const snapshot = await readSequence(ctx, args.sequenceId);
+  if (isError(snapshot)) return fail(snapshot.error);
+
+  const segments = args.segments;
+  if (segments.length === 0) return fail('Danh sách segments rỗng. Gọi plan_recap trước và truyền nguyên các đoạn nó trả về.');
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i]!;
+    if (!(s.start >= 0) || !(s.end > s.start) || (i > 0 && s.start < segments[i - 1]!.end)) {
+      return fail('segments phải theo thứ tự thời gian, không chồng nhau, mỗi đoạn có end > start >= 0. Truyền nguyên các đoạn plan_recap trả về.');
+    }
+  }
+
+  // Fingerprint: plan_recap returns the transcript fingerprint (speech) or a hash of the video
+  // clips (shots). Captions need the transcript anyway, so it is loaded first when wanted.
+  const needWords = args.captionStyle !== 'none';
+  let transcript: TranscriptReady | null = null;
+  const loadWords = async (): Promise<BuildRecapResult | null> => {
+    const loaded = await loadTranscript(ctx, args);
+    if ('success' in loaded) return fail((loaded as { error?: string }).error ?? 'Không đọc được transcript.');
+    if (loaded.status === 'running') {
+      return fail('Transcript chưa xong. Gọi transcribe_sequence với cùng tham số cho đến khi status là "done", rồi gọi lại build_recap.');
+    }
+    transcript = loaded;
+    return null;
+  };
+  if (needWords) {
+    const failure = await loadWords();
+    if (failure) return failure;
+  }
+  if (args.expectedFingerprint === undefined) {
+    warnings.push('Nên truyền expectedFingerprint từ plan_recap để phát hiện sequence đã bị sửa sau khi chọn đoạn.');
+  } else if (args.expectedFingerprint !== shotsFingerprint(snapshot.clips.filter((c) => c.trackType === 'video'))) {
+    if (!transcript) {
+      const failure = await loadWords();
+      if (failure) return failure;
+    }
+    if ((transcript as TranscriptReady | null)?.fingerprint !== args.expectedFingerprint) {
+      return fail('Sequence đã thay đổi kể từ khi chạy plan_recap. Chạy lại plan_recap.');
+    }
+  }
+
+  const removedPlan = gapsBetween(segments, snapshot.endTime);
+  const chopped = snapshot.clips.filter((c) => {
+    if (c.trackType !== 'audio' || c.end - c.start <= MUSIC_MIN_SEC) return false;
+    return removedPlan.filter((r) => r.start > c.start && r.end < c.end).length >= MUSIC_CHOPPED_CUTS;
+  });
+  if (chopped.length > 0) {
+    warnings.push(`music-chopped: ${chopped.length} clip audio dài trên ${MUSIC_MIN_SEC} giây (nhạc nền) bị cắt thành nhiều đoạn; nhạc sẽ bị ngắt quãng. Cân nhắc đặt nhạc riêng lên recap sau khi dựng.`);
+  }
+  if (args.audioLeadSec > 0) {
+    warnings.push('Chưa hỗ trợ J-cut (âm thanh vào trước hình): audioLeadSec bị bỏ qua, recap dùng cắt thẳng có crossfade âm thanh.');
+  }
+  const planned = round3(segments.reduce((sum, s) => sum + (s.end - s.start), 0));
+
+  if (args.dryRun) {
+    return { success: true, dryRun: true, durationSec: planned, audioLeadSupported: JCUT_SUPPORTED, warnings: [...new Set(warnings)] };
+  }
+
+  const backup = await ensureBackup(ctx, args.backup);
+  if ('failure' in backup) return fail(String((backup.failure as { error?: unknown }).error ?? 'Không sao lưu được project.'), { failedStep: 'backup' });
+  const backupPath = backup.path;
+  const withBackup = (extra: Partial<BuildRecapResult>): Partial<BuildRecapResult> => ({ ...(backupPath ? { backupPath } : {}), ...extra });
+
+  const finalName = await uniqueRecapName(ctx, args.name);
+  const vertical = args.aspect === '9:16';
+  // The 9:16 reframe makes its own sequence from the cut copy; the copy keeps a plain name.
+  const copyName = vertical ? await uniqueRecapName(ctx, `${finalName} (16:9)`) : finalName;
+
+  // 1. Copy the sequence; the original is never touched.
+  const copy: any = await duplicateSequence(ctx, snapshot.sequenceId, copyName);
+  if (!copy || copy.success === false || !copy.newSequenceId) {
+    return fail(copy?.error ?? 'Không nhân bản được sequence.', withBackup({ failedStep: 'duplicate' }));
+  }
+  let sequenceId = String(copy.newSequenceId);
+
+  // 2. One remove_ranges call: keep exactly the segments.
+  const cut = await removeRanges(ctx, {
+    sequenceId,
+    ranges: segments.map((s) => ({ start: s.start, end: s.end })),
+    invert: true,
+    crossfadeMs: RECAP_CROSSFADE_MS,
+    mergeGapSec: RECAP_MERGE_GAP_SEC,
+    minKeepSec: RECAP_MIN_KEEP_SEC,
+    dryRun: false,
+    backup: false,
+  });
+  if (!cut.success) return fail(cut.error ?? 'Không cắt được các khoảng ngoài segments.', withBackup({ failedStep: 'remove_ranges', sequenceId }));
+  if (cut.warning) warnings.push(cut.warning);
+  const timeMap = mapAfterRemoval([...(cut.removed ?? [])].sort((a, b) => a.start - b.start));
+
+  // 3. 9:16 reframe of the whole cut copy.
+  if (vertical) {
+    const reframed = await reframeToVertical(ctx, sequenceId, finalName);
+    if ('error' in reframed) return fail(reframed.error, withBackup({ failedStep: 'reframe', sequenceId }));
+    sequenceId = reframed.sequenceId;
+    warnings.push(`Sequence trung gian "${copyName}" (16:9) vẫn còn trong project; xóa tay nếu không cần.`);
+    if (!reframed.deleted) warnings.push('Không xóa được subsequence trung gian của Auto Reframe; xóa tay trong project.');
+  }
+
+  // 4. Captions from the transcript words, moved to recap time.
+  const ready = transcript as TranscriptReady | null;
+  if (needWords && ready) {
+    const captioned = await addAlphaCaptions(ctx, sequenceId, ready.words, args.captionStyle as 'clean' | 'pop' | 'karaoke', timeMap);
+    if ('error' in captioned) return fail(captioned.error, withBackup({ failedStep: 'captions', sequenceId }));
+    for (const w of captioned.warnings ?? []) warnings.push(w);
+  }
+
+  // 5. Loudness and QA on the result.
+  const loudness = await normalizeLoudness(ctx, {
+    sequenceId,
+    targetLufs: args.targetLufs,
+    ...(args.dialogueTrackIndices ? { audioTrackIndices: args.dialogueTrackIndices } : {}),
+    dryRun: false,
+    backup: false,
+  });
+  if (!loudness || loudness.success === false) {
+    warnings.push(`Chưa chỉnh được loudness về ${args.targetLufs} LUFS: ${loudness?.error ?? 'lỗi không rõ'}`);
+  }
+  const qa: any = await qaSequence(ctx, { sequenceId, minClipFrames: 6, checkMedia: true });
+  if (!qa || qa.success === false) warnings.push(`qa_sequence lỗi: ${qa?.error ?? 'lỗi không rõ'}`);
+  else if (qa.errors > 0) warnings.push(`qa_sequence thấy ${qa.errors} lỗi trên recap; xem qa.findings.`);
+
+  // 6. Read the result back.
+  const after = await readSequence(ctx, sequenceId);
+  if (isError(after)) return fail(after.error, withBackup({ failedStep: 'readback', sequenceId }));
+  const durationOk = cut.durationAfter === undefined || Math.abs(after.endTime - cut.durationAfter) <= 2 * after.frameDuration + (vertical ? 0.1 : 0);
+  if (!durationOk) warnings.push(`Recap dài ${round3(after.endTime)} giây, dự kiến ${round3(cut.durationAfter ?? 0)} giây.`);
+  return {
+    success: true,
+    sequenceId,
+    durationSec: round3(after.endTime),
+    audioLeadSupported: JCUT_SUPPORTED,
+    verified: cut.verified !== false && durationOk,
+    warnings: [...new Set(warnings)],
+    ...withBackup({}),
+    ...(qa && qa.success !== false ? { qa } : {}),
+  };
+}
+
 export const recapTools: ToolModule[] = [
   {
     name: 'plan_recap',
@@ -229,5 +473,32 @@ export const recapTools: ToolModule[] = [
       maxSegmentSec: z.number().positive().default(20).describe('Longest segment in seconds (default 20; shot segments are capped at 6).'),
     }).refine((a) => a.minSegmentSec <= a.maxSegmentSec, { message: 'minSegmentSec must not exceed maxSegmentSec.' }),
     run: (ctx, args) => planRecap(ctx, args),
+  },
+  {
+    name: 'build_recap',
+    description:
+      'Builds a recap sequence from the segments of plan_recap. Never edits the original: backs up the project, duplicates the sequence, keeps exactly the given segments with one remove_ranges call (30 ms audio crossfades), optionally Auto Reframes to 9:16 (aspect "9:16"), burns transcript captions (captionStyle clean/pop/karaoke; needs transcribe_sequence done), normalises loudness to targetLufs and runs qa_sequence, then reads the result back (verified). Pass the segments and fingerprint from plan_recap unchanged; a changed sequence is refused. Warns with "music-chopped" when a long audio clip (background music) would be cut into 3+ pieces. audioLeadSec (J-cut) is not supported yet: the result has audioLeadSupported false and builds hard cuts. The new sequence name gets " (2)", " (3)" ... when taken. dryRun=true only validates and reports the planned length.',
+    inputSchema: z.object({
+      sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
+      dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as plan_recap. Also the tracks loudness is applied to.'),
+      glossary: z.array(z.string()).optional().describe('Names and terms; use the same list as plan_recap.'),
+      engine: z.enum(ENGINE_IDS).optional().describe('Speech engine; use the same value as plan_recap.'),
+      segments: z.array(z.object({
+        id: z.string().optional(),
+        start: z.number(),
+        end: z.number(),
+        text: z.string().optional(),
+        score: z.number().default(0),
+      })).min(1).describe('The segments from plan_recap (sequence seconds), in time order. Pass them unchanged, or drop ones you do not want.'),
+      expectedFingerprint: z.string().optional().describe('fingerprint returned by plan_recap. If the sequence changed since, build_recap refuses.'),
+      name: z.string().min(1).describe('Name of the new sequence.'),
+      aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe; "16:9" (default) keeps the source frame.'),
+      captionStyle: z.enum(['none', 'clean', 'pop', 'karaoke']).default('none').describe('Burned-in alpha captions from the transcript. Default none.'),
+      audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds. Not supported yet: values above 0 are ignored with a warning.'),
+      targetLufs: z.number().min(-30).max(-6).default(-14).describe('Loudness target (default -14).'),
+      dryRun: z.boolean().default(false).describe('Only validate and report the planned length; changes nothing.'),
+      backup: z.boolean().default(true).describe('Back up the project first (default true).'),
+    }),
+    run: (ctx, args) => buildRecap(ctx, args),
   },
 ];
