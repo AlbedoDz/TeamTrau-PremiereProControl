@@ -107,7 +107,7 @@ describe('cleanup tools', () => {
       .mockResolvedValueOnce({ success: true })
       .mockResolvedValueOnce({ success: true, removedClips: 2 })
       .mockResolvedValueOnce(snapshot(20 - 2.76))
-      .mockResolvedValueOnce({ success: true, applied: 1, failed: 0 });
+      .mockResolvedValueOnce({ success: true, joins: 1, joinsPlaced: 1, placed: 1, attempted: 1 });
     runFf.mockResolvedValue({ code: 0, stdout: '', stderr: 'silence_start: 5\nsilence_end: 8 | silence_duration: 3' });
 
     const result = await tools.executeTool('remove_silence_from_sequence', { backup: false });

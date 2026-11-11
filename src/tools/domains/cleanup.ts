@@ -35,6 +35,7 @@ import {
   type SequenceClip,
 } from '../../analysis/cleanup.js';
 import { adjustAudioLevels, resolveProjectItemMediaPath } from './audio.js';
+import { transitionVerificationScript } from './effects.js';
 import { razorTimelineAtTime } from './timeline.js';
 
 export interface SequenceSnapshot {
@@ -362,40 +363,59 @@ export interface RemoveRangesResult {
   sequenceId?: string;
 }
 
-/** Audio crossfade (Constant Power) at each new join, through the QE DOM. Best effort: the caller only warns on failure. */
+/**
+ * Audio crossfade (Constant Power) at each new join, through the QE DOM. Mirrors the
+ * proven add_transition call in effects.ts: the QE sequence is addressed by id, only
+ * QE items of type "Clip" count (gaps and transitions are items too), the transition
+ * goes on the START of the clip that begins at the join, and a placement counts only
+ * when the clip's transition state shows it. Best effort: the caller only warns.
+ */
 async function addAudioCrossfades(ctx: ToolContext, sequenceId: string, joins: number[], frames: number, tolerance: number): Promise<any> {
   const script = `
     try {
       app.enableQE();
       var sequence = __findSequence(${JSON.stringify(sequenceId)});
       if (!sequence) return JSON.stringify({ success: false, error: "Sequence not found" });
-      if (!app.project.activeSequence || app.project.activeSequence.sequenceID !== sequence.sequenceID) {
-        app.project.openSequence(sequence.sequenceID);
-      }
-      var qeSeq = qe.project.getActiveSequence();
-      var transition = qe.project.getAudioTransitionByName("Constant Power");
+      var qeSeq = __qeSequenceFor(sequence);
+      if (!qeSeq) return JSON.stringify({ success: false, error: "Could not address the sequence through the QE API." });
+      var transition = __findQeNamed("audioTransition", "Constant Power");
       if (!transition) return JSON.stringify({ success: false, error: "Audio transition 'Constant Power' not found" });
-      var joins = ${JSON.stringify(joins)};
-      var applied = 0, failed = 0, firstError = "";
-      for (var t = 0; t < qeSeq.numAudioTracks; t++) {
-        var qeTrack = qeSeq.getAudioTrackAt(t);
+      ${transitionVerificationScript()}
+      function __clipStartingAt(qeTrack, at) {
         for (var i = 0; i < qeTrack.numItems; i++) {
           var item = qeTrack.getItemAt(i);
-          var at = item.start ? Number(item.start.secs) : NaN;
-          if (isNaN(at)) continue;
-          for (var k = 0; k < joins.length; k++) {
-            if (Math.abs(at - joins[k]) > ${tolerance}) continue;
-            try {
-              item.addTransition(transition, true, ${JSON.stringify(`${frames}:00`)});
-              applied++;
-            } catch (e1) {
-              failed++;
-              if (!firstError) firstError = e1.toString();
-            }
+          if (!item || String(item.type) !== "Clip") continue;
+          var secs = NaN;
+          try { secs = Number(item.start.secs); } catch (eSecs) {}
+          if (isNaN(secs)) {
+            try { secs = Number(item.start.ticks) / 254016000000; } catch (eTicks) {}
+          }
+          if (!isNaN(secs) && Math.abs(secs - at) <= ${tolerance}) return item;
+        }
+        return null;
+      }
+      var joins = ${JSON.stringify(joins)};
+      var placed = 0, attempted = 0, firstError = "", joinsPlaced = 0;
+      for (var k = 0; k < joins.length; k++) {
+        var joinHit = false;
+        for (var t = 0; t < qeSeq.numAudioTracks; t++) {
+          var qeTrack = qeSeq.getAudioTrackAt(t);
+          var qeClip = __clipStartingAt(qeTrack, joins[k]);
+          if (!qeClip) continue;
+          attempted++;
+          try {
+            var before = __readQeTransitionState(qeClip);
+            qeClip.addTransition(transition, false, ${JSON.stringify(String(frames))}, "0", 0.5, true, true);
+            try { if (typeof $ !== "undefined" && $.sleep) $.sleep(150); } catch (eWait) {}
+            var after = __readQeTransitionState(__clipStartingAt(qeTrack, joins[k]));
+            if (__transitionWasVerified(before, after)) { placed++; joinHit = true; }
+          } catch (e1) {
+            if (!firstError) firstError = e1.toString();
           }
         }
+        if (joinHit) joinsPlaced++;
       }
-      return JSON.stringify({ success: failed === 0, applied: applied, failed: failed, error: firstError });
+      return JSON.stringify({ success: true, joins: joins.length, joinsPlaced: joinsPlaced, placed: placed, attempted: attempted, error: firstError });
     } catch (e) {
       return JSON.stringify({ success: false, error: e.toString() });
     }
@@ -473,7 +493,9 @@ export async function removeRanges(ctx: ToolContext, args: RemoveRangesArgs, sna
       try {
         const fade = await addAudioCrossfades(ctx, before.sequenceId, joins, frames, tolerance);
         if (!fade || fade.success === false) {
-          warnings.push(`Audio crossfade could not be added${fade?.applied ? ` on every join (${fade.applied} added, ${fade.failed} failed)` : ''}: ${fade?.error ?? 'no result'}. The cuts themselves are fine.`);
+          warnings.push(`Audio crossfade could not be added: ${fade?.error ?? 'no result'}. The cuts themselves are fine.`);
+        } else if (!(fade.joinsPlaced >= joins.length)) {
+          warnings.push(`Only ${fade.joinsPlaced ?? 0} of ${joins.length} audio crossfades were placed and verified${fade.error ? ` (${fade.error})` : ''}. The cuts themselves are fine.`);
         }
       } catch (err) {
         warnings.push(`Audio crossfade could not be added: ${err instanceof Error ? err.message : String(err)}. The cuts themselves are fine.`);

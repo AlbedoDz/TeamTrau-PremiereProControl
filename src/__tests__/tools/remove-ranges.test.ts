@@ -58,7 +58,7 @@ describe('remove_ranges', () => {
       .mockResolvedValueOnce({ success: true }) // razor 5
       .mockResolvedValueOnce({ success: true, removedClips: 2 })
       .mockResolvedValueOnce(snapshot(15))
-      .mockResolvedValueOnce({ success: true, applied: 2, failed: 0 });
+      .mockResolvedValueOnce({ success: true, joins: 2, joinsPlaced: 2, placed: 2, attempted: 2 });
 
     const result = await tools.executeTool('remove_ranges', {
       ranges: [{ start: 5, end: 8 }, { start: 12, end: 14 }],
@@ -79,16 +79,32 @@ describe('remove_ranges', () => {
   });
 
   it('adds a Constant Power audio crossfade of the right length at each new join', async () => {
-    oneCut(17).mockResolvedValueOnce({ success: true, applied: 1, failed: 0 });
+    oneCut(17).mockResolvedValueOnce({ success: true, joins: 1, joinsPlaced: 1, placed: 1, attempted: 1 });
 
     const result = await tools.executeTool('remove_ranges', { ranges: [{ start: 5, end: 8 }], backup: false, crossfadeMs: 100 });
 
     expect(result).toMatchObject({ success: true, verified: true, crossfadeFrames: 3, crossfadeMsActual: 120 });
     expect(result.warning).toBeUndefined();
     const fade = scripts()[5]!;
-    expect(fade).toContain('Constant Power');
-    expect(fade).toContain('"3:00"');
+    expect(fade).toContain('__findQeNamed("audioTransition", "Constant Power")');
+    expect(fade).toContain('__qeSequenceFor(sequence)');
+    expect(fade).toContain('String(item.type) !== "Clip"');
+    expect(fade).toContain('addTransition(transition, false, "3", "0", 0.5, true, true)');
+    expect(fade).not.toContain('getActiveSequence');
     expect(fade).toContain('[5]');
+  });
+
+  it('uses a one-frame crossfade for 30 ms at 25 fps', async () => {
+    oneCut(17).mockResolvedValueOnce({ success: true, joins: 1, joinsPlaced: 1, placed: 1, attempted: 1 });
+    await tools.executeTool('remove_ranges', { ranges: [{ start: 5, end: 8 }], backup: false });
+    expect(scripts()[5]).toContain('"1", "0", 0.5, true, true)');
+  });
+
+  it('warns how many crossfades were placed when none could be verified', async () => {
+    oneCut(17).mockResolvedValueOnce({ success: true, joins: 1, joinsPlaced: 0, placed: 0, attempted: 1 });
+    const result = await tools.executeTool('remove_ranges', { ranges: [{ start: 5, end: 8 }], backup: false });
+    expect(result).toMatchObject({ success: true, verified: true });
+    expect(result.warning).toContain('0 of 1');
   });
 
   it('a failing crossfade only adds a warning', async () => {
