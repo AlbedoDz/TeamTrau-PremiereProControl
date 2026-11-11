@@ -52,6 +52,14 @@ const MIN_SPEECH_COVERAGE = 0.3;
 const SPEED_TOLERANCE = 0.01;
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 
+/** Warns (Vietnamese) when the plan is more than 10% under the target. */
+function shortfallWarning(segments: RecapSegment[], targetSec: number, warnings: string[]): void {
+  const planned = segments.reduce((sum, s) => sum + (s.end - s.start), 0);
+  if (planned < targetSec * 0.9) {
+    warnings.push(`Chỉ chọn được ${round3(planned)} giây, thấp hơn mục tiêu ${targetSec} giây (dưới 90%).`);
+  }
+}
+
 const roundSegment = (s: RecapSegment): RecapSegment => ({ ...s, start: round3(s.start), end: round3(s.end), score: round3(s.score) });
 
 async function planShots(
@@ -103,11 +111,16 @@ async function planShots(
       // Only the part of the shot the clip actually shows.
       const from = Math.max(shot.start, clip.inPoint);
       const to = Math.min(shot.end, clip.outPoint);
-      const run = bestShotRun(windows, from, to, opts.minSegmentSec, opts.maxSegmentSec);
+      if (!(to - from > 0)) continue;
+      // A short shot is kept whole (so neighbours stay time-adjacent and can form a run); a long
+      // one is cut to its best stretch. The score comes from the windows inside it.
+      const whole = to - from <= opts.maxSegmentSec;
+      const run = bestShotRun(windows, from, to, whole ? to - from : opts.minSegmentSec, opts.maxSegmentSec);
       if (!run) continue;
+      const [a, b] = whole ? [from, to] : [run.start, run.end];
       scored.push({
-        start: clip.start + run.start - clip.inPoint,
-        end: Math.min(clip.end, clip.start + run.end - clip.inPoint),
+        start: clip.start + a - clip.inPoint,
+        end: Math.min(clip.end, clip.start + b - clip.inPoint),
         score: run.score,
       });
     }
@@ -116,6 +129,7 @@ async function planShots(
 
   const total = snapshot.endTime;
   const segments = planShotRecap(scored, total, opts);
+  shortfallWarning(segments, opts.targetSec, warnings);
   const candidates = recapCandidates(shotPool(scored, opts), segments, opts);
   const fingerprint = createHash('sha1')
     .update(video.map((c) => [c.id, c.start, c.end, c.inPoint, c.outPoint, c.mediaPath ?? ''].join('|')).sort().join('\n') + '\nrecap-shots')
@@ -138,7 +152,7 @@ export async function planRecap(
   const opts: RecapOpts = { targetSec: args.targetSec, minSegmentSec: args.minSegmentSec, maxSegmentSec: args.maxSegmentSec };
   const snapshot = await readSequence(ctx, args.sequenceId);
   if (isError(snapshot)) return { success: false, error: snapshot.error };
-  const shotOpts: RecapOpts = { ...opts, maxSegmentSec: Math.min(opts.maxSegmentSec, SHOT_MAX_SEC) };
+  const shotOpts: RecapOpts = { ...opts, maxSegmentSec: Math.min(opts.maxSegmentSec, SHOT_MAX_SEC), frameSec: snapshot.frameDuration };
 
   if (args.mode === 'shots') return (await planShots(snapshot, shotOpts, [])) as never;
 
@@ -186,6 +200,7 @@ export async function planRecap(
 
   const segments = planSpeechRecap(scored, total, opts);
   if (segments.length === 0 && windows.length > 0) warnings.push('Không chọn được đoạn nào trong giới hạn thời lượng.');
+  shortfallWarning(segments, opts.targetSec, warnings);
   const candidates = recapCandidates(speechPool(scored), segments, opts);
   return {
     success: true,

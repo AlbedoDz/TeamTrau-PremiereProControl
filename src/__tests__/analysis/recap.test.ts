@@ -153,3 +153,32 @@ describe('bestShotRun', () => {
     expect(bestShotRun([], 0, 5, 4, 6)).toBeNull();
   });
 });
+
+describe('shot recap on fast cuts', () => {
+  const opts: RecapOpts = { targetSec: 90, minSegmentSec: 4, maxSegmentSec: 6, frameSec: 0.04 };
+  // 400 contiguous 1.5 s shots.
+  const fast: ScoredShot[] = Array.from({ length: 400 }, (_, i) => ({ start: i * 1.5, end: i * 1.5 + 1.5, score: ((i * 7) % 13) / 13 }));
+
+  it('builds runs of adjacent shots of 4-6 s, within the cap and the tolerance', () => {
+    const segments = planShotRecap(fast, 600, opts);
+    for (const s of segments) {
+      expect(s.end - s.start).toBeGreaterThanOrEqual(4 - 1e-9);
+      expect(s.end - s.start).toBeLessThanOrEqual(6 + 1e-9);
+    }
+    const total = segments.reduce((sum, x) => sum + (x.end - x.start), 0);
+    expect(total).toBeGreaterThanOrEqual(81);
+    expect(total).toBeLessThanOrEqual(99);
+    const candidates = recapCandidates(shotPool(fast, opts), segments, opts);
+    expect(candidates.length).toBeLessThanOrEqual(3 * K);
+    for (const s of segments) expect(candidates.some((c) => c.id === s.id)).toBe(true);
+  });
+
+  it('scores a run by the mean of its shots and ignores isolated short shots', () => {
+    const pool = shotPool([{ start: 0, end: 2, score: 1 }, { start: 2, end: 4, score: 0.5 }, { start: 50, end: 51, score: 9 }], opts);
+    expect(pool).toEqual([{ id: 'shot-0-1', start: 0, end: 4, score: 0.75 }]);
+  });
+
+  it('does not join shots separated by more than a frame', () => {
+    expect(shotPool([{ start: 0, end: 2, score: 1 }, { start: 2.5, end: 4.5, score: 1 }], opts)).toEqual([]);
+  });
+});

@@ -102,6 +102,12 @@ describe('plan_recap shots mode', () => {
     expect(result.segments.every((s: any) => s.start >= 200)).toBe(true);
   });
 
+  it('warns in Vietnamese when the plan is under 90% of the target', async () => {
+    const result: any = await tool.run(ctxWith([vclip()]), parse({ mode: 'shots', targetSec: 90 }));
+    expect(result.success).toBe(true);
+    expect(result.warnings.join(' ')).toMatch(/Chỉ chọn được .* giây, thấp hơn mục tiêu 90/);
+  });
+
   it('fails clearly when there is no video', async () => {
     const result: any = await tool.run(ctxWith([aclip()]), parse({ mode: 'shots' }));
     expect(result.success).toBe(false);

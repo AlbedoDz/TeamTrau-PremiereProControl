@@ -10,6 +10,8 @@ export interface RecapOpts {
   targetSec: number;
   minSegmentSec: number;
   maxSegmentSec: number;
+  /** Frame length in seconds: shots closer than this are time-adjacent. Default 1/24. */
+  frameSec?: number;
 }
 
 export interface RecapSegment {
@@ -75,17 +77,36 @@ export function speechPool(scored: Candidate[]): RecapSegment[] {
   }));
 }
 
-/** Shots as segments, each cut down to at most maxSegmentSec from its start. */
+/**
+ * Shots as segments. A segment is a run of time-adjacent shots (gap at most one frame) whose
+ * length is between minSegmentSec and maxSegmentSec, scored by the mean of its shots; a single shot
+ * of at least minSegmentSec is a run of one, cut down to maxSegmentSec from its start when longer.
+ * Isolated shots shorter than minSegmentSec cannot form a run and are not offered.
+ */
 export function shotPool(shots: ScoredShot[], opts: RecapOpts): RecapSegment[] {
-  return [...shots]
-    .sort((a, b) => a.start - b.start)
-    .map((s, index) => ({
-      id: `shot-${index}`,
-      start: s.start,
-      end: Math.min(s.end, s.start + opts.maxSegmentSec),
-      score: s.score,
-    }))
-    .filter((s) => duration(s) > EPS);
+  const sorted = [...shots].filter((s) => s.end - s.start > EPS).sort((a, b) => a.start - b.start);
+  const gap = (opts.frameSec ?? 1 / 24) + EPS;
+  const pool: RecapSegment[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    let scoreSum = 0;
+    for (let j = i; j < sorted.length; j++) {
+      if (j > i && sorted[j]!.start - sorted[j - 1]!.end > gap) break;
+      const first = sorted[i]!;
+      const last = sorted[j]!;
+      scoreSum += last.score;
+      const span = last.end - first.start;
+      if (j === i) {
+        if (span >= opts.minSegmentSec - EPS) {
+          pool.push({ id: `shot-${i}`, start: first.start, end: Math.min(first.end, first.start + opts.maxSegmentSec), score: first.score });
+        }
+        if (span > opts.maxSegmentSec + EPS) break; // a long shot is only ever alone
+        continue;
+      }
+      if (span > opts.maxSegmentSec + EPS) break;
+      if (span >= opts.minSegmentSec - EPS) pool.push({ id: `shot-${i}-${j}`, start: first.start, end: last.end, score: scoreSum / (j - i + 1) });
+    }
+  }
+  return pool;
 }
 
 /**
@@ -127,7 +148,7 @@ function select(pool: RecapSegment[], total: number, opts: RecapOpts, trimmable:
     }
   }
 
-  while (sum < opts.targetSec - EPS) {
+  while (sum < opts.targetSec - EPS && chosen.length < k * 3) {
     let added = false;
     for (const p of eligible) {
       if (conflicts(p)) continue;
