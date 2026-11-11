@@ -2,7 +2,7 @@ import { PassThrough } from 'node:stream';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { registerPanelRunner, startPanelRunner } from '../../runner/panel-runner.js';
+import { registerPanelRunner, resolveRunnerTempDir, startPanelRunner } from '../../runner/panel-runner.js';
 import { PACKAGE_VERSION } from '../../version.js';
 
 type Exec = (name: string, args: any, options?: { progress?: any; signal?: AbortSignal }) => Promise<any>;
@@ -156,5 +156,24 @@ describe('registerPanelRunner', () => {
     const configPath = join(dir, 'nested', 'config.json');
     await registerPanelRunner('/c.js', '/n', configPath);
     expect(JSON.parse(await readFile(configPath, 'utf8'))).toEqual({ runner: { nodePath: '/n', cliPath: '/c.js' } });
+  });
+});
+
+describe('resolveRunnerTempDir', () => {
+  it('prefers PREMIERE_TEMP_DIR', () => {
+    expect(resolveRunnerTempDir({ PREMIERE_TEMP_DIR: 'C:/env', TEMP: 'C:/t' }, 'C:/cfg', 'win32')).toBe('C:/env');
+  });
+  it('then the config tempDirectory', () => {
+    expect(resolveRunnerTempDir({ TEMP: 'C:/t' }, 'C:/cfg', 'win32')).toBe('C:/cfg');
+  });
+  it('then the platform default like the panel', () => {
+    expect(resolveRunnerTempDir({ TEMP: 'C:\\Users\\u\\Temp' }, undefined, 'win32')).toBe('C:\\Users\\u\\Temp\\premiere-mcp-bridge');
+    expect(resolveRunnerTempDir({ TMP: 'D:\\tmp' }, '', 'win32')).toBe('D:\\tmp\\premiere-mcp-bridge');
+    expect(resolveRunnerTempDir({}, undefined, 'win32')).toBe('C:\\Temp\\premiere-mcp-bridge');
+    expect(resolveRunnerTempDir({}, undefined, 'linux')).toBe('/tmp/premiere-mcp-bridge');
+  });
+  it('trims trailing separators', () => {
+    expect(resolveRunnerTempDir({ PREMIERE_TEMP_DIR: 'C:\\a\\b\\/' }, undefined, 'win32')).toBe('C:\\a\\b');
+    expect(resolveRunnerTempDir({}, 'C:/cfg//', 'win32')).toBe('C:/cfg');
   });
 });

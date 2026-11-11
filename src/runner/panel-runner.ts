@@ -122,6 +122,26 @@ export function startPanelRunner(
   return { done };
 }
 
+/**
+ * Bridge temp dir the runner must share with the panel (mirrors
+ * getDefaultTempPath in cep-plugin/bridge-cep.js): PREMIERE_TEMP_DIR, then the
+ * config's tempDirectory, then <TEMP|TMP|C:\\Temp>\\premiere-mcp-bridge (win32) or
+ * /tmp/premiere-mcp-bridge. Trailing separators are trimmed.
+ */
+export function resolveRunnerTempDir(
+  env: NodeJS.ProcessEnv,
+  configTempDir: unknown,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const chosen =
+    env.PREMIERE_TEMP_DIR ||
+    (typeof configTempDir === 'string' && configTempDir ? configTempDir : '') ||
+    (platform === 'win32'
+      ? `${env.TEMP || env.TMP || 'C:\\Temp'}\\premiere-mcp-bridge`
+      : '/tmp/premiere-mcp-bridge');
+  return chosen.replace(/[\\/]+$/, '');
+}
+
 export function defaultPanelConfigPath(): string {
   return join(homedir(), '.premiere-mcp-bridge', 'config.json');
 }

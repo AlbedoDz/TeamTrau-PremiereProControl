@@ -125,13 +125,9 @@ async function main(): Promise<void> {
     }
     case '--panel-runner': {
       // stdout carries the protocol; everything else logs to stderr.
-      const { startPanelRunner, readPanelConfig } = await import('./runner/panel-runner.js');
-      if (!process.env.PREMIERE_TEMP_DIR) {
-        const config = await readPanelConfig();
-        if (typeof config.tempDirectory === 'string' && config.tempDirectory) {
-          process.env.PREMIERE_TEMP_DIR = config.tempDirectory;
-        }
-      }
+      const { startPanelRunner, readPanelConfig, resolveRunnerTempDir } = await import('./runner/panel-runner.js');
+      const config = await readPanelConfig();
+      process.env.PREMIERE_TEMP_DIR = resolveRunnerTempDir(process.env, config.tempDirectory);
       const [{ PremiereProBridge }, { PremiereProTools }] = await Promise.all([
         import('./bridge/index.js'),
         import('./tools/index.js'),
