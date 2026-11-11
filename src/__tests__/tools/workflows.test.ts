@@ -227,6 +227,18 @@ describe('runSteps', () => {
     expect(scripts[0]).toContain('(lỗi)');
   });
 
+  it('a later step can mark a copy it finished as complete without listing it twice', async () => {
+    const controller = new AbortController();
+    const ctx = ctxWith({ signal: controller.signal });
+    const result = await runSteps(ctx, [
+      { label: 'A', run: async () => ({ ok: true, createdSequenceId: 'copy' }) },
+      { label: 'B', run: async () => { controller.abort(); return { ok: true, createdSequenceId: 'copy', complete: true }; } },
+      { label: 'C', run: async () => ({ ok: true }) },
+    ]);
+    expect(result).toMatchObject({ cancelled: true, outputSequenceIds: ['copy'], partialSequenceIds: [] });
+    expect(ctx.bridge.executeScript).not.toHaveBeenCalled();
+  });
+
   it('renames nothing and has no partial ids when every step succeeds', async () => {
     const ctx = ctxWith();
     const result = await runSteps(ctx, [{ label: 'A', run: async () => ({ ok: true, createdSequenceId: 'copy' }) }]);
@@ -691,6 +703,15 @@ describe('workflow_rough_cut', () => {
     await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', targetSec: 30, dryRun: true });
     expect(readSequence).toHaveBeenCalledTimes(1);
     expect(assembleRoughCut.mock.calls[0][1]).toMatchObject({ sequenceId: 'src', dryRun: true });
+  });
+
+  it('keeps the built rough cut when cancelled while the music is being ducked', async () => {
+    const controller = new AbortController();
+    assembleBeatCut.mockImplementation(async () => { controller.abort(); return { success: true, verified: true, shotCount: 12, cutSeconds: 40, bpm: 120, shots: [] }; });
+    const ctx = ctxWith({ signal: controller.signal });
+    const result = await runTool('workflow_rough_cut', ctx, { folderPath: 'D:/Clips', musicPath: 'D:/m.mp3', hasVoiceover: true });
+    expect(result).toMatchObject({ cancelled: true, outputSequenceIds: ['new1'], partialSequenceIds: [] });
+    expect(autoDuckMusic).not.toHaveBeenCalled();
   });
 
   it('requires targetSec without music', async () => {

@@ -13,10 +13,11 @@ export interface StepOutcome {
   nextStep?: string;
   /**
    * Sequence this step created. Unless it is `complete`, it is renamed with a suffix when the
-   * run is cancelled or fails later.
+   * run is cancelled or fails later. A later step may name the same id again with
+   * `complete: true` once it has finished building it.
    */
   createdSequenceId?: string;
-  /** The created sequence is a finished output (a built short, a fully built recap). */
+  /** The sequence is a finished output (a built short, a recap, a cut copy). */
   complete?: boolean;
 }
 
@@ -131,8 +132,13 @@ export async function runSteps(ctx: ToolContext, steps: WorkflowStep[]): Promise
         };
       }
       if (outcome.createdSequenceId) {
-        created.push({ id: outcome.createdSequenceId, complete: outcome.complete === true });
-        result.outputSequenceIds.push(outcome.createdSequenceId);
+        const known = created.find((c) => c.id === outcome.createdSequenceId);
+        if (known) {
+          known.complete ||= outcome.ok && outcome.complete === true;
+        } else {
+          created.push({ id: outcome.createdSequenceId, complete: outcome.ok && outcome.complete === true });
+          result.outputSequenceIds.push(outcome.createdSequenceId);
+        }
       }
       result.steps.push({ label: step.label, ok: outcome.ok, ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}) });
       if (!outcome.ok) {

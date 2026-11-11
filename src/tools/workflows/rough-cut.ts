@@ -119,7 +119,12 @@ export async function workflowRoughCut(ctx: ToolContext, args: RoughCutArgs): Pr
       if (placed.shortfallSeconds) warnings.push(`Footage chỉ đủ dựng thiếu ${placed.shortfallSeconds} giây so với mục tiêu.`);
       if (!args.dryRun) summary.verified = placed.verified;
       if (!args.dryRun && placed.verified === false) warnings.push('Không xác nhận được độ dài rough cut sau khi dựng.');
-      return { ok: true, detail: { shotCount: placed.shotCount, verified: placed.verified } };
+      // The rough cut is built; ducking the music afterwards is optional polish.
+      return {
+        ok: true,
+        detail: { shotCount: placed.shotCount, verified: placed.verified },
+        ...(!args.dryRun && targetId ? { createdSequenceId: targetId, complete: true } : {}),
+      };
     },
   };
 

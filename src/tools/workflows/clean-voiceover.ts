@@ -173,7 +173,12 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
       summary.durationBefore = result.durationBefore;
       summary.durationAfter = result.durationAfter;
       summary.removedSeconds = round3(result.removed.reduce((sum, r) => sum + r.duration, 0));
-      return { ok: true, detail: { removed: result.removed.length, verified: result.verified } };
+      return {
+        ok: true,
+        detail: { removed: result.removed.length, verified: result.verified },
+        // Without the dialogue chain the cut is the last edit: the copy is finished.
+        ...(args.dialogueChain ? {} : { createdSequenceId: copyId, complete: true }),
+      };
     },
   };
 
@@ -195,7 +200,7 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
         if (!Array.isArray(result.results)) return failure(result.error ?? 'Không xử lý được thoại.');
         warnings.push(String(result.note ?? 'Một số hiệu ứng thoại chưa áp dụng được.'));
       }
-      return { ok: true, detail: result };
+      return { ok: true, detail: result, createdSequenceId: copyId, complete: true };
     },
   };
 

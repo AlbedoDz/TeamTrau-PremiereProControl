@@ -107,7 +107,7 @@ export async function workflowSubtitles(ctx: ToolContext, args: SubtitlesArgs): 
     run: async () => {
       const created = await createCaptionTrack(ctx, copyId, projectItemId, 0);
       if (!created || created.success === false) return failure(created?.error ?? 'Không tạo được track caption.');
-      return { ok: true, detail: created };
+      return { ok: true, detail: created, createdSequenceId: copyId, complete: true };
     },
   };
 
