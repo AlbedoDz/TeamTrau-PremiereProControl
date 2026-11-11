@@ -206,6 +206,10 @@ if (-not (Test-Path -LiteralPath $cepTargetDir)) {
 # under itself.
 Copy-Item -Path (Join-Path $repoRoot 'cep-plugin\*') -Destination $cepTargetDir -Recurse -Force
 
+Write-Host 'Registering the panel runner...'
+& $script:nodePath $distEntry --register-panel-runner
+if ($LASTEXITCODE -ne 0) { throw 'Registering the panel runner failed.' }
+
 Write-Host "Preparing bridge temp directory: $TempDir"
 if (-not (Test-Path -LiteralPath $TempDir)) {
     New-Item -ItemType Directory -Path $TempDir -Force | Out-Null

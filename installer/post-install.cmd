@@ -24,6 +24,10 @@ echo [2/4] Registering with the AI clients found on this computer
 node "%ROOT%\app\dist\cli.js" --register-clients
 if errorlevel 1 set "FAILED=1"
 
+echo [2b/4] Telling the panel where the runner is
+node "%ROOT%\app\dist\cli.js" --register-panel-runner
+if errorlevel 1 set "FAILED=1"
+
 echo [3/4] Seeding speech and face models
 robocopy "%ROOT%\seed-models" "%PREMIERE_MCP_HOME%\models" /E /XC /XN /XO /NFL /NDL /NJH /NJS
 if errorlevel 8 set "FAILED=1"
