@@ -281,6 +281,40 @@ Chọn engine cho mỗi phiên làm việc: "Dùng whisper-turbo để phiên â
 | Khung dọc cắt mất mặt người | Bật phát hiện khuôn mặt, kiểm tra các marker "Cảnh nhiều người", chỉnh tay Auto Reframe |
 | Kết quả xong trong Premiere nhưng tool báo lỗi | Đừng chạy lại ngay: nhờ agent liệt kê sequence để kiểm tra trạng thái thật rồi mới quyết định |
 
+## 9b. Dùng tab Quy trình trong panel (không cần Agent)
+
+Từ bản 1.5.0, panel **TeamTrau PremiereProControl** chạy được năm quy trình ngay trong Premiere, không cần mở Claude hay client AI nào.
+
+**Mở ở đâu:** Window > Extensions > TeamTrau PremiereProControl. Thanh trên có hai tab: **Quy trình** (mới) và **Kết nối** (cầu nối cũ: trạng thái, Start/Stop Bridge, nhật ký). Chọn sequence ở ô **Sequence** dùng chung (có nút làm mới), mở thẻ cần dùng, chỉnh vài tham số rồi chạy.
+
+**Năm thẻ:**
+
+| Thẻ | Việc làm |
+|---|---|
+| Recap | Rút sequence dài thành bản ngắn (16:9 hoặc 9:16), tùy chọn phụ đề |
+| Dọn voice-over | Cắt khoảng lặng, từ đệm, câu vấp; khử ồn và chuẩn âm lượng |
+| Podcast thành Shorts | Chọn các đoạn hay nhất, dựng các short dọc 9:16 có phụ đề |
+| Phụ đề tiếng Việt | Tạo file SRT hoặc track phụ đề gốc từ bản phiên âm |
+| Rough cut / Cắt theo nhạc | Dựng bản nháp từ một thư mục footage, có thể theo nhịp nhạc |
+
+**Mỗi thẻ có hai nút:**
+- **Xem trước**: chỉ lập kế hoạch (`dryRun`), không sửa project. Với Dọn voice-over, danh sách liệt kê từng vết cắt kèm câu gốc và lý do. Nên bấm trước.
+- **Chạy trên bản sao**: dựng kết quả trên một bản sao hoặc sequence mới. Sequence gốc không bao giờ bị sửa.
+
+**Trong khi chạy:** thanh tiến độ ghi bước hiện tại ("Bước 3/5: ...") và thời gian đã chạy. Nút **Hủy** dừng ở cuối bước hiện tại; bản gốc không bị ảnh hưởng. Đóng panel khi đang chạy sẽ có cảnh báo; nếu vẫn đóng, bản sao dở dang được đổi tên thêm " (dang dở)".
+
+**Sau khi chạy:** vùng kết quả hiện tóm tắt số liệu và cảnh báo. **Mở sequence** mở bản sao vừa tạo; **Xóa bản sao** bỏ nó nếu bạn không ưng ý (sequence gốc vẫn còn).
+
+**⚙ Cài đặt:** mở file từ điển từ đệm, chọn engine nhận dạng giọng, thư mục xuất và đường dẫn runner.
+
+**Điều kiện:** panel cần runner đã được đăng ký. Bộ cài (Setup.exe) tự làm việc này. Nếu panel báo chưa có runner, chạy lệnh sau rồi mở lại panel:
+
+```bash
+premiere-pro-mcp --register-panel-runner
+```
+
+Chưa hỗ trợ: J-cut (`audioLeadSec`, recap hiện cắt cứng) và cách bắt từ đệm bằng âm thanh khi không có bản phiên âm.
+
 ## 10. Ghi nhớ
 
 - Mở Premiere và một project, bật cầu nối, rồi `verify_premiere_connection`.

@@ -1,6 +1,6 @@
 [project]
 name = "premiere-mcp-sidecar"
-version = "1.4.0"
+version = "1.5.0"
 description = "Python sidecar for the Adobe Premiere Pro MCP server: ASR, face scan and caption rendering."
 requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
