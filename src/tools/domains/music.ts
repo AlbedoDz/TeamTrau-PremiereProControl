@@ -74,7 +74,7 @@ async function analyzeMusic(_ctx: ToolContext, args: { musicPath: string; beatsP
 
 // ----------------------------------------------------------- assemble_beat_cut
 
-async function assembleBeatCut(
+export async function assembleBeatCut(
   ctx: ToolContext,
   args: {
     musicPath: string;

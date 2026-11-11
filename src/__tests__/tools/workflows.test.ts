@@ -3,6 +3,22 @@ import type { ToolContext } from '../../tools/context.js';
 jest.mock('../../tools/domains/shorts.js', () => ({
   ...jest.requireActual('../../tools/domains/shorts.js'),
   loadTranscript: jest.fn(),
+  findHighlightCandidates: jest.fn(),
+  buildShort: jest.fn(),
+}));
+jest.mock('../../tools/domains/recap.js', () => ({
+  ...jest.requireActual('../../tools/domains/recap.js'),
+  planRecap: jest.fn(),
+  buildRecap: jest.fn(),
+}));
+jest.mock('../../tools/domains/roughcut.js', () => ({
+  ...jest.requireActual('../../tools/domains/roughcut.js'),
+  scoreClips: jest.fn(),
+  assembleRoughCut: jest.fn(),
+}));
+jest.mock('../../tools/domains/music.js', () => ({
+  ...jest.requireActual('../../tools/domains/music.js'),
+  assembleBeatCut: jest.fn(),
 }));
 jest.mock('../../analysis/ffmpeg.js', () => ({
   ...jest.requireActual('../../analysis/ffmpeg.js'),
@@ -26,6 +42,7 @@ jest.mock('../../tools/domains/sequence.js', () => ({
 jest.mock('../../tools/domains/editing.js', () => ({
   ...jest.requireActual('../../tools/domains/editing.js'),
   ensureBackup: jest.fn(),
+  autoDuckMusic: jest.fn(),
   qaSequence: jest.fn(),
   applyDialogueChain: jest.fn(),
 }));
@@ -51,6 +68,10 @@ import * as editing from '../../tools/domains/editing.js';
 import * as subtitles from '../../tools/domains/subtitles.js';
 import * as media from '../../tools/domains/media.js';
 import * as project from '../../tools/domains/project.js';
+import * as recap from '../../tools/domains/recap.js';
+import * as roughcut from '../../tools/domains/roughcut.js';
+import * as music from '../../tools/domains/music.js';
+import { pickNonOverlapping } from '../../tools/workflows/shorts.js';
 import { awaitTranscript, runSteps, uniqueSequenceName } from '../../tools/workflows/steps.js';
 import { workflowToolsTools } from '../../tools/domains/workflow-tools.js';
 
@@ -68,6 +89,14 @@ const applyDialogueChain = editing.applyDialogueChain as jest.Mock;
 const createCaptions = subtitles.createCaptionsFromTranscript as jest.Mock;
 const importMedia = media.importMedia as jest.Mock;
 const ensureRootBin = project.ensureRootBin as jest.Mock;
+const planRecap = recap.planRecap as jest.Mock;
+const buildRecap = recap.buildRecap as jest.Mock;
+const findHighlights = shorts.findHighlightCandidates as jest.Mock;
+const buildShort = shorts.buildShort as jest.Mock;
+const scoreClips = roughcut.scoreClips as jest.Mock;
+const assembleRoughCut = roughcut.assembleRoughCut as jest.Mock;
+const assembleBeatCut = music.assembleBeatCut as jest.Mock;
+const autoDuckMusic = editing.autoDuckMusic as jest.Mock;
 
 const ctxWith = (overrides: Partial<ToolContext> = {}, names: string[] = ['Tap 1']): ToolContext =>
   ({ bridge: { executeScript: jest.fn().mockResolvedValue({ success: true, names }) }, ...overrides }) as unknown as ToolContext;
@@ -346,5 +375,156 @@ describe('workflow_subtitles', () => {
     const result = await runTool('workflow_subtitles', ctxWith(), {});
     expect(result.success).toBe(false);
     expect(createCaptions).not.toHaveBeenCalled();
+  });
+});
+
+describe('pickNonOverlapping', () => {
+  it('takes candidates by rawScore descending and skips time overlaps', () => {
+    const cands = [
+      { start: 0, end: 40, rawScore: 0.5 },
+      { start: 30, end: 70, rawScore: 0.9 },
+      { start: 100, end: 140, rawScore: 0.7 },
+      { start: 60, end: 100, rawScore: 0.6 },
+    ];
+    const picked = pickNonOverlapping(cands, 3);
+    expect(picked.map((c) => c.rawScore)).toEqual([0.9, 0.7]);
+    expect(pickNonOverlapping(cands, 1)).toEqual([cands[1]]);
+  });
+});
+
+describe('workflow_shorts', () => {
+  const candidates = [
+    { start: 0, end: 40, rawScore: 0.5, startSentenceId: 0, endSentenceId: 5, text: 'a' },
+    { start: 30, end: 70, rawScore: 0.95, startSentenceId: 4, endSentenceId: 9, text: 'b' },
+    { start: 100, end: 140, rawScore: 0.8, startSentenceId: 12, endSentenceId: 18, text: 'c' },
+    { start: 200, end: 240, rawScore: 0.7, startSentenceId: 20, endSentenceId: 26, text: 'd' },
+    { start: 300, end: 340, rawScore: 0.6, startSentenceId: 30, endSentenceId: 36, text: 'e' },
+  ];
+  beforeEach(() => {
+    loadTranscript.mockResolvedValue({ status: 'done', sequenceId: 'src', words: [{ w: 'a' }], sentences: [], dialogueTrackIndices: [0], warnings: [] });
+    readSequence.mockResolvedValue({ sequenceId: 'src', sequenceName: 'Tap 1', frameDuration: 0.04, endTime: 400, clips: [] });
+    findHighlights.mockResolvedValue({ success: true, fingerprint: 'fp1', candidates, warnings: [] });
+    ensureBackup.mockResolvedValue({});
+    let n = 0;
+    buildShort.mockImplementation(async () => ({ success: true, verified: true, shortSequenceId: `short${++n}`, durationSec: 40, warnings: [] }));
+  });
+
+  it('builds count shorts from non-overlapping windows with the fingerprint', async () => {
+    const result = await runTool('workflow_shorts', ctxWith(), { count: 3 });
+    expect(buildShort).toHaveBeenCalledTimes(3);
+    const calls = buildShort.mock.calls.map((c) => c[1]);
+    expect(calls.map((c) => [c.startSentenceId, c.endSentenceId])).toEqual([[4, 9], [12, 18], [20, 26]]);
+    expect(calls.every((c) => c.expectedFingerprint === 'fp1' && c.backup === false)).toBe(true);
+    expect(calls.map((c) => c.name)).toEqual(['Tap 1 - short 1', 'Tap 1 - short 2', 'Tap 1 - short 3']);
+    expect(result).toMatchObject({ success: true, outputSequenceIds: ['short1', 'short2', 'short3'] });
+  });
+
+  it('keeps earlier shorts and stops when a later one fails', async () => {
+    buildShort
+      .mockReset()
+      .mockResolvedValueOnce({ success: true, verified: true, shortSequenceId: 's1', warnings: [] })
+      .mockResolvedValueOnce({ success: false, error: 'boom', shortSequenceId: 's2', warnings: [] });
+    const result = await runTool('workflow_shorts', ctxWith(), { count: 3 });
+    expect(buildShort).toHaveBeenCalledTimes(2);
+    expect(result.success).toBe(false);
+    expect(result.outputSequenceIds).toEqual(['s1', 's2']);
+  });
+
+  it('dryRun builds nothing', async () => {
+    const result = await runTool('workflow_shorts', ctxWith(), { count: 2, dryRun: true });
+    expect(buildShort).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: true, outputSequenceIds: [] });
+    expect(result.summary.picks).toHaveLength(2);
+  });
+});
+
+describe('workflow_recap', () => {
+  const plan = {
+    success: true,
+    mode: 'speech',
+    segments: [{ start: 1, end: 9 }, { start: 20, end: 30 }],
+    candidates: [],
+    totalSec: 18,
+    fingerprint: 'fpR',
+    warnings: ['w1'],
+  };
+  beforeEach(() => {
+    readSequence.mockResolvedValue({ sequenceId: 'src', sequenceName: 'Tap 1', frameDuration: 0.04, endTime: 400, clips: [] });
+    planRecap.mockResolvedValue(plan);
+    buildRecap.mockResolvedValue({ success: true, sequenceId: 'rc', durationSec: 18, verified: true, warnings: [], audioLeadSupported: false });
+  });
+
+  it('passes the plan fingerprint and segments to build_recap and reports its sequence', async () => {
+    const result = await runTool('workflow_recap', ctxWith(), { targetSec: 60 });
+    expect(planRecap.mock.calls[0][1]).toMatchObject({ targetSec: 60, mode: 'auto' });
+    expect(buildRecap.mock.calls[0][1]).toMatchObject({ expectedFingerprint: 'fpR', segments: plan.segments, name: 'Tap 1 - recap', targetLufs: -14 });
+    expect(result).toMatchObject({ success: true, outputSequenceIds: ['rc'] });
+    expect(result.warnings).toContain('w1');
+  });
+
+  it('waits while the transcript is still running', async () => {
+    planRecap.mockReset().mockResolvedValueOnce({ success: true, status: 'running', progress: 0.5 }).mockResolvedValueOnce(plan);
+    jest.useFakeTimers();
+    const promise = runTool('workflow_recap', ctxWith(), {});
+    await jest.advanceTimersByTimeAsync(3100);
+    const result = await promise;
+    jest.useRealTimers();
+    expect(planRecap).toHaveBeenCalledTimes(2);
+    expect(result.success).toBe(true);
+  });
+
+  it('dryRun plans only', async () => {
+    const result = await runTool('workflow_recap', ctxWith(), { dryRun: true });
+    expect(buildRecap).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: true, outputSequenceIds: [] });
+    expect(result.summary.segments).toHaveLength(2);
+  });
+});
+
+describe('workflow_rough_cut', () => {
+  beforeEach(() => {
+    readSequence.mockResolvedValue({ sequenceId: 'src', sequenceName: 'Tap 1', frameDuration: 0.04, endTime: 400, clips: [] });
+    ensureBackup.mockResolvedValue({});
+    duplicateSequence.mockResolvedValue({ success: true, newSequenceId: 'new1' });
+    scoreClips.mockResolvedValue({ success: true, checked: 4, scored: 4, files: [] });
+    assembleRoughCut.mockResolvedValue({ success: true, verified: true, shotCount: 10, totalSeconds: 30, shots: [] });
+    assembleBeatCut.mockResolvedValue({ success: true, verified: true, shotCount: 12, cutSeconds: 40, bpm: 120, shots: [] });
+    autoDuckMusic.mockResolvedValue({ success: true });
+  });
+
+  it('without music scores then assembles on a new cleared copy named after the folder', async () => {
+    const result = await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:\\Clips\\Chuyến đi', targetSec: 30 });
+    expect(duplicateSequence).toHaveBeenCalledWith(expect.anything(), 'src', 'Chuyến đi - rough cut', true);
+    expect(scoreClips).toHaveBeenCalledTimes(1);
+    expect(assembleBeatCut).not.toHaveBeenCalled();
+    expect(assembleRoughCut.mock.calls[0][1]).toMatchObject({ sequenceId: 'new1', targetSeconds: 30, shotSeconds: 3, dryRun: false });
+    expect(autoDuckMusic).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: true, outputSequenceIds: ['new1'] });
+  });
+
+  it('energetic pace shortens shots and maps to the beat-cut preset', async () => {
+    await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', targetSec: 30, pace: 'energetic' });
+    expect(assembleRoughCut.mock.calls[0][1].shotSeconds).toBe(2);
+    await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', musicPath: 'D:/m.mp3', pace: 'energetic' });
+    expect(assembleBeatCut.mock.calls[0][1]).toMatchObject({ preset: 'energetic', sequenceId: 'new1', musicPath: 'D:/m.mp3' });
+    expect(scoreClips).toHaveBeenCalledTimes(1);
+  });
+
+  it('hasVoiceover with music ducks the music on the new sequence', async () => {
+    await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', musicPath: 'D:/m.mp3', hasVoiceover: true });
+    expect(autoDuckMusic.mock.calls[0][1]).toMatchObject({ sequenceId: 'new1', dialogueTrackIndices: [0], musicTrackIndices: [1] });
+  });
+
+  it('requires targetSec without music', async () => {
+    const result = await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips' });
+    expect(result.success).toBe(false);
+    expect(duplicateSequence).not.toHaveBeenCalled();
+  });
+
+  it('dryRun creates no sequence', async () => {
+    const result = await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', musicPath: 'D:/m.mp3', dryRun: true });
+    expect(duplicateSequence).not.toHaveBeenCalled();
+    expect(assembleBeatCut.mock.calls[0][1]).toMatchObject({ dryRun: true });
+    expect(result).toMatchObject({ success: true, outputSequenceIds: [] });
   });
 });

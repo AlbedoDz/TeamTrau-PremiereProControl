@@ -4,6 +4,9 @@ import type { ToolModule } from '../context.js';
 import { ENGINE_IDS } from '../../analysis/asr-engines.js';
 import { workflowCleanVoiceover } from '../workflows/clean-voiceover.js';
 import { workflowSubtitles } from '../workflows/subtitles.js';
+import { workflowRecap } from '../workflows/recap.js';
+import { workflowShorts } from '../workflows/shorts.js';
+import { workflowRoughCut } from '../workflows/rough-cut.js';
 
 const sequenceIdArg = z.string().optional().describe('Sequence ID. Defaults to the active sequence.');
 const dialogueArg = z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech. Defaults to every audio track that has a clip with a media file.');
@@ -51,5 +54,60 @@ export const workflowToolsTools: ToolModule[] = [
       backup: backupArg,
     }),
     run: (ctx, args) => workflowSubtitles(ctx, args),
+  },
+  {
+    name: 'workflow_recap',
+    description:
+      'One-call recap. Plans the recap (speech mode when the dialogue covers at least 30% of the sequence, otherwise shots; waits for the background transcription), then builds it as a new sequence "<name> - recap" with build_recap (30 ms crossfades, optional 9:16 Auto Reframe and captions, loudness -14, qa_sequence and readback). The source sequence is never changed. dryRun=true only returns the planned segments and creates nothing. Reports per-step progress and can be cancelled. Needs ffmpeg and, for speech mode, the analysis sidecar.',
+    inputSchema: z.object({
+      sequenceId: sequenceIdArg,
+      name: z.string().min(1).optional().describe('Name of the recap sequence. Default "<source name> - recap"; " (2)" is added when the name is taken.'),
+      dialogueTrackIndices: dialogueArg,
+      glossary: glossaryArg,
+      engine: engineArg,
+      targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90).'),
+      aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe (default "16:9").'),
+      captionStyle: z.enum(['none', 'clean', 'pop', 'karaoke']).default('none').describe('Burned-in captions from the transcript (default none).'),
+      audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds. Not supported yet: values above 0 are ignored with a warning (default 0).'),
+      dryRun: z.boolean().default(false).describe('Only plan and return the segments; create and change nothing.'),
+      backup: backupArg,
+    }),
+    run: (ctx, args) => workflowRecap(ctx, args),
+  },
+  {
+    name: 'workflow_shorts',
+    description:
+      'One-call vertical shorts. Waits for the transcript, finds highlight windows, takes the count best that do not overlap in time and builds one 9:16 short from each as a new sequence "<source name> - short N" (Auto Reframe, captions, loudness -14, qa_sequence). If a later short fails the earlier ones are kept. The source sequence is never changed. dryRun=true returns the chosen windows and builds nothing. Reports per-step progress and can be cancelled. Needs the analysis sidecar and ffmpeg.',
+    inputSchema: z.object({
+      sequenceId: sequenceIdArg,
+      dialogueTrackIndices: dialogueArg,
+      glossary: glossaryArg,
+      engine: engineArg,
+      count: z.number().int().min(1).max(5).default(3).describe('How many shorts to build, 1-5 (default 3).'),
+      minSec: z.number().positive().default(30).describe('Shortest short in seconds (default 30).'),
+      maxSec: z.number().positive().default(60).describe('Longest short in seconds (default 60).'),
+      captionStyle: z.enum(['clean', 'pop', 'karaoke']).default('clean').describe('Caption look (default clean).'),
+      dryRun: z.boolean().default(false).describe('Only choose the windows; create and change nothing.'),
+      backup: backupArg,
+    }),
+    run: (ctx, args) => workflowShorts(ctx, args),
+  },
+  {
+    name: 'workflow_rough_cut',
+    description:
+      'One-call rough cut from a folder of footage onto a NEW empty sequence "<folder name> - rough cut" (a copy of the given or active sequence with its contents cleared, so frame rate and size carry over; that sequence is never changed). Without musicPath: score_clips then assemble_rough_cut to targetSec, with shot length from shotSeconds or pace (calm 4, balanced 3, energetic 2). With musicPath: assemble_beat_cut cut to the beat, pace picks the preset. hasVoiceover=true adds auto_duck_music (music track 2 ducked under audio track 1). dryRun=true reports the planned shots and creates nothing. Reports per-step progress and can be cancelled. Needs ffmpeg.',
+    inputSchema: z.object({
+      sequenceId: z.string().optional().describe('Sequence to copy settings from. Defaults to the active sequence.'),
+      name: z.string().min(1).optional().describe('Name of the new sequence. Default "<folder name> - rough cut"; " (2)" is added when the name is taken.'),
+      folderPath: z.string().min(1).describe('Folder of video files to choose from.'),
+      targetSec: z.number().positive().optional().describe('Length of the cut in seconds. Required without musicPath; with music it limits how much of the song is cut (default the whole song).'),
+      musicPath: z.string().optional().describe('Absolute path to a music file; the cut follows its beats.'),
+      pace: z.enum(['calm', 'balanced', 'energetic']).default('balanced').describe('How fast the cut is (default balanced).'),
+      shotSeconds: z.number().positive().optional().describe('Typical shot length without music. Overrides the pace default (calm 4, balanced 3, energetic 2).'),
+      hasVoiceover: z.boolean().default(false).describe('A voice-over will sit on audio track 1: duck the music under it (needs musicPath) (default false).'),
+      dryRun: z.boolean().default(false).describe('Only report the planned shots; create and change nothing.'),
+      backup: backupArg,
+    }),
+    run: (ctx, args) => workflowRoughCut(ctx, args),
   },
 ];

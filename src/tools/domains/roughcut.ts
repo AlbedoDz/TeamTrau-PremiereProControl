@@ -99,7 +99,7 @@ export async function scoreAll(
 
 // --------------------------------------------------------------- score_clips
 
-async function scoreClips(
+export async function scoreClips(
   _ctx: ToolContext,
   args: { mediaPaths?: string[]; folderPath?: string; recursive: boolean; windowSeconds: number; topPerFile: number },
 ): Promise<any> {
@@ -169,7 +169,7 @@ export async function ensureProjectItems(ctx: ToolContext, paths: string[]): Pro
   return { ids };
 }
 
-async function assembleRoughCut(
+export async function assembleRoughCut(
   ctx: ToolContext,
   args: {
     mediaPaths?: string[];

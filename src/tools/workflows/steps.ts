@@ -167,3 +167,32 @@ export async function uniqueSequenceName(ctx: ToolContext, wanted: string): Prom
     if (!taken.has(candidate)) return candidate;
   }
 }
+
+/** A failed step outcome from an error string or an `{ error }` result. */
+export function failure(error: unknown): StepOutcome {
+  return {
+    ok: false,
+    detail: { error: typeof error === 'string' ? error : String((error as { error?: unknown })?.error ?? 'Lỗi không rõ.') },
+  };
+}
+
+/**
+ * Calls `fn` until its result no longer says `status: "running"` (a background transcription
+ * that a planner started), reporting `"<label> NN%"` and honouring the signal while it waits.
+ */
+export async function awaitPending<T>(
+  ctx: ToolContext,
+  label: string,
+  fn: () => Promise<T>,
+  opts: { pollMs?: number } = {},
+): Promise<T> {
+  const pollMs = opts.pollMs ?? TRANSCRIPT_POLL_MS;
+  for (;;) {
+    throwIfAborted(ctx.signal);
+    const result: any = await fn();
+    if (result?.status !== 'running') return result;
+    const step = currentStep.get(ctx) ?? { index: 1, count: 1 };
+    ctx.progress?.(step.index, step.count, `${label} ${Math.round(Number(result.progress ?? 0) * 100)}%`);
+    await wait(pollMs, ctx.signal);
+  }
+}

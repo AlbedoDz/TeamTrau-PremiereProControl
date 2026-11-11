@@ -380,7 +380,7 @@ export const median = (values: number[]): number => {
   return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 };
 
-async function findHighlightCandidates(
+export async function findHighlightCandidates(
   ctx: ToolContext,
   args: TranscriptArgs & { minSec: number; maxSec: number; limit: number; detectFaces: boolean },
 ): Promise<unknown> {
@@ -763,7 +763,7 @@ export async function addAlphaCaptions(
   return { ok: true, ...(warnings.length > 0 ? { warnings } : {}) };
 }
 
-async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unknown> {
+export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promise<unknown> {
   if (!(await sidecarPython())) return sidecarMissingResult('build_short');
   const loaded = await loadTranscript(ctx, args);
   if ('success' in loaded) return loaded;
