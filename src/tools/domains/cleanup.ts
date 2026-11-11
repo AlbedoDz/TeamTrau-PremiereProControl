@@ -12,6 +12,7 @@ import { access, copyFile, mkdir } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import type { ToolContext, ToolModule } from '../context.js';
 import { cached } from '../../analysis/cache.js';
+import { detectScenes } from '../../analysis/scenes.js';
 import { analysisConcurrency, mapLimit } from '../../analysis/pool.js';
 import {
   ffmpegMissingResult,
@@ -755,5 +756,25 @@ export const cleanupTools: ToolModule[] = [
       backup: backupArg,
     }),
     run: (ctx, args) => normalizeLoudness(ctx, args),
+  },
+  {
+    name: 'detect_scenes',
+    description:
+      'Finds shot boundaries in a video file with ffmpeg (scene-change score) and returns the shots as contiguous start/end seconds plus the raw cut times. A shot shorter than minShotSec is merged into the previous one. Detection only: nothing is changed. Requires ffmpeg.',
+    inputSchema: z
+      .object({
+        mediaPath: z.string().optional().describe('Direct filesystem path to the media file'),
+        projectItemId: z.string().optional().describe('Project item ID to resolve to a media path instead of mediaPath'),
+        threshold: z.number().min(0).max(1).default(0.3).describe('Scene-change score above which a frame starts a new shot (default 0.3; lower finds more cuts).'),
+        minShotSec: z.number().min(0).default(0.5).describe('Shortest shot to keep; shorter ones are merged into the previous shot (default 0.5).'),
+      })
+      .refine((d) => Boolean(d.mediaPath) || Boolean(d.projectItemId), { message: 'Provide either mediaPath or projectItemId' }),
+    run: async (ctx, args) => {
+      const resolved = await resolveMediaPath(ctx, args.mediaPath, args.projectItemId);
+      if (!resolved.path) return { success: false, error: resolved.error };
+      const result = await detectScenes(resolved.path, { threshold: args.threshold, minShotSec: args.minShotSec });
+      if ('failure' in result) return result.failure;
+      return { success: true, mediaPath: resolved.path, shotCount: result.shots.length, ...result };
+    },
   },
 ];
