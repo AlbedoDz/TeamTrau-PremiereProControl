@@ -364,8 +364,14 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   }
 
   const removedPlan = gapsBetween(segments, snapshot.endTime);
-  const chopped = snapshot.clips.filter((c) => {
-    if (c.trackType !== 'audio' || c.end - c.start <= MUSIC_MIN_SEC) return false;
+  // Speech is meant to be cut: only non-dialogue audio counts as chopped music. The dialogue tracks
+  // are the transcript's, else the caller's, else what the transcript would auto-detect.
+  const audioClips = snapshot.clips.filter((c) => c.trackType === 'audio');
+  const speechTracks = (transcript as TranscriptReady | null)?.dialogueTrackIndices
+    ?? args.dialogueTrackIndices
+    ?? [...new Set(audioClips.filter((c) => c.mediaPath).map((c) => c.trackIndex))];
+  const chopped = audioClips.filter((c) => {
+    if (speechTracks.includes(c.trackIndex) || c.end - c.start <= MUSIC_MIN_SEC) return false;
     return removedPlan.filter((r) => r.start > c.start && r.end < c.end).length >= MUSIC_CHOPPED_CUTS;
   });
   if (chopped.length > 0) {

@@ -509,7 +509,10 @@ const reframeScript = (sequenceId: string, range: { start: number; end: number }
     try {
 ${range ? `      seq.setInPoint(__secondsToTicks(${range.start}));
       seq.setOutPoint(__secondsToTicks(${range.end}));
-` : ''}      sub = seq.createSubsequence(true);
+` : `      // The whole sequence: In/Out marks it inherited would otherwise cut the subsequence short.
+      seq.setInPoint(0);
+      seq.setOutPoint(seq.end);
+`}      sub = seq.createSubsequence(true);
       if (!sub) throw new Error("createSubsequence returned no sequence");
       r = sub.autoReframeSequence(9, 16, "default", ${JSON.stringify(name)}, false);
     } catch (e1) { err = e1.toString(); }

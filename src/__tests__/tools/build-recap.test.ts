@@ -135,10 +135,45 @@ describe('build_recap', () => {
       { id: 'd', start: 35, end: 38, score: 1 },
     ];
     readSequence.mockResolvedValue(snapshot([vclip, music]));
-    const result = await run(ctxWith(), { segments, dryRun: true });
+    const result = await run(ctxWith(), { segments, dryRun: true, dialogueTrackIndices: [0] });
 
     expect(result.success).toBe(true);
     expect(result.warnings.some((w: string) => w.includes('music-chopped'))).toBe(true);
+  });
+
+  describe('music-chopped ignores the dialogue tracks', () => {
+    const segments = [
+      { id: 'a', start: 5, end: 10, score: 1 },
+      { id: 'b', start: 15, end: 20, score: 1 },
+      { id: 'c', start: 25, end: 30, score: 1 },
+      { id: 'd', start: 35, end: 38, score: 1 },
+    ];
+    const speech = { id: 'd1', trackType: 'audio', trackIndex: 0, start: 0, end: 40, inPoint: 0, outPoint: 40, mediaPath: 'C:/voice.wav' };
+    const music = { id: 'm1', trackType: 'audio', trackIndex: 2, start: 0, end: 40, inPoint: 0, outPoint: 40, mediaPath: 'C:/music.wav' };
+    const chopped = (result: any): string[] => result.warnings.filter((w: string) => w.includes('music-chopped'));
+
+    it('a long dialogue clip cut in 3+ places gives no warning (dialogueTrackIndices)', async () => {
+      readSequence.mockResolvedValue(snapshot([vclip, speech]));
+      const result = await run(ctxWith(), { segments, dryRun: true, dialogueTrackIndices: [0] });
+      expect(chopped(result)).toEqual([]);
+    });
+
+    it('uses the transcript dialogue tracks first, and still warns for music on another track', async () => {
+      loadTranscript.mockResolvedValue({ status: 'done', fingerprint: 'speech-fp', words: [], sentences: [], dialogueTrackIndices: [0] });
+      readSequence.mockResolvedValue(snapshot([vclip, speech, music]));
+      const result = await run(ctxWith(), { segments, dryRun: true, expectedFingerprint: 'speech-fp', dialogueTrackIndices: [2] });
+      expect(chopped(result)).toHaveLength(1);
+      expect(chopped(result)[0]).toMatch(/^music-chopped: 1 clip/);
+    });
+
+    it('without a transcript or dialogueTrackIndices excludes the auto-detected dialogue tracks', async () => {
+      // Auto-detection takes every audio track with a media file, as transcribe_sequence does.
+      const unlinked = { ...music, mediaPath: null };
+      readSequence.mockResolvedValue(snapshot([vclip, speech, unlinked]));
+      const result = await run(ctxWith(), { segments, dryRun: true });
+      expect(chopped(result)).toHaveLength(1);
+      expect(chopped(result)[0]).toMatch(/^music-chopped: 1 clip/);
+    });
   });
 
   it('does not warn music-chopped for a short audio clip or fewer cuts', async () => {
