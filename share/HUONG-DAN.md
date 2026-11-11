@@ -86,7 +86,7 @@ premiere-pro-mcp --version
 premiere-pro-mcp --doctor
 ```
 
-Hỏi Claude: *"Chạy get_capabilities rồi verify_premiere_connection"*. Kỳ vọng: 295 tool, `ffmpeg: true` nếu đã cài ffmpeg, và Premiere báo kết nối.
+Hỏi Claude: *"Chạy get_capabilities rồi verify_premiere_connection"*. Kỳ vọng: 309 tool, `ffmpeg: true` nếu đã cài ffmpeg, và Premiere báo kết nối.
 
 ## Gỡ cài đặt
 

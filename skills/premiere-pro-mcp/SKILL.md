@@ -109,10 +109,10 @@ Five tools each run one complete editing workflow. For these jobs make one call 
 | Vietnamese subtitles as SRT or a native caption track | `workflow_subtitles` |
 | Rough cut from a folder of footage, optionally to music | `workflow_rough_cut` |
 
-- **One call per workflow.** Each tool transcribes or analyses, edits and runs `qa_sequence` itself, and returns `steps`, a `summary`, `warnings` and `verified`. Do not re-run its steps by hand.
+- **One call per workflow.** Each tool transcribes or analyses, edits and runs `qa_sequence` itself, and returns `steps`, `summary` (including `summary.verified` where the workflow checks it), `warnings`, `outputSequenceIds`. Do not re-run its steps by hand.
 - **`dryRun` first.** `dryRun: true` returns the plan (for `workflow_clean_voiceover`, every cut with its source sentence and reason) without touching the project. Show it to the user, then call again without `dryRun`.
 - **Results are on a copy.** The original sequence is never edited; the result is a duplicate or a new sequence (name gets " (2)" when taken). Report its name so the user can open it.
-- **Cancellation.** Long runs report progress by step and can be cancelled; a run stops at the next step boundary and leaves the original untouched. If the user cancels, say so and offer to delete the partial copy.
+- **Cancellation.** Long runs report progress by step and can be cancelled; a run stops at the next step boundary and leaves the original untouched. If the user cancels, say so and offer to delete the partial copies listed in `partialSequenceIds` (finished outputs are not in it).
 - If a step returns `success: false`, the workflow stops and returns `nextStep`; relay it instead of retrying blindly.
 - Not supported yet: J-cut (`audioLeadSec` builds hard cuts) and the acoustic filler fallback.
 - The same workflows run from the Quy trình tab of the panel without any AI client; the panel needs the runner registered by the installer.

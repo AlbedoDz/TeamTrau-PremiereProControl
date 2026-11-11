@@ -25,6 +25,7 @@ CEP_TARGET_DIR="$CEP_EXTENSIONS_DIR/MCPBridgeCEP"
 CLAUDE_CONFIG_PATH="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 TEMP_DIR="/tmp/premiere-mcp-bridge"
 DIST_ENTRY="$REPO_ROOT/dist/index.js"
+CLI_ENTRY="$REPO_ROOT/dist/cli.js"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "Node.js 20+ is required but 'node' was not found."
@@ -66,6 +67,11 @@ mkdir -p "$CEP_TARGET_DIR"
 # Copy over the live extension so a running panel is not deleted out from
 # under itself.
 cp -R "$REPO_ROOT/cep-plugin/." "$CEP_TARGET_DIR/"
+
+echo "Registering the panel workflow runner..."
+# Writes runner { nodePath, cliPath } into ~/.premiere-mcp-bridge/config.json so the
+# panel's Quy trình tab can start the workflows.
+node "$CLI_ENTRY" --register-panel-runner
 
 echo "Preparing bridge temp directory..."
 mkdir -p "$TEMP_DIR"
