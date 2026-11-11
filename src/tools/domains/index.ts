@@ -12,6 +12,7 @@ import { editingTools } from './editing.js';
 import { roughcutTools } from './roughcut.js';
 import { shortsTools } from './shorts.js';
 import { fillersTools } from './fillers.js';
+import { recapTools } from './recap.js';
 import { subtitlesTools } from './subtitles.js';
 import { musicTools } from './music.js';
 import { discoveryTools } from './discovery.js';
@@ -33,6 +34,7 @@ export const domainTools: ToolModule[] = [
   ...roughcutTools,
   ...shortsTools,
   ...fillersTools,
+  ...recapTools,
   ...subtitlesTools,
   ...musicTools,
   ...discoveryTools,
