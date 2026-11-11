@@ -195,3 +195,55 @@ export function loudnessGainDb(measuredLufs: number, targetLufs: number): number
   const MIN_GAIN_DB = -40;
   return round3(Math.min(MAX_GAIN_DB, Math.max(MIN_GAIN_DB, targetLufs - measuredLufs)));
 }
+
+export interface NormalizeRangesOptions {
+  /** Sequence length in seconds; ranges are clamped to [0, total]. */
+  total: number;
+  frameDuration: number;
+  /** Cuts closer together than this are merged into one. */
+  mergeGapSec: number;
+  /** A kept stretch shorter than this is cut too, so no sliver is left behind. */
+  minKeepSec: number;
+  /** When true, `ranges` is the set to KEEP and everything else is cut. */
+  invert: boolean;
+}
+
+/**
+ * The stretches to cut, sorted, merged and snapped to the frame grid.
+ * `ranges` are cuts, or with `invert` the stretches to keep (the result is the cut set either way).
+ */
+export function normalizeRanges(ranges: Interval[], opts: NormalizeRangesOptions): Interval[] {
+  const { total, frameDuration: fd } = opts;
+  if (!(total > 0) || !(fd > 0)) return [];
+  const snap = (t: number): number => round3(Math.round(t / fd - 1e-9) * fd) + 0;
+  const clamped = ranges
+    .map((r) => mk(Math.max(0, r.start), Math.min(total, r.end)))
+    .filter((r) => r.end > r.start);
+  const whole = mk(0, total);
+  const cuts = opts.invert ? subtractIntervals([whole], clamped) : unionIntervals(clamped);
+  const snapped = unionIntervals(cuts.map((c) => mk(snap(c.start), snap(c.end))));
+
+  const out: Interval[] = [];
+  for (const cut of snapped) {
+    const last = out[out.length - 1];
+    if (last && cut.start - last.end < Math.max(opts.mergeGapSec, opts.minKeepSec) - 1e-9) {
+      out[out.length - 1] = mk(last.start, cut.end);
+    } else {
+      out.push(cut);
+    }
+  }
+  // Slivers kept at the very start or end of the sequence.
+  if (out.length > 0) {
+    const first = out[0]!;
+    if (first.start > 0 && first.start < opts.minKeepSec - 1e-9) out[0] = mk(0, first.end);
+    const tail = out[out.length - 1]!;
+    if (tail.end < total && total - tail.end < opts.minKeepSec - 1e-9) out[out.length - 1] = mk(tail.start, total);
+  }
+  return out.filter((c) => c.end - c.start >= fd - 1e-9);
+}
+
+/** Frames of audio crossfade for a requested length: 0 when off, otherwise at least 1 frame. */
+export function crossfadeFrames(crossfadeMs: number, frameDuration: number): number {
+  if (!(crossfadeMs > 0)) return 0;
+  return Math.max(1, Math.round(crossfadeMs / 1000 / frameDuration));
+}

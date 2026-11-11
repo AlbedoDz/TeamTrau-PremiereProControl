@@ -100,6 +100,23 @@ describe('cleanup tools', () => {
     expect(result.warning).toContain('locked');
   });
 
+  it('puts a Constant Power crossfade on the join after cutting silence', async () => {
+    executeScript
+      .mockResolvedValueOnce(snapshot(20))
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true, removedClips: 2 })
+      .mockResolvedValueOnce(snapshot(20 - 2.76))
+      .mockResolvedValueOnce({ success: true, applied: 1, failed: 0 });
+    runFf.mockResolvedValue({ code: 0, stdout: '', stderr: 'silence_start: 5\nsilence_end: 8 | silence_duration: 3' });
+
+    const result = await tools.executeTool('remove_silence_from_sequence', { backup: false });
+
+    expect(result).toMatchObject({ success: true, verified: true, crossfadeFrames: 1 });
+    expect(result.warning).toBeUndefined();
+    expect(executeScript.mock.calls[5]![0]).toContain('Constant Power');
+  });
+
   it('stops and reports partial progress when a razor fails', async () => {
     executeScript
       .mockResolvedValueOnce(snapshot(20))

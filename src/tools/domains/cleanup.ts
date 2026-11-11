@@ -26,7 +26,9 @@ import {
 } from '../../analysis/ffmpeg.js';
 import {
   liveSegments,
+  crossfadeFrames,
   loudnessGainDb,
+  normalizeRanges,
   planSilenceCuts,
   preflightIssues,
   unionIntervals,
@@ -333,6 +335,164 @@ export async function backupProject(ctx: ToolContext): Promise<{ path: string } 
 
 export const BACKUP_FAILED_HINT = ' Fix this, or pass backup=false to edit without a backup.';
 
+export interface RemoveRangesArgs {
+  sequenceId?: string;
+  ranges: Array<{ start: number; end: number }>;
+  invert: boolean;
+  crossfadeMs: number;
+  mergeGapSec: number;
+  minKeepSec: number;
+  dryRun: boolean;
+  backup: boolean;
+}
+
+export interface RemoveRangesResult {
+  success: boolean;
+  removed: Interval[];
+  durationBefore: number;
+  durationAfter?: number;
+  crossfadeFrames: number;
+  crossfadeMsActual: number;
+  verified?: boolean;
+  warning?: string;
+  backupPath?: string | undefined;
+  error?: string;
+  dryRun?: boolean;
+  applied?: boolean | Interval[];
+  sequenceId?: string;
+}
+
+/** Audio crossfade (Constant Power) at each new join, through the QE DOM. Best effort: the caller only warns on failure. */
+async function addAudioCrossfades(ctx: ToolContext, sequenceId: string, joins: number[], frames: number, tolerance: number): Promise<any> {
+  const script = `
+    try {
+      app.enableQE();
+      var sequence = __findSequence(${JSON.stringify(sequenceId)});
+      if (!sequence) return JSON.stringify({ success: false, error: "Sequence not found" });
+      if (!app.project.activeSequence || app.project.activeSequence.sequenceID !== sequence.sequenceID) {
+        app.project.openSequence(sequence.sequenceID);
+      }
+      var qeSeq = qe.project.getActiveSequence();
+      var transition = qe.project.getAudioTransitionByName("Constant Power");
+      if (!transition) return JSON.stringify({ success: false, error: "Audio transition 'Constant Power' not found" });
+      var joins = ${JSON.stringify(joins)};
+      var applied = 0, failed = 0, firstError = "";
+      for (var t = 0; t < qeSeq.numAudioTracks; t++) {
+        var qeTrack = qeSeq.getAudioTrackAt(t);
+        for (var i = 0; i < qeTrack.numItems; i++) {
+          var item = qeTrack.getItemAt(i);
+          var at = item.start ? Number(item.start.secs) : NaN;
+          if (isNaN(at)) continue;
+          for (var k = 0; k < joins.length; k++) {
+            if (Math.abs(at - joins[k]) > ${tolerance}) continue;
+            try {
+              item.addTransition(transition, true, ${JSON.stringify(`${frames}:00`)});
+              applied++;
+            } catch (e1) {
+              failed++;
+              if (!firstError) firstError = e1.toString();
+            }
+          }
+        }
+      }
+      return JSON.stringify({ success: failed === 0, applied: applied, failed: failed, error: firstError });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: e.toString() });
+    }
+  `;
+  return ctx.bridge.executeScript(script);
+}
+
+/**
+ * The single timeline-cutting core: razors every range edge and ripple-deletes the
+ * ranges back to front, re-reads the sequence to verify, then puts a short audio
+ * crossfade on each new join. Ranges are cuts, or with `invert` the stretches to keep.
+ */
+export async function removeRanges(ctx: ToolContext, args: RemoveRangesArgs, snapshot?: SequenceSnapshot): Promise<RemoveRangesResult> {
+  const before = snapshot ?? (await readSequence(ctx, args.sequenceId));
+  if (isError(before)) return { success: false, error: before.error, removed: [], durationBefore: 0, crossfadeFrames: 0, crossfadeMsActual: 0 };
+
+  const fd = before.frameDuration;
+  const frames = crossfadeFrames(args.crossfadeMs, fd);
+  const crossfadeMsActual = Math.round(frames * fd * 1000 * 1000) / 1000;
+  const base = { durationBefore: before.endTime, crossfadeFrames: frames, crossfadeMsActual, sequenceId: before.sequenceId };
+  const cuts = normalizeRanges(
+    args.ranges.map((r) => ({ start: r.start, end: r.end, duration: r.end - r.start })),
+    { total: before.endTime, frameDuration: fd, mergeGapSec: args.mergeGapSec, minKeepSec: args.minKeepSec, invert: args.invert },
+  );
+  if (args.dryRun || cuts.length === 0) {
+    return { success: true, dryRun: args.dryRun, applied: false, removed: cuts, ...base };
+  }
+
+  let backupPath: string | undefined;
+  if (args.backup) {
+    const backup = await backupProject(ctx);
+    if ('error' in backup) {
+      return { success: false, error: `Backup failed, nothing was changed: ${backup.error}${BACKUP_FAILED_HINT}`, removed: cuts, ...base };
+    }
+    backupPath = backup.path;
+  }
+
+  // Back to front, so earlier timeline positions are unaffected by each ripple.
+  const tolerance = fd / 2;
+  const applied: Interval[] = [];
+  for (const cut of [...cuts].reverse()) {
+    for (const time of [cut.end, cut.start]) {
+      const razor = await razorTimelineAtTime(ctx, before.sequenceId, time);
+      if (razor?.success === false) {
+        return { success: false, error: `Razor failed at ${time}s: ${razor.error}`, applied, removed: cuts, backupPath, ...base };
+      }
+    }
+    const deleted = await rippleDeleteRange(ctx, before.sequenceId, cut.start, cut.end, tolerance);
+    if (!deleted || deleted.success === false) {
+      return { success: false, error: `Could not delete ${cut.start}s-${cut.end}s: ${deleted?.error ?? 'no result'}`, applied, removed: cuts, backupPath, ...base };
+    }
+    applied.push(cut);
+  }
+
+  const after = await readSequence(ctx, before.sequenceId);
+  if (isError(after)) {
+    return { success: false, error: `Cuts were applied but the result could not be re-read: ${after.error}`, applied, removed: cuts, backupPath, ...base };
+  }
+  const plannedSeconds = Math.round(cuts.reduce((sum, c) => sum + c.duration, 0) * 1000) / 1000;
+  const actualRemoved = Math.round((before.endTime - after.endTime) * 1000) / 1000;
+  const verified = Math.abs(actualRemoved - plannedSeconds) <= fd * (cuts.length + 1);
+  const warnings: string[] = [];
+  if (!verified) {
+    warnings.push(`The sequence shortened by ${actualRemoved}s but ${plannedSeconds}s was planned. Tracks may be locked or sync lock off, leaving audio and video out of step. Use undo, unlock tracks, and retry.`);
+  } else if (frames > 0) {
+    // Joins on the shortened timeline; a cut at the very start or end leaves no join.
+    const joins: number[] = [];
+    let removedSoFar = 0;
+    for (const cut of cuts) {
+      const at = Math.round((cut.start - removedSoFar) * 1000) / 1000;
+      removedSoFar += cut.duration;
+      if (cut.start > 0 && cut.end < before.endTime - 1e-6) joins.push(at);
+    }
+    if (joins.length > 0) {
+      try {
+        const fade = await addAudioCrossfades(ctx, before.sequenceId, joins, frames, tolerance);
+        if (!fade || fade.success === false) {
+          warnings.push(`Audio crossfade could not be added${fade?.applied ? ` on every join (${fade.applied} added, ${fade.failed} failed)` : ''}: ${fade?.error ?? 'no result'}. The cuts themselves are fine.`);
+        }
+      } catch (err) {
+        warnings.push(`Audio crossfade could not be added: ${err instanceof Error ? err.message : String(err)}. The cuts themselves are fine.`);
+      }
+    }
+  }
+  return {
+    success: true,
+    dryRun: false,
+    applied: true,
+    verified,
+    backupPath,
+    removed: cuts,
+    ...base,
+    durationAfter: after.endTime,
+    ...(warnings.length > 0 ? { warning: warnings.join(' ') } : {}),
+  };
+}
+
 async function removeSilenceFromSequence(
   ctx: ToolContext,
   args: {
@@ -341,6 +501,7 @@ async function removeSilenceFromSequence(
     minSilenceSeconds: number;
     paddingSeconds: number;
     audioTrackIndices?: number[];
+    crossfadeMs: number;
     dryRun: boolean;
     backup: boolean;
   },
@@ -382,51 +543,35 @@ async function removeSilenceFromSequence(
     };
   }
 
-  let backupPath: string | undefined;
-  if (args.backup) {
-    const backup = await backupProject(ctx);
-    if ('error' in backup) return { success: false, error: `Backup failed, nothing was changed: ${backup.error}${BACKUP_FAILED_HINT}`, ...summary };
-    backupPath = backup.path;
+  // The plan is already padded and on the frame grid, so it goes in as-is: no merging, no sliver rule.
+  const result = await removeRanges(ctx, {
+    sequenceId: before.sequenceId,
+    ranges: plan.cuts,
+    invert: false,
+    crossfadeMs: args.crossfadeMs,
+    mergeGapSec: 0,
+    minKeepSec: 0,
+    dryRun: false,
+    backup: args.backup,
+  }, before);
+  if (!result.success) {
+    const { removed: _removed, durationBefore: _before, ...failure } = result;
+    return { ...failure, ...summary, applied: Array.isArray(result.applied) ? result.applied : [] };
   }
-
-  // Back to front, so earlier timeline positions are unaffected by each ripple.
-  const tolerance = before.frameDuration / 2;
-  const applied: Interval[] = [];
-  for (const cut of [...plan.cuts].reverse()) {
-    for (const time of [cut.end, cut.start]) {
-      const razor = await razorTimelineAtTime(ctx, before.sequenceId, time);
-      if (razor?.success === false) {
-        return { success: false, error: `Razor failed at ${time}s: ${razor.error}`, applied, ...summary };
-      }
-    }
-    const removed = await rippleDeleteRange(ctx, before.sequenceId, cut.start, cut.end, tolerance);
-    if (!removed || removed.success === false) {
-      return { success: false, error: `Could not delete ${cut.start}s-${cut.end}s: ${removed?.error ?? 'no result'}`, applied, ...summary };
-    }
-    applied.push(cut);
-  }
-
-  const after = await readSequence(ctx, before.sequenceId);
-  if (isError(after)) {
-    return { success: false, error: `Cuts were applied but the result could not be re-read: ${after.error}`, applied, ...summary };
-  }
-  const actualRemoved = Math.round((before.endTime - after.endTime) * 1000) / 1000;
-  const verified = Math.abs(actualRemoved - removedSeconds) <= before.frameDuration * (plan.cuts.length + 1);
+  const actualRemoved = Math.round((before.endTime - (result.durationAfter ?? before.endTime)) * 1000) / 1000;
   return {
     success: true,
     dryRun: false,
     applied: true,
-    verified,
-    backupPath,
+    verified: result.verified,
+    backupPath: result.backupPath,
     ...summary,
     sequenceDurationBefore: before.endTime,
-    sequenceDurationAfter: after.endTime,
+    sequenceDurationAfter: result.durationAfter,
     actualRemovedSeconds: actualRemoved,
-    ...(verified
-      ? {}
-      : {
-          warning: `The sequence shortened by ${actualRemoved}s but ${removedSeconds}s was planned. Tracks may be locked or sync lock off, leaving audio and video out of step. Use undo, unlock tracks, and retry.`,
-        }),
+    crossfadeFrames: result.crossfadeFrames,
+    crossfadeMsActual: result.crossfadeMsActual,
+    ...(result.warning ? { warning: result.warning } : {}),
   };
 }
 
@@ -502,6 +647,13 @@ const backupArg = z
   .boolean()
   .default(true)
   .describe('Save the project and copy it to a premiere-mcp-backups folder beside it before changing anything (default true). Ignored on a dry run. Set false to skip.');
+const crossfadeArg = z
+  .number()
+  .min(0)
+  .max(1000)
+  .default(30)
+  .describe('Constant Power audio crossfade at each new join, in ms (default 30; 0 turns it off). Premiere cannot make one shorter than a frame, so the real length is max(crossfadeMs, 1 frame) rounded to frames.');
+
 const trackArg = z
   .array(z.number().int().min(0))
   .optional()
@@ -547,10 +699,27 @@ export const cleanupTools: ToolModule[] = [
       minSilenceSeconds: z.number().positive().default(0.5).describe('Shortest silence to consider (default 0.5).'),
       paddingSeconds: z.number().min(0).default(0.1).describe('Silence kept on each side of a cut so speech is not clipped (default 0.1).'),
       audioTrackIndices: trackArg.describe('Audio tracks that decide what counts as sound, e.g. only the dialogue track so music does not keep silence alive. Defaults to all audio tracks.'),
+      crossfadeMs: crossfadeArg,
       dryRun: z.boolean().default(false).describe('When true, report the planned cuts and change nothing.'),
       backup: backupArg,
     }),
     run: (ctx, args) => removeSilenceFromSequence(ctx, args),
+  },
+  {
+    name: 'remove_ranges',
+    description:
+      "Cuts the given time ranges (sequence seconds) out of a sequence on all tracks and closes the gaps: razors both edges, ripple-deletes back to front, re-reads the sequence and reports verified=false with a warning if tracks drifted (locked tracks or sync lock off). With invert=true the ranges are the parts to KEEP and everything else is removed. Ranges are sorted and merged when closer than mergeGapSec, and kept stretches shorter than minKeepSec are removed too. Puts a Constant Power audio crossfade (crossfadeMs, at least one frame) on each join; a crossfade failure only adds a warning. Use dryRun=true to see the removed ranges first.",
+    inputSchema: z.object({
+      sequenceId: sequenceIdArg,
+      ranges: z.array(z.object({ start: z.number().min(0), end: z.number().min(0) })).min(1).describe('Time ranges in sequence seconds.'),
+      invert: z.boolean().default(false).describe('When true, ranges are the parts to keep and the rest is removed.'),
+      crossfadeMs: crossfadeArg,
+      mergeGapSec: z.number().min(0).default(0.4).describe('Cuts closer together than this are merged (default 0.4).'),
+      minKeepSec: z.number().min(0).default(0.4).describe('A kept stretch shorter than this is removed too, so no sliver is left (default 0.4).'),
+      dryRun: z.boolean().default(false).describe('When true, report the ranges that would be removed and change nothing.'),
+      backup: backupArg,
+    }),
+    run: (ctx, args) => removeRanges(ctx, args),
   },
   {
     name: 'normalize_loudness',
