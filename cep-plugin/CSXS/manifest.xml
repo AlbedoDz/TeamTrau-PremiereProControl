@@ -32,12 +32,12 @@
           <Menu>TeamTrau PremiereProControl</Menu>
           <Geometry>
             <Size>
-              <Height>400</Height>
-              <Width>320</Width>
+              <Height>760</Height>
+              <Width>420</Width>
             </Size>
             <MinSize>
-              <Height>300</Height>
-              <Width>280</Width>
+              <Height>480</Height>
+              <Width>320</Width>
             </MinSize>
             <MaxSize>
               <Height>2000</Height>

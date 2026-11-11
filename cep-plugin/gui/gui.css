@@ -1,0 +1,284 @@
+/* Tab bar, workflow cards and settings. Colours come from the :root variables in index.html. */
+
+.gui-topbar {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    max-width: 460px;
+    margin: 0 auto 12px;
+}
+
+.gui-title {
+    flex: 1 1 100%;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-1);
+}
+
+.gui-tabs {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 6px;
+}
+
+.gui-tab {
+    flex: 1 1 0;
+    padding: 9px 10px;
+    letter-spacing: 0;
+}
+
+.gui-tab.active {
+    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+    color: #081119;
+}
+
+.gui-gear {
+    flex: 0 0 auto;
+    width: 38px;
+    padding: 8px 0;
+    font-size: 16px;
+    letter-spacing: 0;
+}
+
+.gui-pane {
+    position: relative;
+    z-index: 1;
+    max-width: 460px;
+    margin: 0 auto;
+}
+
+.gui-pane[hidden] {
+    display: none;
+}
+
+.gui-card,
+.gui-box {
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    background: var(--panel);
+}
+
+.gui-card > summary {
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text-0);
+}
+
+.gui-hint {
+    margin: 8px 0 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-2);
+}
+
+.gui-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+}
+
+.gui-field > label,
+.gui-label {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-1);
+}
+
+.gui-field input[type="text"],
+.gui-field input[type="number"],
+.gui-field select,
+.gui-select {
+    width: 100%;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--input);
+    color: var(--text-0);
+    font-size: 12px;
+}
+
+.gui-field.gui-toggle {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.gui-field.gui-toggle label {
+    font-size: 12px;
+    color: var(--text-0);
+}
+
+.gui-pathrow {
+    display: flex;
+    gap: 6px;
+}
+
+.gui-pathrow button {
+    flex: 0 0 auto;
+    padding: 0 12px;
+    letter-spacing: 0;
+}
+
+.gui-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.gui-actions button {
+    flex: 1 1 0;
+    padding: 10px 8px;
+    letter-spacing: 0;
+}
+
+.gui-seq {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.gui-seq select {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.gui-seq button {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    letter-spacing: 0;
+}
+
+.gui-progress-track {
+    height: 8px;
+    margin: 8px 0;
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+    background: rgba(9, 17, 25, 0.8);
+}
+
+.gui-progress-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
+.gui-progress-pulse {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--accent-soft);
+    animation: gui-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes gui-pulse {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+}
+
+.gui-step {
+    font-size: 12px;
+    color: var(--text-0);
+    word-break: break-word;
+}
+
+.gui-meta {
+    font-size: 11px;
+    color: var(--text-2);
+}
+
+.gui-result-title {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.gui-result-title.ok { color: var(--success); }
+.gui-result-title.bad { color: var(--error); }
+.gui-result-title.warn { color: var(--warn); }
+
+.gui-lines,
+.gui-warnings,
+.gui-cuts {
+    margin: 0 0 8px;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-1);
+}
+
+.gui-warnings {
+    color: var(--warn);
+}
+
+.gui-error {
+    margin: 0 0 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-line;
+    color: var(--error);
+}
+
+.gui-cuts {
+    max-height: 260px;
+    overflow-y: auto;
+    list-style: none;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(8, 15, 22, 0.82);
+}
+
+.gui-cuts li {
+    margin-bottom: 6px;
+}
+
+.gui-cuts .t {
+    font-family: ui-monospace, Consolas, monospace;
+    color: var(--accent);
+}
+
+.gui-cuts .r {
+    color: var(--text-2);
+}
+
+.gui-queue {
+    font-size: 11px;
+    color: var(--warn);
+}
+
+.gui-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    overflow-y: auto;
+    padding: 16px;
+    background: rgba(5, 10, 15, 0.82);
+}
+
+.gui-overlay[hidden] {
+    display: none;
+}
+
+.gui-overlay .gui-box {
+    max-width: 460px;
+    margin: 0 auto;
+    background: var(--bg-1);
+}
+
+.gui-note {
+    min-height: 16px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-1);
+}
