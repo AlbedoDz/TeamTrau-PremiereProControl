@@ -5,12 +5,12 @@
  * sequence is only a template and is never changed.
  */
 import type { ToolContext } from '../context.js';
-import { isError, readSequence } from '../domains/cleanup.js';
+import { isError, type SequenceSnapshot } from '../domains/cleanup.js';
 import { autoDuckMusic, ensureBackup } from '../domains/editing.js';
 import { assembleBeatCut } from '../domains/music.js';
 import { assembleRoughCut, scoreClips } from '../domains/roughcut.js';
 import { duplicateSequence } from '../domains/sequence.js';
-import { failure, runSteps, uniqueSequenceName, type WorkflowResult, type WorkflowStep } from './steps.js';
+import { failure, resolveSource, runSteps, uniqueSequenceName, type WorkflowResult, type WorkflowStep } from './steps.js';
 
 export interface RoughCutArgs {
   sequenceId?: string | undefined;
@@ -39,7 +39,7 @@ export async function workflowRoughCut(ctx: ToolContext, args: RoughCutArgs): Pr
   const summary: Record<string, unknown> = {};
   const shotSeconds = args.shotSeconds ?? SHOT_SECONDS_BY_PACE[args.pace];
   let targetId = args.sequenceId;
-  let templateName = '';
+  let template: SequenceSnapshot | undefined;
 
   const create: WorkflowStep = {
     label: 'Tạo sequence mới',
@@ -47,15 +47,12 @@ export async function workflowRoughCut(ctx: ToolContext, args: RoughCutArgs): Pr
       const backup = await ensureBackup(ctx, args.backup);
       if ('failure' in backup) return failure(backup.failure);
       if (backup.path) summary.backupPath = backup.path;
-      const template = await readSequence(ctx, args.sequenceId);
-      if (isError(template)) return failure(template.error);
-      templateName = template.sequenceName;
       const name = await uniqueSequenceName(ctx, args.name ?? `${folderName(args.folderPath)} - rough cut`);
-      const copy: any = await duplicateSequence(ctx, template.sequenceId, name, true);
+      const copy: any = await duplicateSequence(ctx, template!.sequenceId, name, true);
       if (!copy || copy.success === false || !copy.newSequenceId) return failure(copy?.error ?? 'Không tạo được sequence mới.');
       targetId = String(copy.newSequenceId);
       summary.outputName = name;
-      return { ok: true, detail: { sequenceId: targetId, name, template: templateName }, createdSequenceId: targetId };
+      return { ok: true, detail: { sequenceId: targetId, name, template: template!.sequenceName }, createdSequenceId: targetId };
     },
   };
 
@@ -158,6 +155,11 @@ export async function workflowRoughCut(ctx: ToolContext, args: RoughCutArgs): Pr
     run: async () => {
       if (!args.musicPath && args.targetSec === undefined) return failure('Cần targetSec (thời lượng mong muốn) khi không có musicPath.');
       if (args.hasVoiceover && !args.musicPath) warnings.push('hasVoiceover chỉ có tác dụng khi có musicPath (không có nhạc để hạ).');
+      // The template is resolved once; a dry run plans against it, a real run copies it.
+      const source = await resolveSource(ctx, args);
+      if (isError(source)) return failure(source.error);
+      template = source;
+      targetId = source.sequenceId;
       return { ok: true };
     },
   };

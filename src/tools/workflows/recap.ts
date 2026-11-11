@@ -4,10 +4,10 @@
  * last step.
  */
 import type { ToolContext } from '../context.js';
-import { isError, readSequence } from '../domains/cleanup.js';
+import { isError } from '../domains/cleanup.js';
 import { buildRecap, planRecap, type PlanRecapResult } from '../domains/recap.js';
 import type { TranscriptArgs } from '../domains/shorts.js';
-import { awaitPending, failure, runSteps, uniqueSequenceName, type WorkflowResult, type WorkflowStep } from './steps.js';
+import { awaitPending, failure, resolveSource, runSteps, uniqueSequenceName, type WorkflowResult, type WorkflowStep } from './steps.js';
 
 export interface RecapArgs extends TranscriptArgs {
   name?: string | undefined;
@@ -33,7 +33,7 @@ export async function workflowRecap(ctx: ToolContext, args: RecapArgs): Promise<
   const planStep: WorkflowStep = {
     label: 'Lập kế hoạch recap',
     run: async () => {
-      const source = await readSequence(ctx, args.sequenceId);
+      const source = await resolveSource(ctx, args);
       if (isError(source)) return failure(source.error);
       sourceId = source.sequenceId;
       sourceName = source.sequenceName;
@@ -94,7 +94,7 @@ export async function workflowRecap(ctx: ToolContext, args: RecapArgs): Promise<
       summary.verified = built.verified;
       if (built.qa !== undefined) summary.qa = built.qa;
       if (built.verified === false) warnings.push('Không xác nhận được độ dài recap sau khi dựng.');
-      return { ok: true, detail: { sequenceId: built.sequenceId, durationSec: built.durationSec, verified: built.verified }, ...created };
+      return { ok: true, detail: { sequenceId: built.sequenceId, durationSec: built.durationSec, verified: built.verified }, ...created, complete: true };
     },
   };
 

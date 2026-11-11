@@ -10,7 +10,6 @@ import { planSilenceCuts, unionIntervals } from '../../analysis/cleanup.js';
 import {
   analyseSilence,
   isError,
-  readSequence,
   removeRanges,
   uniquePaths,
   type SequenceSnapshot,
@@ -19,7 +18,7 @@ import { applyDialogueChain, ensureBackup, qaSequence } from '../domains/editing
 import { findFillersAndRetakes, type FindFillersArgs } from '../domains/fillers.js';
 import { duplicateSequence } from '../domains/sequence.js';
 import type { TranscriptArgs } from '../domains/shorts.js';
-import { awaitTranscript, runSteps, uniqueSequenceName, type StepOutcome, type WorkflowResult, type WorkflowStep } from './steps.js';
+import { awaitTranscript, resolveSource, runSteps, uniqueSequenceName, type StepOutcome, type WorkflowResult, type WorkflowStep } from './steps.js';
 
 export interface CleanVoiceoverArgs extends TranscriptArgs {
   name?: string | undefined;
@@ -63,7 +62,7 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
   const analyse: WorkflowStep = {
     label: 'Phân tích khoảng lặng, từ đệm và câu vấp',
     run: async () => {
-      const read = await readSequence(ctx, args.sequenceId);
+      const read = await resolveSource(ctx, args);
       if (isError(read)) return failure(read.error);
       snapshot = read;
       const audio = read.clips.filter((c) => c.trackType === 'audio');
@@ -88,7 +87,7 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
       }
 
       if (args.cutFillers || args.cutRetakes) {
-        const transcript = await awaitTranscript(ctx, { ...args, dialogueTrackIndices: dialogueTracks }, 'Nhận dạng giọng nói');
+        const transcript = await awaitTranscript(ctx, { ...args, sequenceId: read.sequenceId, dialogueTrackIndices: dialogueTracks }, 'Nhận dạng giọng nói');
         if ('success' in transcript) return failure(transcript.error);
         if (transcript.words.length === 0) {
           warnings.push('Transcript rỗng (không có lời thoại), nên chỉ cắt khoảng lặng.');

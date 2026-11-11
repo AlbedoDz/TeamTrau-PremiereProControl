@@ -4,14 +4,20 @@
  * for naming the sequences a workflow creates. Workflows never modify the source sequence.
  */
 import { throwIfAborted, type ToolContext } from '../context.js';
+import { readSequence, type SequenceSnapshot } from '../domains/cleanup.js';
 import { loadTranscript, type TranscriptArgs, type TranscriptReady } from '../domains/shorts.js';
 
 export interface StepOutcome {
   ok: boolean;
   detail?: unknown;
   nextStep?: string;
-  /** Sequence this step created; renamed with a suffix when the run is cancelled later. */
+  /**
+   * Sequence this step created. Unless it is `complete`, it is renamed with a suffix when the
+   * run is cancelled or fails later.
+   */
   createdSequenceId?: string;
+  /** The created sequence is a finished output (a built short, a fully built recap). */
+  complete?: boolean;
 }
 
 export interface WorkflowStep {
@@ -24,6 +30,8 @@ export interface WorkflowResult {
   steps: Array<{ label: string; ok: boolean; detail?: unknown }>;
   summary: Record<string, unknown>;
   outputSequenceIds: string[];
+  /** Created sequences that were left unfinished by a cancel or a failure (renamed). */
+  partialSequenceIds: string[];
   warnings: string[];
   cancelled?: boolean;
   nextStep?: string;
@@ -32,12 +40,49 @@ export interface WorkflowResult {
 /** Suffix of a sequence left behind by a cancelled run. */
 export const CANCELLED_SUFFIX = ' (đã hủy)';
 export const PANEL_CLOSED_SUFFIX = ' (dang dở)';
+/** Suffix of a sequence left behind by a step that failed after creating it. */
+export const FAILED_SUFFIX = ' (lỗi)';
 export const TRANSCRIPT_POLL_MS = 3000;
 
 const isCancel = (error: unknown): boolean => error instanceof Error && error.message === 'cancelled';
 
-/** The step being run per context, so awaitTranscript can report progress against it. */
-const currentStep = new WeakMap<ToolContext, { index: number; count: number }>();
+/**
+ * The step being run per context, so awaitTranscript can report progress against it, and the
+ * last progress value sent (MCP progress must rise with every notification).
+ */
+const currentStep = new WeakMap<ToolContext, { index: number; count: number; last: number }>();
+
+/** Highest fraction of a step a wait may report, so the next step's start is still higher. */
+const MAX_STEP_FRACTION = 0.99;
+
+/**
+ * Reports a wait inside the current step: progress `index - 1 + fraction` (fraction capped below
+ * 1), always above the value sent before; the label carries the percentage.
+ */
+function reportWait(ctx: ToolContext, label: string, fraction: number): void {
+  const step = currentStep.get(ctx) ?? { index: 1, count: 1, last: -1 };
+  const base = step.index - 1;
+  const ceiling = base + MAX_STEP_FRACTION;
+  const f = Number.isFinite(fraction) ? Math.min(Math.max(fraction, 0), 1) : 0;
+  let value = base + Math.min(f, MAX_STEP_FRACTION);
+  // A wait that has not advanced still has to send a higher number than the last one.
+  if (value <= step.last) value = step.last + (ceiling - step.last) / 100;
+  if (value <= step.last) return;
+  step.last = value;
+  ctx.progress?.(value, step.count, `${label} ${Math.round(f * 100)}%`);
+}
+
+/**
+ * The source sequence of a workflow, resolved once: `args.sequenceId`, else the sequence active
+ * now. Every later call gets the resolved id, so a sequence the editor opens while the workflow
+ * waits is never picked up.
+ */
+export async function resolveSource(
+  ctx: ToolContext,
+  args: { sequenceId?: string | undefined },
+): Promise<SequenceSnapshot | { error: string }> {
+  return readSequence(ctx, args.sequenceId);
+}
 
 /** Appends `suffix` to the name of a sequence. Best effort: returns false when it could not. */
 export async function renameSequenceWithSuffix(ctx: ToolContext, sequenceId: string, suffix: string): Promise<boolean> {
@@ -59,20 +104,22 @@ export async function renameSequenceWithSuffix(ctx: ToolContext, sequenceId: str
 }
 
 /**
- * Runs the steps in order. Before each step it reports progress and checks the signal; it stops
- * at the first step that is not ok. A cancel never throws out of here: it returns
- * `cancelled: true`, and any sequence the run already created is renamed so it is not mistaken
- * for a finished result.
+ * Runs the steps in order. Before each step it reports progress (the number of steps already
+ * done) and checks the signal; it stops at the first step that is not ok. A cancel never throws
+ * out of here: it returns `cancelled: true`. On a cancel or a failure every created sequence that
+ * is not `complete` is renamed (" (đã hủy)", " (dang dở)" or " (lỗi)") so it is not mistaken for a
+ * finished result, and listed in `partialSequenceIds`.
  */
 export async function runSteps(ctx: ToolContext, steps: WorkflowStep[]): Promise<WorkflowResult> {
-  const result: WorkflowResult = { success: true, steps: [], summary: {}, outputSequenceIds: [], warnings: [] };
-  const created: string[] = [];
+  const result: WorkflowResult = { success: true, steps: [], summary: {}, outputSequenceIds: [], partialSequenceIds: [], warnings: [] };
+  const created: Array<{ id: string; complete: boolean }> = [];
+  let suffix: string | null = null;
   try {
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i]!;
       throwIfAborted(ctx.signal);
-      currentStep.set(ctx, { index: i + 1, count: steps.length });
-      ctx.progress?.(i + 1, steps.length, step.label);
+      currentStep.set(ctx, { index: i + 1, count: steps.length, last: i });
+      ctx.progress?.(i, steps.length, step.label);
       let outcome: StepOutcome;
       try {
         outcome = await step.run();
@@ -84,13 +131,14 @@ export async function runSteps(ctx: ToolContext, steps: WorkflowStep[]): Promise
         };
       }
       if (outcome.createdSequenceId) {
-        created.push(outcome.createdSequenceId);
+        created.push({ id: outcome.createdSequenceId, complete: outcome.complete === true });
         result.outputSequenceIds.push(outcome.createdSequenceId);
       }
       result.steps.push({ label: step.label, ok: outcome.ok, ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}) });
       if (!outcome.ok) {
         result.success = false;
         result.nextStep = outcome.nextStep ?? `Bước "${step.label}" lỗi. Sửa lỗi rồi chạy lại.`;
+        suffix = FAILED_SUFFIX;
         break;
       }
     }
@@ -99,14 +147,18 @@ export async function runSteps(ctx: ToolContext, steps: WorkflowStep[]): Promise
     result.success = false;
     result.cancelled = true;
     result.nextStep = 'Đã hủy theo yêu cầu.';
-    const suffix = ctx.signal?.reason === 'panel-closed' ? PANEL_CLOSED_SUFFIX : CANCELLED_SUFFIX;
-    for (const id of created) {
+    suffix = ctx.signal?.reason === 'panel-closed' ? PANEL_CLOSED_SUFFIX : CANCELLED_SUFFIX;
+  } finally {
+    currentStep.delete(ctx);
+  }
+  if (suffix !== null) {
+    for (const { id, complete } of created) {
+      if (complete) continue;
+      result.partialSequenceIds.push(id);
       if (!(await renameSequenceWithSuffix(ctx, id, suffix))) {
         result.warnings.push(`Không đổi tên được sequence ${id}; kiểm tra và xóa tay nếu không cần.`);
       }
     }
-  } finally {
-    currentStep.delete(ctx);
   }
   return result;
 }
@@ -143,8 +195,7 @@ export async function awaitTranscript(
     const loaded = await loadTranscript(ctx, args);
     if ('success' in loaded) return loaded;
     if (loaded.status === 'done') return loaded;
-    const step = currentStep.get(ctx) ?? { index: 1, count: 1 };
-    ctx.progress?.(step.index, step.count, `${label} ${Math.round(loaded.progress * 100)}%`);
+    reportWait(ctx, label, loaded.progress);
     await wait(pollMs, ctx.signal);
   }
 }
@@ -191,8 +242,7 @@ export async function awaitPending<T>(
     throwIfAborted(ctx.signal);
     const result: any = await fn();
     if (result?.status !== 'running') return result;
-    const step = currentStep.get(ctx) ?? { index: 1, count: 1 };
-    ctx.progress?.(step.index, step.count, `${label} ${Math.round(Number(result.progress ?? 0) * 100)}%`);
+    reportWait(ctx, label, Number(result.progress ?? 0));
     await wait(pollMs, ctx.signal);
   }
 }

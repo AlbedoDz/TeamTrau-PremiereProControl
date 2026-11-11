@@ -105,6 +105,34 @@ const tool = (name: string) => workflowToolsTools.find((t) => t.name === name)!;
 const runTool = (name: string, ctx: ToolContext, args: Record<string, unknown> = {}): Promise<any> =>
   tool(name).run(ctx, tool(name).inputSchema.parse(args)) as Promise<any>;
 
+/**
+ * Simulates the editor switching the active sequence while the transcript is still running: an
+ * unresolved call (no sequenceId) would get "other" from the second poll on.
+ */
+function activeSequenceDrifts(srcSnapshot: Record<string, unknown>, done: Record<string, unknown>): void {
+  readSequence.mockReset()
+    .mockResolvedValueOnce(srcSnapshot)
+    .mockResolvedValue({ ...srcSnapshot, sequenceId: 'other', sequenceName: 'Other' });
+  let calls = 0;
+  loadTranscript.mockReset().mockImplementation(async (_ctx: unknown, a: { sequenceId?: string }) => {
+    calls++;
+    if (calls === 1) return { status: 'running', progress: 0.5, files: 1 };
+    return { ...done, sequenceId: a.sequenceId ?? 'other' };
+  });
+}
+
+/** Runs a workflow tool with fake timers so the 3 s transcript poll passes instantly. */
+async function runPolling(name: string, ctx: ToolContext, args: Record<string, unknown> = {}): Promise<any> {
+  jest.useFakeTimers();
+  try {
+    const pending = runTool(name, ctx, args);
+    await jest.advanceTimersByTimeAsync(3100);
+    return await pending;
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
 beforeEach(() => {
   jest.resetAllMocks();
 });
@@ -119,7 +147,8 @@ describe('runSteps', () => {
       { label: 'C', run: async () => ({ ok: true }) },
     ]);
     expect(result.success).toBe(true);
-    expect(progress.mock.calls).toEqual([[1, 3, 'A'], [2, 3, 'B'], [3, 3, 'C']]);
+    // progress is the number of steps already done, so it rises from 0.
+    expect(progress.mock.calls).toEqual([[0, 3, 'A'], [1, 3, 'B'], [2, 3, 'C']]);
     expect(result.steps.map((s) => s.label)).toEqual(['A', 'B', 'C']);
   });
 
@@ -167,6 +196,43 @@ describe('runSteps', () => {
     expect(result.cancelled).toBe(true);
     expect((ctx.bridge.executeScript as jest.Mock).mock.calls[0][0]).toContain('(dang dở)');
   });
+
+  it('on cancel renames only the unfinished copies and lists them as partial', async () => {
+    const controller = new AbortController();
+    const ctx = ctxWith({ signal: controller.signal });
+    const result = await runSteps(ctx, [
+      { label: 'A', run: async () => ({ ok: true, createdSequenceId: 'done1', complete: true }) },
+      { label: 'B', run: async () => { controller.abort(); return { ok: true, createdSequenceId: 'half' }; } },
+      { label: 'C', run: async () => ({ ok: true }) },
+    ]);
+    expect(result).toMatchObject({ cancelled: true, outputSequenceIds: ['done1', 'half'], partialSequenceIds: ['half'] });
+    const scripts = (ctx.bridge.executeScript as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toContain('"half"');
+    expect(scripts[0]).not.toContain('"done1"');
+  });
+
+  it('renames an unfinished copy " (lỗi)" when a later step fails', async () => {
+    const ctx = ctxWith();
+    const result = await runSteps(ctx, [
+      { label: 'A', run: async () => ({ ok: true, createdSequenceId: 'done1', complete: true }) },
+      { label: 'B', run: async () => ({ ok: true, createdSequenceId: 'copy' }) },
+      { label: 'C', run: async () => ({ ok: false, detail: { error: 'x' } }) },
+    ]);
+    expect(result).toMatchObject({ success: false, outputSequenceIds: ['done1', 'copy'], partialSequenceIds: ['copy'] });
+    expect(result.cancelled).toBeUndefined();
+    const scripts = (ctx.bridge.executeScript as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toContain('"copy"');
+    expect(scripts[0]).toContain('(lỗi)');
+  });
+
+  it('renames nothing and has no partial ids when every step succeeds', async () => {
+    const ctx = ctxWith();
+    const result = await runSteps(ctx, [{ label: 'A', run: async () => ({ ok: true, createdSequenceId: 'copy' }) }]);
+    expect(result).toMatchObject({ success: true, outputSequenceIds: ['copy'], partialSequenceIds: [] });
+    expect(ctx.bridge.executeScript).not.toHaveBeenCalled();
+  });
 });
 
 describe('awaitTranscript', () => {
@@ -181,6 +247,28 @@ describe('awaitTranscript', () => {
     expect(result).toBe(done);
     expect(loadTranscript).toHaveBeenCalledTimes(3);
     expect(progress.mock.calls.map((c) => c[2])).toEqual(['Nhận dạng 40%', 'Nhận dạng 80%']);
+  });
+
+  it('sends a rising progress value inside the step: index - 1 + fraction, below the next step', async () => {
+    const progress = jest.fn();
+    loadTranscript
+      .mockResolvedValueOnce({ status: 'running', progress: 0.4, files: 1 })
+      .mockResolvedValueOnce({ status: 'running', progress: 0.4, files: 1 })
+      .mockResolvedValueOnce({ status: 'running', progress: 1, files: 1 })
+      .mockResolvedValueOnce({ status: 'done', sequenceId: 's', words: [] });
+    const ctx = ctxWith({ progress });
+    await runSteps(ctx, [
+      { label: 'A', run: async () => ({ ok: true }) },
+      { label: 'B', run: async () => { await awaitTranscript(ctx, {}, 'Nhận dạng', { pollMs: 1 }); return { ok: true }; } },
+      { label: 'C', run: async () => ({ ok: true }) },
+    ]);
+    const values = progress.mock.calls.map((c) => c[0] as number);
+    for (let i = 1; i < values.length; i++) expect(values[i]).toBeGreaterThan(values[i - 1]!);
+    expect(values[2]).toBeCloseTo(1.4);
+    expect(values[3]).toBeGreaterThan(1.4);
+    expect(values[4]).toBeLessThan(2);
+    expect(values[5]).toBe(2);
+    expect(progress.mock.calls.map((c) => c[2])).toEqual(['A', 'B', 'Nhận dạng 40%', 'Nhận dạng 40%', 'Nhận dạng 100%', 'C']);
   });
 
   it('passes a failure through', async () => {
@@ -303,6 +391,17 @@ describe('workflow_clean_voiceover', () => {
     expect(progress.mock.calls.some((c) => /Nhận dạng giọng nói 50%/.test(c[2]))).toBe(true);
   });
 
+  it('resolves the source once: a sequence opened while waiting for the transcript is not used', async () => {
+    activeSequenceDrifts(snapshot, transcript());
+    const result = await runPolling('workflow_clean_voiceover', ctxWith());
+    expect(result.success).toBe(true);
+    expect(readSequence).toHaveBeenCalledTimes(1);
+    expect(loadTranscript.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(loadTranscript.mock.calls.every((c) => c[1].sequenceId === 'src')).toBe(true);
+    expect(findFillers.mock.calls[0][1].sequenceId).toBe('src');
+    expect(duplicateSequence.mock.calls[0][1]).toBe('src');
+  });
+
   it('with cutFillers and cutRetakes off, skips the transcript entirely', async () => {
     await runTool('workflow_clean_voiceover', ctxWith(), { cutFillers: false, cutRetakes: false });
     expect(loadTranscript).not.toHaveBeenCalled();
@@ -380,6 +479,20 @@ describe('workflow_subtitles', () => {
     expect(result.success).toBe(true);
   });
 
+  it('resolves the source once: a sequence opened while waiting for the transcript is not used', async () => {
+    activeSequenceDrifts(
+      { sequenceId: 'src', sequenceName: 'Tap 1', frameDuration: 0.04, endTime: 10, clips: [] },
+      { status: 'done', words: [{ text: 'a' }], sentences: [], dialogueTrackIndices: [0], warnings: [] },
+    );
+    const result = await runPolling('workflow_subtitles', ctxWith(), { output: 'caption_track' });
+    expect(result.success).toBe(true);
+    expect(loadTranscript.mock.calls.length).toBe(2);
+    expect(loadTranscript.mock.calls.every((c) => c[1].sequenceId === 'src')).toBe(true);
+    expect(createCaptions.mock.calls[0][1].sequenceId).toBe('src');
+    expect(duplicateSequence.mock.calls[0][1]).toBe('src');
+    expect(duplicateSequence.mock.calls[0][2]).toBe('Tap 1 - phụ đề');
+  });
+
   it('fails the step when the transcript is empty', async () => {
     loadTranscript.mockResolvedValue({ status: 'done', sequenceId: 'src', words: [], sentences: [], dialogueTrackIndices: [0], warnings: [] });
     const result = await runTool('workflow_subtitles', ctxWith(), {});
@@ -438,6 +551,44 @@ describe('workflow_shorts', () => {
     expect(buildShort).toHaveBeenCalledTimes(2);
     expect(result.success).toBe(false);
     expect(result.outputSequenceIds).toEqual(['s1', 's2']);
+    expect(result.partialSequenceIds).toEqual(['s2']);
+  });
+
+  it('on cancel keeps the finished shorts as they are and renames only the unfinished one', async () => {
+    const controller = new AbortController();
+    buildShort
+      .mockReset()
+      .mockResolvedValueOnce({ success: true, verified: true, shortSequenceId: 's1', warnings: [] })
+      .mockImplementationOnce(async () => { controller.abort(); return { success: true, verified: true, shortSequenceId: 's2', warnings: [] }; });
+    const ctx = ctxWith({ signal: controller.signal });
+    const result = await runTool('workflow_shorts', ctx, { count: 3 });
+    expect(result).toMatchObject({ cancelled: true, outputSequenceIds: ['s1', 's2'], partialSequenceIds: [] });
+    const renames = (ctx.bridge.executeScript as jest.Mock).mock.calls.map((c) => String(c[0])).filter((t) => t.includes('(đã hủy)'));
+    expect(renames).toEqual([]);
+  });
+
+  it('renames a short that failed after it was created " (lỗi)", not the earlier ones', async () => {
+    buildShort
+      .mockReset()
+      .mockResolvedValueOnce({ success: true, verified: true, shortSequenceId: 's1', warnings: [] })
+      .mockResolvedValueOnce({ success: false, error: 'boom', shortSequenceId: 's2', warnings: [] });
+    const ctx = ctxWith();
+    await runTool('workflow_shorts', ctx, { count: 3 });
+    const renames = (ctx.bridge.executeScript as jest.Mock).mock.calls.map((c) => String(c[0])).filter((t) => t.includes('(lỗi)'));
+    expect(renames).toHaveLength(1);
+    expect(renames[0]).toContain('"s2"');
+  });
+
+  it('resolves the source once: a sequence opened while waiting for the transcript is not used', async () => {
+    activeSequenceDrifts(
+      { sequenceId: 'src', sequenceName: 'Tap 1', frameDuration: 0.04, endTime: 400, clips: [] },
+      { status: 'done', words: [{ w: 'a' }], sentences: [], dialogueTrackIndices: [0], warnings: [] },
+    );
+    const result = await runPolling('workflow_shorts', ctxWith(), { count: 1 });
+    expect(result.success).toBe(true);
+    expect(loadTranscript.mock.calls.every((c) => c[1].sequenceId === 'src')).toBe(true);
+    expect(findHighlights.mock.calls[0][1].sequenceId).toBe('src');
+    expect(buildShort.mock.calls[0][1]).toMatchObject({ sequenceId: 'src', name: 'Tap 1 - short 1' });
   });
 
   it('dryRun builds nothing', async () => {
@@ -483,6 +634,17 @@ describe('workflow_recap', () => {
     expect(result.success).toBe(true);
   });
 
+  it('resolves the source once and passes its id to plan and build', async () => {
+    readSequence.mockReset()
+      .mockResolvedValueOnce({ sequenceId: 'src', sequenceName: 'Tap 1', frameDuration: 0.04, endTime: 400, clips: [] })
+      .mockResolvedValue({ sequenceId: 'other', sequenceName: 'Other', frameDuration: 0.04, endTime: 400, clips: [] });
+    planRecap.mockReset().mockResolvedValueOnce({ success: true, status: 'running', progress: 0.5 }).mockResolvedValueOnce(plan);
+    const result = await runPolling('workflow_recap', ctxWith());
+    expect(result.success).toBe(true);
+    expect(planRecap.mock.calls.map((c) => c[1].sequenceId)).toEqual(['src', 'src']);
+    expect(buildRecap.mock.calls[0][1].sequenceId).toBe('src');
+  });
+
   it('dryRun plans only', async () => {
     const result = await runTool('workflow_recap', ctxWith(), { dryRun: true });
     expect(buildRecap).not.toHaveBeenCalled();
@@ -523,6 +685,12 @@ describe('workflow_rough_cut', () => {
   it('hasVoiceover with music ducks the music on the new sequence', async () => {
     await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', musicPath: 'D:/m.mp3', hasVoiceover: true });
     expect(autoDuckMusic.mock.calls[0][1]).toMatchObject({ sequenceId: 'new1', dialogueTrackIndices: [0], musicTrackIndices: [1] });
+  });
+
+  it('a dry run plans against the resolved source sequence', async () => {
+    await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', targetSec: 30, dryRun: true });
+    expect(readSequence).toHaveBeenCalledTimes(1);
+    expect(assembleRoughCut.mock.calls[0][1]).toMatchObject({ sequenceId: 'src', dryRun: true });
   });
 
   it('requires targetSec without music', async () => {

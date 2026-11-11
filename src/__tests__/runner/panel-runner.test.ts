@@ -1,5 +1,5 @@
-import { PassThrough } from 'node:stream';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { PassThrough, Writable } from 'node:stream';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerPanelRunner, resolveRunnerTempDir, startPanelRunner } from '../../runner/panel-runner.js';
@@ -45,13 +45,20 @@ describe('startPanelRunner', () => {
 
   it('runs a tool and returns the result with the same id, forwarding progress', async () => {
     const t = setup(async (name, args, options) => {
-      options?.progress?.(1, 2, 'Buoc 1');
+      options?.progress?.(0, 2, 'Buoc 1');
+      options?.progress?.(0.4, 2, 'Buoc 1 40%');
+      options?.progress?.(1, 2, 'Buoc 2');
       return { success: true, name, args };
     });
     t.send({ type: 'run', id: 'a', tool: 'search_tools', args: { query: 'x' } });
     const result = await t.waitFor((l) => l.type === 'result');
     expect(result).toEqual({ type: 'result', id: 'a', result: { success: true, name: 'search_tools', args: { query: 'x' } } });
-    expect(t.lines).toContainEqual({ type: 'progress', id: 'a', step: 1, stepCount: 2, label: 'Buoc 1' });
+    // progress is the amount done; step is the 1-based step being run.
+    expect(t.lines.filter((l) => l.type === 'progress')).toEqual([
+      { type: 'progress', id: 'a', step: 1, progress: 0, stepCount: 2, label: 'Buoc 1' },
+      { type: 'progress', id: 'a', step: 1, progress: 0.4, stepCount: 2, label: 'Buoc 1 40%' },
+      { type: 'progress', id: 'a', step: 2, progress: 1, stepCount: 2, label: 'Buoc 2' },
+    ]);
     t.input.end();
     await t.runner.done;
   });
@@ -120,6 +127,38 @@ describe('startPanelRunner', () => {
     await t.runner.done;
   });
 
+  it('survives a broken output pipe: no throw, later sends are dropped, the run still completes', async () => {
+    const input = new PassThrough();
+    let writes = 0;
+    const output = new Writable({
+      write(_chunk, _enc, callback) {
+        writes++;
+        callback(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+      },
+    });
+    const stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    let finished = false;
+    try {
+      const runner = startPanelRunner({ input, output }, {
+        executeTool: async (_n: string, _a: unknown, options?: { progress?: any }) => {
+          await new Promise((r) => setTimeout(r, 5));
+          options?.progress?.(0, 1, 'x');
+          finished = true;
+          return { success: true };
+        },
+      } as any);
+      input.write(`${JSON.stringify({ type: 'run', id: 'a', tool: 't', args: {} })}\n`);
+      while (!finished) await new Promise((r) => setTimeout(r, 5));
+      await new Promise((r) => setTimeout(r, 10));
+      input.end();
+      await runner.done;
+    } finally {
+      stderr.mockRestore();
+    }
+    expect(finished).toBe(true);
+    expect(writes).toBe(1); // only "ready" reached the broken pipe
+  });
+
   it('turns a thrown tool error into a failed result', async () => {
     const t = setup(async () => {
       throw new Error('boom');
@@ -150,6 +189,22 @@ describe('registerPanelRunner', () => {
       other: 1,
       runner: { nodePath: '/usr/bin/node', cliPath: '/app/dist/cli.js' },
     });
+  });
+
+  it('backs up an unparseable config before replacing it, and says so', async () => {
+    const configPath = join(dir, 'config.json');
+    await writeFile(configPath, '{ not json');
+    const stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await registerPanelRunner('/c.js', '/n', configPath);
+      expect(stderr.mock.calls.map((c) => String(c[0])).join('')).toMatch(/config\.json\.bak-/);
+    } finally {
+      stderr.mockRestore();
+    }
+    const backups = (await readdir(dir)).filter((f) => f.startsWith('config.json.bak-'));
+    expect(backups).toHaveLength(1);
+    expect(await readFile(join(dir, backups[0]!), 'utf8')).toBe('{ not json');
+    expect(JSON.parse(await readFile(configPath, 'utf8'))).toEqual({ runner: { nodePath: '/n', cliPath: '/c.js' } });
   });
 
   it('creates the directory and file when missing', async () => {

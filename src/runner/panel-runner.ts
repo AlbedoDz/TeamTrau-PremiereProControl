@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { PremiereProTools } from '../tools/index.js';
@@ -21,8 +21,21 @@ export function startPanelRunner(
   io: { input: NodeJS.ReadableStream; output: NodeJS.WritableStream },
   tools: RunnerTools,
 ): { done: Promise<void> } {
+  // A panel that went away leaves a broken stdout pipe: stop writing, never crash the runner.
+  let outputBroken = false;
+  const markBroken = (error: unknown): void => {
+    if (outputBroken) return;
+    outputBroken = true;
+    process.stderr.write(`[panel-runner] output closed: ${error instanceof Error ? error.message : String(error)}\n`);
+  };
+  io.output.on('error', markBroken);
   const send = (message: Record<string, unknown>): void => {
-    io.output.write(`${JSON.stringify(message)}\n`);
+    if (outputBroken) return;
+    try {
+      io.output.write(`${JSON.stringify(message)}\n`);
+    } catch (error) {
+      markBroken(error);
+    }
   };
   const log = (level: 'info' | 'warn' | 'error', message: string): void => send({ type: 'log', level, message });
 
@@ -34,7 +47,9 @@ export function startPanelRunner(
   async function execute(run: RunMessage, controller: AbortController): Promise<void> {
     try {
       const result = await tools.executeTool(run.tool, run.args, {
-        progress: (step, stepCount, label) => send({ type: 'progress', id: run.id, step, stepCount, label }),
+        // `progress` is the amount done (rises, may be fractional); `step` is the 1-based step being run.
+        progress: (progress, stepCount, label) =>
+          send({ type: 'progress', id: run.id, step: Math.min(stepCount, Math.floor(progress) + 1), progress, stepCount, label }),
         signal: controller.signal,
       });
       send({ type: 'result', id: run.id, result });
@@ -155,13 +170,39 @@ export async function readPanelConfig(configPath: string = defaultPanelConfigPat
   }
 }
 
-/** Merge `runner: { nodePath, cliPath }` into the panel config, keeping every other key. */
+/**
+ * Merge `runner: { nodePath, cliPath }` into the panel config, keeping every other key. A config
+ * that exists but is not a JSON object is copied to `config.json.bak-<timestamp>` first (and that
+ * is printed to stderr) instead of being silently replaced.
+ */
 export async function registerPanelRunner(
   cliPath: string,
   nodePath: string = process.execPath,
   configPath: string = defaultPanelConfigPath(),
 ): Promise<string> {
-  const config = await readPanelConfig(configPath);
+  let config: Record<string, any> = {};
+  let raw: string | null = null;
+  try {
+    raw = await readFile(configPath, 'utf8');
+  } catch {
+    raw = null;
+  }
+  if (raw !== null && raw.trim()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
+    }
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      config = parsed as Record<string, any>;
+    } else {
+      const backupPath = `${configPath}.bak-${new Date().toISOString().replace(/[-:.]/g, '')}`;
+      await copyFile(configPath, backupPath);
+      process.stderr.write(`Panel config ${configPath} was not valid JSON; copied it to ${backupPath} before writing a new one.
+`);
+    }
+  }
   config.runner = { nodePath, cliPath };
   await mkdir(dirname(configPath), { recursive: true });
   await writeFile(configPath, JSON.stringify(config, null, 2));

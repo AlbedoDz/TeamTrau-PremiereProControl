@@ -3,14 +3,14 @@
  * track. The caption track goes onto a copy of the sequence; the source is never touched.
  */
 import type { ToolContext } from '../context.js';
-import { isError, readSequence } from '../domains/cleanup.js';
+import { isError } from '../domains/cleanup.js';
 import { ensureBackup } from '../domains/editing.js';
 import { importMedia } from '../domains/media.js';
 import { ensureRootBin } from '../domains/project.js';
 import { createCaptionTrack, duplicateSequence } from '../domains/sequence.js';
 import { createCaptionsFromTranscript } from '../domains/subtitles.js';
 import type { TranscriptArgs } from '../domains/shorts.js';
-import { awaitTranscript, runSteps, uniqueSequenceName, type StepOutcome, type WorkflowResult, type WorkflowStep } from './steps.js';
+import { awaitTranscript, resolveSource, runSteps, uniqueSequenceName, type StepOutcome, type WorkflowResult, type WorkflowStep } from './steps.js';
 
 export interface SubtitlesArgs extends TranscriptArgs {
   name?: string | undefined;
@@ -29,7 +29,8 @@ const failure = (error: unknown): StepOutcome => ({
 export async function workflowSubtitles(ctx: ToolContext, args: SubtitlesArgs): Promise<WorkflowResult> {
   const warnings: string[] = [];
   const summary: Record<string, unknown> = {};
-  let sourceId = args.sequenceId;
+  let sourceId = '';
+  let sourceName = '';
   let srtPath = '';
   let copyId = '';
   let projectItemId = '';
@@ -37,9 +38,12 @@ export async function workflowSubtitles(ctx: ToolContext, args: SubtitlesArgs): 
   const transcribe: WorkflowStep = {
     label: 'Nhận dạng giọng nói',
     run: async () => {
-      const transcript = await awaitTranscript(ctx, args, 'Nhận dạng giọng nói');
+      const source = await resolveSource(ctx, args);
+      if (isError(source)) return failure(source.error);
+      sourceId = source.sequenceId;
+      sourceName = source.sequenceName;
+      const transcript = await awaitTranscript(ctx, { ...args, sequenceId: sourceId }, 'Nhận dạng giọng nói');
       if ('success' in transcript) return failure(transcript.error);
-      sourceId = transcript.sequenceId;
       if (transcript.words.length === 0) return failure('Transcript rỗng (không có lời thoại), không có phụ đề để tạo.');
       return { ok: true, detail: { words: transcript.words.length } };
     },
@@ -49,7 +53,7 @@ export async function workflowSubtitles(ctx: ToolContext, args: SubtitlesArgs): 
     label: 'Tạo file phụ đề (SRT)',
     run: async () => {
       const result: any = await createCaptionsFromTranscript(ctx, {
-        ...(sourceId ? { sequenceId: sourceId } : {}),
+        sequenceId: sourceId,
         dialogueTrackIndices: args.dialogueTrackIndices,
         glossary: args.glossary,
         engine: args.engine,
@@ -77,10 +81,8 @@ export async function workflowSubtitles(ctx: ToolContext, args: SubtitlesArgs): 
       const backup = await ensureBackup(ctx, args.backup);
       if ('failure' in backup) return failure(backup.failure);
       if (backup.path) summary.backupPath = backup.path;
-      const source = await readSequence(ctx, sourceId);
-      if (isError(source)) return failure(source.error);
-      const name = await uniqueSequenceName(ctx, args.name ?? `${source.sequenceName} - phụ đề`);
-      const copy: any = await duplicateSequence(ctx, source.sequenceId, name);
+      const name = await uniqueSequenceName(ctx, args.name ?? `${sourceName} - phụ đề`);
+      const copy: any = await duplicateSequence(ctx, sourceId, name);
       if (!copy || copy.success === false || !copy.newSequenceId) return failure(copy?.error ?? 'Không nhân bản được sequence.');
       copyId = String(copy.newSequenceId);
       summary.outputName = name;

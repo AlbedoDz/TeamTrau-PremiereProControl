@@ -4,10 +4,10 @@
  * sequence, and when one fails the earlier ones are kept.
  */
 import type { ToolContext } from '../context.js';
-import { isError, readSequence } from '../domains/cleanup.js';
+import { isError } from '../domains/cleanup.js';
 import { ensureBackup } from '../domains/editing.js';
 import { buildShort, findHighlightCandidates, type TranscriptArgs } from '../domains/shorts.js';
-import { awaitTranscript, failure, runSteps, uniqueSequenceName, type WorkflowResult, type WorkflowStep } from './steps.js';
+import { awaitTranscript, failure, resolveSource, runSteps, uniqueSequenceName, type WorkflowResult, type WorkflowStep } from './steps.js';
 
 export interface ShortsArgs extends TranscriptArgs {
   count: number;
@@ -55,13 +55,13 @@ export async function workflowShorts(ctx: ToolContext, args: ShortsArgs): Promis
   const transcribe: WorkflowStep = {
     label: 'Nhận dạng giọng nói',
     run: async () => {
-      const transcript = await awaitTranscript(ctx, args, 'Nhận dạng giọng nói');
-      if ('success' in transcript) return failure(transcript.error);
-      sourceId = transcript.sequenceId;
-      if (transcript.words.length === 0) return failure('Transcript rỗng (không có lời thoại), không tìm được đoạn nổi bật.');
-      const source = await readSequence(ctx, sourceId);
+      const source = await resolveSource(ctx, args);
       if (isError(source)) return failure(source.error);
+      sourceId = source.sequenceId;
       sourceName = source.sequenceName;
+      const transcript = await awaitTranscript(ctx, { ...args, sequenceId: sourceId }, 'Nhận dạng giọng nói');
+      if ('success' in transcript) return failure(transcript.error);
+      if (transcript.words.length === 0) return failure('Transcript rỗng (không có lời thoại), không tìm được đoạn nổi bật.');
       return { ok: true, detail: { words: transcript.words.length } };
     },
   };
@@ -144,7 +144,7 @@ export async function workflowShorts(ctx: ToolContext, args: ShortsArgs): Promis
       const shorts = (summary.shorts as unknown[] | undefined) ?? [];
       shorts.push({ name, sequenceId: built.shortSequenceId, durationSec: built.durationSec, verified: built.verified });
       summary.shorts = shorts;
-      return { ok: true, detail: { name, sequenceId: built.shortSequenceId, durationSec: built.durationSec, verified: built.verified }, ...created };
+      return { ok: true, detail: { name, sequenceId: built.shortSequenceId, durationSec: built.durationSec, verified: built.verified }, ...created, complete: true };
     },
   }));
 
