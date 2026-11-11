@@ -144,7 +144,7 @@ export async function qaSequence(
 
 // ------------------------------------------------------- apply_dialogue_chain
 
-async function applyDialogueChain(
+export async function applyDialogueChain(
   ctx: ToolContext,
   args: {
     sequenceId?: string;

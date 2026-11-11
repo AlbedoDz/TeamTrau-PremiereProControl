@@ -26,6 +26,7 @@ import type { SequenceClip } from '../../analysis/cleanup.js';
 import { isError, normalizeLoudness, readSequence, removeRanges, type SequenceSnapshot } from './cleanup.js';
 import { ensureBackup, qaSequence } from './editing.js';
 import { duplicateSequence } from './sequence.js';
+import { uniqueSequenceName } from '../workflows/steps.js';
 import { sidecarMissingResult, sidecarPython } from '../../analysis/sidecar.js';
 import { scoreAll } from './roughcut.js';
 import {
@@ -290,25 +291,6 @@ function mapAfterRemoval(removed: Array<{ start: number; end: number }>): (t: nu
   };
 }
 
-/** A name not used by any sequence yet: "name", then "name (2)", "name (3)", ... (accents kept). Task 9 replaces this with a shared helper. */
-async function uniqueRecapName(ctx: ToolContext, name: string): Promise<string> {
-  const result: any = await ctx.bridge.executeScript(`
-    try {
-      var names = [];
-      for (var i = 0; i < app.project.sequences.numSequences; i++) names.push(String(app.project.sequences[i].name));
-      return JSON.stringify({ success: true, names: names });
-    } catch (e) {
-      return JSON.stringify({ success: false, error: e.toString() });
-    }
-  `);
-  const taken = new Set<string>(Array.isArray(result?.names) ? result.names : []);
-  if (!taken.has(name)) return name;
-  for (let n = 2; ; n++) {
-    const candidate = `${name} (${n})`;
-    if (!taken.has(candidate)) return candidate;
-  }
-}
-
 /** Deletes a sequence, as the Auto Reframe script deletes its subsequence; true when it is gone. */
 async function deleteSequenceById(ctx: ToolContext, sequenceId: string): Promise<boolean> {
   try {
@@ -403,10 +385,10 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   const backupPath = backup.path;
   const withBackup = (extra: Partial<BuildRecapResult>): Partial<BuildRecapResult> => ({ ...(backupPath ? { backupPath } : {}), ...extra });
 
-  const finalName = await uniqueRecapName(ctx, args.name);
+  const finalName = await uniqueSequenceName(ctx, args.name);
   const vertical = args.aspect === '9:16';
   // The 9:16 reframe makes its own sequence from the cut copy; the copy keeps a plain name.
-  const copyName = vertical ? await uniqueRecapName(ctx, `${finalName} (16:9)`) : finalName;
+  const copyName = vertical ? await uniqueSequenceName(ctx, `${finalName} (16:9)`) : finalName;
 
   // 1. Copy the sequence; the original is never touched.
   const copy: any = await duplicateSequence(ctx, snapshot.sequenceId, copyName);
