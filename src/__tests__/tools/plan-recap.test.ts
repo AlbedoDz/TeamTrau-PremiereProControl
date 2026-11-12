@@ -57,7 +57,9 @@ beforeEach(() => {
 
 describe('plan_recap schema', () => {
   it('applies the defaults', () => {
-    expect(parse()).toMatchObject({ targetSec: 90, mode: 'auto', minSegmentSec: 4, maxSegmentSec: 20 });
+    expect(parse()).toMatchObject({ targetSec: 90, mode: 'auto', maxSegmentSec: 20 });
+    // Left unset so each mode applies its own floor (8 s speech, 4 s shots).
+    expect(parse().minSegmentSec).toBeUndefined();
   });
   it('rejects a minimum above the maximum', () => {
     expect(() => parse({ minSegmentSec: 30 })).toThrow(/minSegmentSec/);
@@ -146,6 +148,19 @@ describe('plan_recap auto and speech modes', () => {
     // totalSec is the recap's length, not the sequence's.
     expect(result.totalSec).toBeCloseTo(sum, 2);
     expect(result.sequenceSec).toBe(600);
+  });
+
+  it('keeps speech segments at least 8 s long by default', async () => {
+    // 3 s sentences: the old 4 s floor let single fragments through.
+    const short = Array.from({ length: 200 }, (_, i) => ({
+      id: i, start: i * 3, end: i * 3 + 2.8, text: `ý${i} một hai ba`, firstWord: i, lastWord: i,
+    }));
+    const shortWords = short.map((s) => ({ w: s.text, start: s.start, end: s.end, p: 1, trackIndex: 0, clipId: 'a1' }));
+    loadTranscript.mockResolvedValue(ready({ sentences: short, words: shortWords }));
+    const result: any = await tool.run(ctxWith(clips), parse());
+    expect(result.mode).toBe('speech');
+    expect(result.segments.length).toBeGreaterThan(0);
+    for (const s of result.segments) expect(s.end - s.start).toBeGreaterThanOrEqual(8);
   });
 
   it('never ends a recap segment on an unanswered question', async () => {

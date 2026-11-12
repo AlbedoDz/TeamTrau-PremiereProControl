@@ -43,9 +43,18 @@ import {
 export type PlanRecapArgs = TranscriptArgs & {
   targetSec: number;
   mode: 'auto' | 'speech' | 'shots';
-  minSegmentSec: number;
+  /** Omitted: SPEECH_MIN_SEGMENT_SEC in speech mode, SHOT_MIN_SEGMENT_SEC in shot mode. */
+  minSegmentSec?: number | undefined;
   maxSegmentSec: number;
 };
+
+/**
+ * Default shortest segment per mode. Speech segments are whole sentences, and live on a
+ * 69-minute talk show a 4 s floor produced 21 mid-thought fragments; 8 s joins them into
+ * complete points. Shot segments are runs of 4-6 s (SHOT_MAX_SEC caps them).
+ */
+const SPEECH_MIN_SEGMENT_SEC = 8;
+const SHOT_MIN_SEGMENT_SEC = 4;
 
 export interface PlanRecapResult {
   success: true;
@@ -171,10 +180,20 @@ export async function planRecap(
   ctx: ToolContext,
   args: PlanRecapArgs,
 ): Promise<PlanRecapResult | TranscriptPending | { success: false; error: string }> {
-  const opts: RecapOpts = { targetSec: args.targetSec, minSegmentSec: args.minSegmentSec, maxSegmentSec: args.maxSegmentSec };
+  const opts: RecapOpts = {
+    targetSec: args.targetSec,
+    minSegmentSec: Math.min(args.minSegmentSec ?? SPEECH_MIN_SEGMENT_SEC, args.maxSegmentSec),
+    maxSegmentSec: args.maxSegmentSec,
+  };
   const snapshot = await readSequence(ctx, args.sequenceId);
   if (isError(snapshot)) return { success: false, error: snapshot.error };
-  const shotOpts: RecapOpts = { ...opts, maxSegmentSec: Math.min(opts.maxSegmentSec, SHOT_MAX_SEC), frameSec: snapshot.frameDuration };
+  const shotMax = Math.min(opts.maxSegmentSec, SHOT_MAX_SEC);
+  const shotOpts: RecapOpts = {
+    ...opts,
+    minSegmentSec: Math.min(args.minSegmentSec ?? SHOT_MIN_SEGMENT_SEC, shotMax),
+    maxSegmentSec: shotMax,
+    frameSec: snapshot.frameDuration,
+  };
 
   if (args.mode === 'shots') return (await planShots(snapshot, shotOpts, [])) as never;
 
@@ -499,9 +518,9 @@ export const recapTools: ToolModule[] = [
       engine: z.enum(ENGINE_IDS).optional().describe('Speech engine; use the same value as transcribe_sequence.'),
       targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90).'),
       mode: z.enum(['auto', 'speech', 'shots']).default('auto').describe('auto (default) picks speech when the dialogue covers at least 30% of the sequence, else shots.'),
-      minSegmentSec: z.number().positive().default(4).describe('Shortest segment in seconds (default 4).'),
+      minSegmentSec: z.number().positive().optional().describe('Shortest segment in seconds (default 8 for speech, 4 for shots).'),
       maxSegmentSec: z.number().positive().default(20).describe('Longest segment in seconds (default 20; shot segments are capped at 6).'),
-    }).refine((a) => a.minSegmentSec <= a.maxSegmentSec, { message: 'minSegmentSec must not exceed maxSegmentSec.' }),
+    }).refine((a) => a.minSegmentSec === undefined || a.minSegmentSec <= a.maxSegmentSec, { message: 'minSegmentSec must not exceed maxSegmentSec.' }),
     run: (ctx, args) => planRecap(ctx, args),
   },
   {

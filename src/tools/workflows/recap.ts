@@ -19,7 +19,6 @@ export interface RecapArgs extends TranscriptArgs {
   backup: boolean;
 }
 
-const MIN_SEGMENT_SEC = 4;
 const MAX_SEGMENT_SEC = 20;
 const RECAP_LUFS = -14;
 
@@ -45,7 +44,6 @@ export async function workflowRecap(ctx: ToolContext, args: RecapArgs): Promise<
           engine: args.engine,
           targetSec: args.targetSec,
           mode: 'auto',
-          minSegmentSec: MIN_SEGMENT_SEC,
           maxSegmentSec: MAX_SEGMENT_SEC,
         }),
       );
