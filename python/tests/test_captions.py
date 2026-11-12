@@ -539,3 +539,29 @@ def test_caption_preview_writes_png_of_requested_size(tmp_path):
     rgba = image.convert("RGBA")
     assert rgba.getchannel("A").getextrema() == (255, 255)
     assert _near_box(rgba, (0x22, 0xD3, 0xEE)) is not None
+
+
+# SHA-256 of the RGBA bytes drawn by the renderer at commit 0a5bf25 (before looks existed).
+GOLDEN_CLEAN = "b48d5c668ae99d3e9c490d139af21427221e246c5ce3d576ce989785507c1a70"
+GOLDEN_POP = "c82fc4a7dfba0973ded6879c972c3a557334ec245b10ef2d35c7d450f789f245"
+
+
+@pytest.mark.parametrize("style,pieces,active,scale,golden", [
+    ("clean", ["Chào", "mừng", "các", "bạn", "hôm", "nay"], 1, 1.0, GOLDEN_CLEAN),
+    ("pop", ["CHÀO", "MỪNG", "CÁC", "BẠN"], 2, 1.075, GOLDEN_POP),
+])
+def test_legacy_look_output_is_byte_identical_to_pre_look_renderer(style, pieces, active, scale, golden):
+    import hashlib
+
+    look = captions.legacy_look(style, 1080, 1920)
+    image = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
+    font = captions.caption_font(look["font"], look["sizePx"])
+    captions._draw(image, font, pieces, active, scale, 1080, 1920, look)
+    assert hashlib.sha256(image.tobytes()).hexdigest() == golden
+
+
+def test_preview_first_group_breaks_after_punctuation_with_closing_quote():
+    for text in ('say "hi." now ok', "see (this.) now ok"):
+        words = captions._first_cluster(text, 5, 40)
+        assert words[-1] in ('"hi."', "(this.)")
+        assert len(words) == 2

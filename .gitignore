@@ -27,3 +27,6 @@ python/.venv/
 # Windows installer build
 .installer-staging/
 .installer-cache/
+
+# Unexpanded %SystemDrive% cache dir created by pip/python runs on Windows
+python/%SystemDrive%/

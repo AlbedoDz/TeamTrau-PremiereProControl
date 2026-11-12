@@ -20,6 +20,7 @@ wraps at the word boundary nearest the middle of the group.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -481,7 +482,7 @@ def render(spec: dict) -> dict:
     return {"path": str(out_path), "frames": frame_count}
 
 
-_BREAK_AFTER = (".", ",", "!", "?", ";", ":", "…")
+_BREAK_AFTER = re.compile(r"[.,;:!?…][\"')\]”’]*$")
 
 
 def _first_cluster(text: str, max_words: int, max_chars: int) -> list[str]:
@@ -491,7 +492,7 @@ def _first_cluster(text: str, max_words: int, max_chars: int) -> list[str]:
         if cluster and len(" ".join([*cluster, word])) > max_chars:
             break
         cluster.append(word)
-        if len(cluster) >= max_words or word.endswith(_BREAK_AFTER):
+        if len(cluster) >= max_words or _BREAK_AFTER.search(word):
             break
     return cluster
 
