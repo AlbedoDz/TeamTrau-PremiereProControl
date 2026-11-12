@@ -111,7 +111,7 @@ describe('gui-core buildArgs', () => {
   it('asks for the footage folder of the rough cut, and a length when there is no music', () => {
     const args = core.buildArgs(card('rough_cut'), {});
     expect(core.missingRequired(card('rough_cut'), args)).toEqual([
-      'Cần điền: Thư mục footage.',
+      'Cần điền: Footage (bin, thư mục hoặc mục đang chọn).',
       'Cần điền: Thời lượng mong muốn (giây), hoặc chọn file nhạc.',
     ]);
     expect(core.missingRequired(card('rough_cut'), core.buildArgs(card('rough_cut'), { folderPath: ' D:\\clips ', targetSec: '45' }))).toEqual([]);
@@ -443,6 +443,37 @@ describe('gui-core vi', () => {
 
   it('copes with an empty result', () => {
     expect(core.vi({})).toContain('không rõ nguyên nhân');
+  });
+
+  it('translates the project media lookup errors', () => {
+    expect(core.vi({ error: 'File not found: "song.mp3" is neither a file on disk nor an imported audio/video item in the project.' }))
+      .toBe('Không tìm thấy "song.mp3" trên máy hay trong dự án. Bấm "Từ dự án…" để chọn file đã import.');
+    expect(core.vi({ error: '"01 Foot" is neither a folder on disk nor a bin in the project.' })).toContain('không phải bin trong dự án');
+    expect(core.vi({ error: 'Cannot use bin "B-roll": it holds no video clips (pass recursive=true to include sub-bins).' }))
+      .toBe('Bin "B-roll" không có clip video nào (bin con không được tính).');
+  });
+});
+
+describe('gui-core projectChoices', () => {
+  const media = {
+    bins: [{ path: '01 Footage', selected: false }, { path: '02 Music', selected: false }, { path: 'Empty', selected: false }],
+    items: [
+      { name: 'a.mp4', bin: '01 Footage', mediaPath: 'E:/a.mp4', kind: 'video', offline: false, selected: true },
+      { name: 'b.mp4', bin: '01 Footage', mediaPath: 'E:/b.mp4', kind: 'video', offline: false, selected: false },
+      { name: 'song.mp3', bin: '02 Music', mediaPath: 'D:/song.mp3', kind: 'audio', offline: false, selected: false },
+    ],
+  };
+
+  it('offers the selection and the bins that hold video for footage', () => {
+    expect(core.projectChoices(media, 'folderPath')).toEqual([
+      { value: '@selection', label: 'Mục đang chọn trong Project (1 clip)' },
+      { value: '01 Footage', label: 'Bin 01 Footage (2 clip)' },
+    ]);
+  });
+
+  it('offers imported audio by its file path for music', () => {
+    expect(core.projectChoices(media, 'musicPath')).toEqual([{ value: 'D:/song.mp3', label: '02 Music/song.mp3' }]);
+    expect(core.projectChoices({}, 'musicPath')).toEqual([]);
   });
 });
 

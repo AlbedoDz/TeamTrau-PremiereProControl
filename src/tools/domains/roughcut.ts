@@ -13,15 +13,22 @@ import { analysisConcurrency, mapLimit } from '../../analysis/pool.js';
 import { ffmpegMissingResult, findFfTool, probeMedia, runFf } from '../../analysis/ffmpeg.js';
 import { bestWindows, parseMetric, planRoughCut, scoreWindows, type Candidate, type WindowScore } from '../../analysis/roughcut.js';
 import { backupProject, BACKUP_FAILED_HINT, isError, readSequence } from './cleanup.js';
+import { FOOTAGE_SOURCE_HELP, resolveProjectFootage, VIDEO_EXTENSIONS } from '../project-media.js';
 
-const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.mxf', '.mkv', '.m4v', '.avi', '.mts', '.m2ts', '.webm']);
 const MAX_FILES = 500;
 /** Keyframe sampling below this many samples per second is too sparse to score; decode one frame per second instead. */
 const MIN_SAMPLES_PER_SECOND = 0.2;
 
-export async function listFootage(args: { mediaPaths?: string[] | undefined; folderPath?: string | undefined; recursive?: boolean | undefined }): Promise<{ paths: string[] } | { error: string }> {
+/** Video files from mediaPaths, a folder on disk, a project bin, or the Project panel selection. */
+export async function listFootage(ctx: ToolContext, args: { mediaPaths?: string[] | undefined; folderPath?: string | undefined; recursive?: boolean | undefined }): Promise<{ paths: string[] } | { error: string }> {
   if (args.mediaPaths?.length) return { paths: args.mediaPaths };
   if (!args.folderPath) return { error: 'Provide mediaPaths or folderPath.' };
+  const fromProject = await resolveProjectFootage(ctx, args.folderPath, args.recursive === true);
+  if (fromProject) {
+    if ('error' in fromProject) return fromProject;
+    if (fromProject.paths.length > MAX_FILES) return { error: `${fromProject.paths.length} files is more than the ${MAX_FILES} limit. Pick a smaller bin.` };
+    return { paths: fromProject.paths };
+  }
   const found: string[] = [];
   const walk = async (dir: string): Promise<void> => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -100,10 +107,10 @@ export async function scoreAll(
 // --------------------------------------------------------------- score_clips
 
 export async function scoreClips(
-  _ctx: ToolContext,
+  ctx: ToolContext,
   args: { mediaPaths?: string[]; folderPath?: string; recursive: boolean; windowSeconds: number; topPerFile: number },
 ): Promise<any> {
-  const listed = await listFootage(args);
+  const listed = await listFootage(ctx, args);
   if ('error' in listed) return { success: false, error: listed.error };
   const all = await scoreAll(listed.paths, args.windowSeconds, 'score_clips');
   if ('failure' in all) return all.failure;
@@ -190,7 +197,7 @@ export async function assembleRoughCut(
 ): Promise<any> {
   const before = await readSequence(ctx, args.sequenceId);
   if (isError(before)) return { success: false, error: before.error };
-  const listed = await listFootage(args);
+  const listed = await listFootage(ctx, args);
   if ('error' in listed) return { success: false, error: listed.error };
 
   const all = await scoreAll(listed.paths, args.shotSeconds, 'assemble_rough_cut');
@@ -313,8 +320,8 @@ export async function closeFrameGaps(ctx: ToolContext, sequenceId: string): Prom
 
 const sourceArgs = {
   mediaPaths: z.array(z.string()).optional().describe('Video files to choose from. Use this or folderPath.'),
-  folderPath: z.string().optional().describe('Folder of video files to choose from. Use this or mediaPaths.'),
-  recursive: z.boolean().default(false).describe('Include subfolders of folderPath (default false).'),
+  folderPath: z.string().optional().describe(FOOTAGE_SOURCE_HELP),
+  recursive: z.boolean().default(false).describe('Include subfolders or sub-bins of folderPath (default false).'),
 };
 
 export const roughcutTools: ToolModule[] = [

@@ -122,6 +122,18 @@
     gap: 6px;
 }
 
+.gui-field select.gui-projectlist {
+    margin-top: 6px;
+}
+
+.gui-field .gui-hint {
+    margin: 6px 0 0;
+}
+
+.gui-field .gui-hint:empty {
+    display: none;
+}
+
 .gui-pathrow button {
     flex: 0 0 auto;
     padding: 0 12px;

@@ -7,6 +7,7 @@ import { workflowSubtitles } from '../workflows/subtitles.js';
 import { workflowRecap } from '../workflows/recap.js';
 import { workflowShorts } from '../workflows/shorts.js';
 import { workflowRoughCut } from '../workflows/rough-cut.js';
+import { FOOTAGE_SOURCE_HELP, MUSIC_PATH_HELP } from '../project-media.js';
 
 const sequenceIdArg = z.string().optional().describe('Sequence ID. Defaults to the active sequence.');
 const dialogueArg = z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech. Defaults to every audio track that has a clip with a media file.');
@@ -95,13 +96,13 @@ export const workflowToolsTools: ToolModule[] = [
   {
     name: 'workflow_rough_cut',
     description:
-      'One-call rough cut from a folder of footage onto a NEW empty sequence "<folder name> - rough cut" (a copy of the given or active sequence with its contents cleared, so frame rate and size carry over; that sequence is never changed). Without musicPath: score_clips then assemble_rough_cut to targetSec, with shot length from shotSeconds or pace (calm 4, balanced 3, energetic 2). With musicPath: assemble_beat_cut cut to the beat, pace picks the preset. hasVoiceover=true adds auto_duck_music (music track 2 ducked under audio track 1). dryRun=true reports the planned shots and creates nothing. Reports per-step progress and can be cancelled. Needs ffmpeg.',
+      'One-call rough cut from a folder of footage, a project bin, or the Project panel selection onto a NEW empty sequence "<folder or bin name> - rough cut" (a copy of the given or active sequence with its contents cleared, so frame rate and size carry over; that sequence is never changed). Without musicPath: score_clips then assemble_rough_cut to targetSec, with shot length from shotSeconds or pace (calm 4, balanced 3, energetic 2). With musicPath: assemble_beat_cut cut to the beat, pace picks the preset. hasVoiceover=true adds auto_duck_music (music track 2 ducked under audio track 1). dryRun=true reports the planned shots and creates nothing. Reports per-step progress and can be cancelled. Needs ffmpeg.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence to copy settings from. Defaults to the active sequence.'),
       name: z.string().min(1).optional().describe('Name of the new sequence. Default "<folder name> - rough cut"; " (2)" is added when the name is taken.'),
-      folderPath: z.string().min(1).describe('Folder of video files to choose from.'),
+      folderPath: z.string().min(1).describe(FOOTAGE_SOURCE_HELP.replace(' Use this or mediaPaths.', '')),
       targetSec: z.number().positive().optional().describe('Length of the cut in seconds. Required without musicPath; with music it limits how much of the song is cut (default the whole song).'),
-      musicPath: z.string().optional().describe('Absolute path to a music file; the cut follows its beats.'),
+      musicPath: z.string().optional().describe(`${MUSIC_PATH_HELP} The cut follows its beats.`),
       pace: z.enum(['calm', 'balanced', 'energetic']).default('balanced').describe('How fast the cut is (default balanced).'),
       shotSeconds: z.number().positive().optional().describe('Typical shot length without music. Overrides the pace default (calm 4, balanced 3, energetic 2).'),
       hasVoiceover: z.boolean().default(false).describe('A voice-over will sit on audio track 1: duck the music under it (needs musicPath) (default false).'),

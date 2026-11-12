@@ -90,11 +90,11 @@
       "id": "rough_cut",
       "tool": "workflow_rough_cut",
       "title": "Rough cut / Cắt theo nhạc",
-      "hint": "Chọn clip hay trong một thư mục và dựng vào sequence mới \"… - rough cut\".",
+      "hint": "Chọn clip hay trong một bin, thư mục hoặc các clip đang chọn trong Project, rồi dựng vào sequence mới \"… - rough cut\".",
       "fields": [
-        { "key": "folderPath", "label": "Thư mục footage", "type": "path", "default": "", "required": true, "placeholder": "footage" },
+        { "key": "folderPath", "label": "Footage (bin, thư mục hoặc mục đang chọn)", "type": "path", "default": "", "required": true, "placeholder": "01 Footage" },
         { "key": "targetSec", "label": "Thời lượng mong muốn (giây, bỏ qua khi có nhạc)", "type": "number", "default": "", "min": 5 },
-        { "key": "musicPath", "label": "File nhạc (để trống: không theo nhạc)", "type": "path", "default": "", "placeholder": "nhac.mp3" },
+        { "key": "musicPath", "label": "File nhạc trong dự án hoặc trên máy (để trống: không theo nhạc)", "type": "path", "default": "", "placeholder": "nhac.mp3" },
         {
           "key": "pace", "label": "Nhịp cắt", "type": "select", "default": "balanced",
           "options": [

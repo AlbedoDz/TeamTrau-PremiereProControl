@@ -10,6 +10,7 @@ import { autoDuckMusic, ensureBackup } from '../domains/editing.js';
 import { assembleBeatCut } from '../domains/music.js';
 import { assembleRoughCut, scoreClips } from '../domains/roughcut.js';
 import { duplicateSequence } from '../domains/sequence.js';
+import { PROJECT_SELECTION } from '../project-media.js';
 import { failure, resolveSource, runSteps, uniqueSequenceName, type WorkflowResult, type WorkflowStep } from './steps.js';
 
 export interface RoughCutArgs {
@@ -30,6 +31,7 @@ const MUSIC_TRACK = 1;
 const DIALOGUE_TRACK = 0;
 
 const folderName = (folderPath: string): string => {
+  if (folderPath === PROJECT_SELECTION) return 'Project selection';
   const parts = folderPath.split(/[\\/]+/).filter(Boolean);
   return parts[parts.length - 1] ?? 'footage';
 };

@@ -550,11 +550,61 @@
         if (field.type === 'path') {
             var pick = el('button', { type: 'button', className: 'utility', text: 'Chọn…', title: 'Chọn trong hộp thoại' });
             pick.onclick = function () { chooseInto(input, field.key === 'folderPath'); };
-            body.push(el('div', { className: 'gui-pathrow' }, [input, pick]));
+            var row = [input];
+            var note = null;
+            var list = null;
+            if (field.key === 'folderPath' || field.key === 'musicPath') {
+                var fromProject = el('button', { type: 'button', className: 'utility', text: 'Từ dự án…', title: 'Chọn bin hoặc file đã import trong dự án' });
+                note = el('div', { className: 'gui-hint' });
+                list = el('select', { className: 'gui-projectlist' });
+                list.style.display = 'none';
+                list.onchange = function () {
+                    if (list.value) input.value = list.value;
+                    list.style.display = 'none';
+                };
+                fromProject.onclick = function () { chooseFromProject(field.key, input, list, note, fromProject); };
+                row.push(fromProject);
+            }
+            row.push(pick);
+            body.push(el('div', { className: 'gui-pathrow' }, row));
+            if (list) body.push(list, note);
         } else {
             body.push(input);
         }
         return el('div', { className: 'gui-field' }, body);
+    }
+
+    /** Fills a list with the project's bins (footage) or audio items (music) to pick from. */
+    function chooseFromProject(fieldKey, input, list, note, button) {
+        note.textContent = 'Đang đọc dự án…';
+        button.disabled = true;
+        callTool('list_project_media', {}, function (result) {
+            button.disabled = false;
+            if (!result || result.success === false) {
+                note.textContent = Core.vi(result || {});
+                return;
+            }
+            var choices = Core.projectChoices(result, fieldKey);
+            while (list.firstChild) list.removeChild(list.firstChild);
+            if (choices.length === 0) {
+                list.style.display = 'none';
+                note.textContent = fieldKey === 'folderPath'
+                    ? 'Dự án chưa có bin nào chứa clip video.'
+                    : 'Dự án chưa có file nhạc nào. Import nhạc vào Premiere hoặc bấm "Chọn…".';
+                return;
+            }
+            list.appendChild(el('option', { value: '', text: fieldKey === 'folderPath' ? '— Chọn bin hoặc mục đang chọn —' : '— Chọn file nhạc —' }));
+            for (var i = 0; i < choices.length; i++) {
+                var option = el('option', { value: choices[i].value, text: choices[i].label });
+                if (choices[i].value === input.value) option.selected = true;
+                list.appendChild(option);
+            }
+            list.style.display = '';
+            note.textContent = fieldKey === 'folderPath' && choices[0].value === Core.PROJECT_SELECTION
+                ? '"Mục đang chọn" lấy các clip đang chọn trong panel Project lúc bấm chạy.'
+                : '';
+            list.focus();
+        });
     }
 
     function chooseInto(input, folder) {

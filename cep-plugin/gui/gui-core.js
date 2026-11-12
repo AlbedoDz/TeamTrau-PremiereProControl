@@ -502,7 +502,30 @@
         [/^Caption render failed(?:, nothing in the project was changed)?(?::\s*(.*))?$/i, 'Không dựng được phụ đề burn-in', true],
         [/^Auto Reframe did not return a sequence/i, 'Premiere không trả về sequence sau khi Auto Reframe. Thử lại, hoặc kiểm tra Auto Reframe trong Premiere.'],
         [/^No words fall in (?:the sequence|this range)/i, 'Không có từ nào trong đoạn này, nên không có phụ đề để tạo.'],
-        [/^Sequence not found/i, 'Không tìm thấy sequence. Bấm làm mới danh sách sequence rồi chọn lại.'],
+        [/^"(.+)" is neither a folder on disk nor a bin in the project/i, function (m) {
+            return '"' + m[1] + '" không phải thư mục trên máy, cũng không phải bin trong dự án. Bấm "Từ dự án…" để chọn bin.';
+        }],
+        [/^File not found: "(.+)" is neither a file on disk nor an imported/i, function (m) {
+            return 'Không tìm thấy "' + m[1] + '" trên máy hay trong dự án. Bấm "Từ dự án…" để chọn file đã import.';
+        }],
+        [/^Several bins are named "(.+)": (.+)\. Give the full bin path/i, function (m) {
+            return 'Có nhiều bin tên "' + m[1] + '": ' + m[2] + '. Gõ đủ đường dẫn bin, ví dụ "Cha/Con".';
+        }],
+        [/^"(.+)" matches (\d+) project items: (.+?)\. Give the bin path/i, function (m) {
+            return '"' + m[1] + '" trùng ' + m[2] + ' mục trong dự án: ' + m[3] + '. Gõ kèm bin ("bin/tên") hoặc chọn bằng "Từ dự án…".';
+        }],
+        [/^Nothing is selected in the Project panel/i, 'Chưa chọn gì trong panel Project. Chọn clip hoặc bin ở đó rồi chạy lại.'],
+        [/^No (\S+) item is selected in the Project panel/i, 'Chưa chọn file nhạc nào trong panel Project.'],
+        [/^Cannot use (.+?): its (\d+) video clip\(s\) are offline/i, function (m) {
+            return 'Không dùng được ' + m[1].replace('the Project panel selection', 'mục đang chọn') + ': cả ' + m[2] + ' clip video đều offline. Relink trong Premiere trước.';
+        }],
+        [/^Cannot use (.+?): it holds no video clips/i, function (m) {
+            return m[1].replace('the Project panel selection', 'Mục đang chọn').replace(/^bin/, 'Bin') + ' không có clip video nào (bin con không được tính).';
+        }],
+        [/^Project item "(.+)" is offline/i, function (m) {
+            return 'File "' + m[1] + '" trong dự án đang offline. Relink trong Premiere trước.';
+        }],
+        [/^Sequence not found/i,'Không tìm thấy sequence. Bấm làm mới danh sách sequence rồi chọn lại.'],
         [/^Tool '.*' not found/i, 'Không tìm thấy công cụ cần dùng. Cập nhật premiere-pro-mcp rồi mở lại panel.'],
         [/already exists|must not exist/i, 'File đã tồn tại và sẽ không bị ghi đè. Đổi tên hoặc chọn thư mục khác.'],
         [/ffmpeg.*(?:not found|missing|not installed)|(?:missing|not found).*ffmpeg/i, 'Thiếu ffmpeg. Chạy "premiere-pro-mcp --doctor" để kiểm tra rồi thử lại.'],
@@ -574,8 +597,48 @@
         return next && next !== message ? message + '\n' + next : message;
     }
 
+    var PROJECT_SELECTION = '@selection';
+
+    /**
+     * Choices for a path field's "Từ dự án…" list, from list_project_media. Footage fields get
+     * the Project panel selection and every bin holding video; music fields get audio items.
+     * Each choice is { value, label }; value goes into the field as typed.
+     */
+    function projectChoices(media, fieldKey) {
+        var items = media && Array.isArray(media.items) ? media.items : [];
+        var bins = media && Array.isArray(media.bins) ? media.bins : [];
+        var out = [];
+        var i;
+        if (fieldKey === 'folderPath') {
+            var selected = 0;
+            var selectedBins = [];
+            for (i = 0; i < bins.length; i++) if (bins[i].selected) selectedBins.push(bins[i].path);
+            for (i = 0; i < items.length; i++) {
+                if (items[i].kind !== 'video') continue;
+                var inSelectedBin = false;
+                for (var b = 0; b < selectedBins.length; b++) if (items[i].bin === selectedBins[b]) inSelectedBin = true;
+                if (items[i].selected || inSelectedBin) selected++;
+            }
+            if (selected > 0) out.push({ value: PROJECT_SELECTION, label: 'Mục đang chọn trong Project (' + selected + ' clip)' });
+            for (i = 0; i < bins.length; i++) {
+                var count = 0;
+                for (var j = 0; j < items.length; j++) if (items[j].kind === 'video' && items[j].bin === bins[i].path) count++;
+                if (count > 0) out.push({ value: bins[i].path, label: 'Bin ' + bins[i].path + ' (' + count + ' clip)' });
+            }
+            return out;
+        }
+        for (i = 0; i < items.length; i++) {
+            if (items[i].kind !== 'audio') continue;
+            var where = items[i].bin ? items[i].bin + '/' + items[i].name : items[i].name;
+            out.push({ value: items[i].mediaPath, label: (items[i].selected ? '★ ' : '') + where + (items[i].offline ? ' (offline)' : '') });
+        }
+        return out;
+    }
+
     return {
         ASR_ENGINES: ASR_ENGINES,
+        PROJECT_SELECTION: PROJECT_SELECTION,
+        projectChoices: projectChoices,
         DEFAULT_SETTINGS: DEFAULT_SETTINGS,
         resolveRunner: resolveRunner,
         buildArgs: buildArgs,

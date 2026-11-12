@@ -14,6 +14,7 @@ import { asrStatus } from '../../setup/asr.js';
 import { resolveToolset } from '../search.js';
 import type { ToolContext, ToolModule } from '../context.js';
 import { buildSequenceResolver } from './shared.js';
+import { readProjectMedia } from '../project-media.js';
 
 export const discoveryTools: ToolModule[] = [
   {
@@ -24,6 +25,19 @@ export const discoveryTools: ToolModule[] = [
       includeMetadata: z.boolean().optional().describe('Whether to include detailed metadata for each item')
     }),
     run: (ctx, args) => listProjectItems(ctx, args.includeBins, args.includeMetadata),
+  },
+  {
+    name: 'list_project_media',
+    description: 'Lists the bins and imported media of the open project with each file path, kind (video, audio, image, other), offline flag and whether it is selected in the Project panel. Sequences are left out. Tools that take footage or music (workflow_rough_cut, assemble_beat_cut, assemble_rough_cut, score_clips, analyze_music) accept a bin path or item name from this list, or "@selection", instead of a disk path.',
+    inputSchema: z.object({
+      kind: z.enum(['video', 'audio', 'image', 'other']).optional().describe('Only items of this kind.'),
+    }),
+    run: async (ctx, args) => {
+      const media = await readProjectMedia(ctx);
+      if ('error' in media) return { success: false, error: media.error };
+      const items = args.kind ? media.items.filter((i) => i.kind === args.kind) : media.items;
+      return { success: true, bins: media.bins, items, selectedCount: media.items.filter((i) => i.selected).length + media.bins.filter((b) => b.selected).length };
+    },
   },
   {
     name: 'list_sequences',
