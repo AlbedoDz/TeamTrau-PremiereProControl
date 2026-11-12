@@ -71,7 +71,7 @@ import * as project from '../../tools/domains/project.js';
 import * as recap from '../../tools/domains/recap.js';
 import * as roughcut from '../../tools/domains/roughcut.js';
 import * as music from '../../tools/domains/music.js';
-import { pickNonOverlapping } from '../../tools/workflows/shorts.js';
+import { endsIncomplete, endsOnSentence, pickNonOverlapping } from '../../tools/workflows/shorts.js';
 import { awaitTranscript, runSteps, uniqueSequenceName } from '../../tools/workflows/steps.js';
 import { workflowToolsTools } from '../../tools/domains/workflow-tools.js';
 
@@ -544,6 +544,22 @@ describe('workflow_subtitles', () => {
   });
 });
 
+describe('endsIncomplete', () => {
+  it('flags a final question or the host handing over (live: short 1 on FINAL_01)', () => {
+    expect(endsIncomplete('Vậy biến chứng sẽ là gì đây?')).toBe(true);
+    expect(endsIncomplete('Trong giai đoạn đó thì sao. Xin được mời Phó Giáo sư, Tiến sĩ, Bác sĩ Trời Quang Nam giải đáp cho khán giả ạ.')).toBe(true);
+    // Live re-run: "nhờ" instead of "mời", and ASR hearing "giải đáp" as "dạy đáp" with no final stop.
+    expect(endsIncomplete('Xin phép nhờ tiến sĩ bác sĩ Nguyễn Huy Luân giải đáp cho quý vị khán giả ngay bây giờ ạ.')).toBe(true);
+    expect(endsIncomplete('nên nó phải chờ tiến sĩ bác sĩ Nguyễn Huy Luân dạy đáp thật là chi tiết cho quý vị khán giả để chúng ta có sự yên tâm trong việc chọn lừa ạ')).toBe(true);
+    expect(endsIncomplete('thì quý vị cũng thấy đó, những người bị mắc đái tháo đường,')).toBe(true);
+    expect(endsOnSentence('thời điểm nào thì phù hợp để phát huy được cái khả năng bảo vệ')).toBe(false);
+    expect(endsOnSentence('Câu trả lời là tiêm nhắc lại.')).toBe(true);
+    expect(endsIncomplete('Câu hỏi là gì? Câu trả lời là tiêm vắc xin đúng lịch.')).toBe(false);
+    expect(endsIncomplete('Chúng tôi mời bà con đến khám sớm.')).toBe(false);
+    expect(endsIncomplete(undefined)).toBe(false);
+  });
+});
+
 describe('pickNonOverlapping', () => {
   it('takes candidates by rawScore descending and skips time overlaps', () => {
     const cands = [
@@ -583,6 +599,20 @@ describe('workflow_shorts', () => {
     expect(calls.every((c) => c.expectedFingerprint === 'fp1' && c.backup === false)).toBe(true);
     expect(calls.map((c) => c.name)).toEqual(['Tap 1 - short 1', 'Tap 1 - short 2', 'Tap 1 - short 3']);
     expect(result).toMatchObject({ success: true, outputSequenceIds: ['short1', 'short2', 'short3'] });
+  });
+
+  it('skips candidates that end on a question or a hand-over to the guest', async () => {
+    findHighlights.mockResolvedValue({
+      success: true, fingerprint: 'fp1', warnings: [],
+      candidates: [
+        { ...candidates[1], text: 'Bệnh này nguy hiểm ra sao ạ?' },
+        { ...candidates[2], text: 'Bối cảnh. Xin được mời Phó Giáo sư Nam giải đáp cho khán giả ạ.' },
+        { ...candidates[3], text: 'Câu trả lời là tiêm nhắc lại đúng lịch.' },
+        { ...candidates[4], text: 'Mũi nhắc lại sẽ giúp phát huy khả năng bảo vệ' },
+      ],
+    });
+    await runTool('workflow_shorts', ctxWith(), { count: 1 });
+    expect(buildShort.mock.calls[0][1]).toMatchObject({ startSentenceId: 20, endSentenceId: 26 });
   });
 
   it('keeps earlier shorts and stops when a later one fails', async () => {
