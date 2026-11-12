@@ -70,6 +70,30 @@ describe('create_captions_from_transcript', () => {
 
   const writes = () => scripts.filter((s) => /p\.save\(\)|sequence\.createCaptionTrack/.test(s));
 
+  const withFrame = (w: unknown, h: unknown) => {
+    const base = executeScript.getMockImplementation()!;
+    executeScript.mockImplementation(async (script: string) =>
+      script.includes('build_short:probe') ? { success: true, frameSizeHorizontal: w, frameSizeVertical: h } : base(script));
+  };
+
+  it('create_captions_from_transcript picks 22 x 2 for a 1080x1920 sequence and reports lineLimits', async () => {
+    withFrame(1080, 1920);
+    const r = await tools.executeTool('create_captions_from_transcript', { dryRun: true });
+    expect(r.lineLimits).toEqual({ maxCharsPerLine: 22, maxLines: 2, layout: '9:16' });
+  });
+
+  it('an explicit maxCharsPerLine wins', async () => {
+    withFrame(1080, 1920);
+    const r = await tools.executeTool('create_captions_from_transcript', { dryRun: true, maxCharsPerLine: 30 });
+    expect(r.lineLimits).toMatchObject({ maxCharsPerLine: 30, maxLines: 2 });
+  });
+
+  it('an unreadable frame size falls back to 42 x 2 with a warning', async () => {
+    const r = await tools.executeTool('create_captions_from_transcript', { dryRun: true });
+    expect(r.lineLimits).toMatchObject({ maxCharsPerLine: 42, maxLines: 2 });
+    expect(r.warnings.join(' ')).toContain('khung hình');
+  });
+
   it('dryRun writes no file and calls no bridge write', async () => {
     const r = await tools.executeTool('create_captions_from_transcript', { dryRun: true });
     expect(r).toMatchObject({ success: true, dryRun: true, cueCount: 2 });

@@ -45,7 +45,7 @@ export const accepts = (schema: Schema, value: unknown): boolean => {
 const NUMERIC: Record<string, number> = {
   width: 1920, height: 1080, frameRate: 25, speed: 100, volume: 0, opacity: 100,
   scale: 100, rotation: 0, level: 0, trackIndex: 0, time: 1, newTime: 2,
-  splitTime: 1, duration: 1,
+  splitTime: 1, duration: 1, minSec: 30, maxSec: 60,
 };
 
 /** Tried in order against the field's own schema; the first accepted one wins. */
@@ -60,7 +60,7 @@ const CANDIDATES: unknown[] = [
 
 
 /** Preferred value where several are legal and one exercises more of the tool. */
-const STRINGY: Record<string, string> = { position: 'end', format: 'png' };
+const STRINGY: Record<string, string> = { position: 'end', format: 'png', captionAccent: '#FFD400' };
 
 /** A structural guess, from public accessors only. */
 function shapedGuess(schema: Schema, key: string): unknown {

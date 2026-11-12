@@ -7,6 +7,7 @@ import vm from 'vm';
 import path from 'path';
 import { readFileSync } from 'fs';
 import { loadPanel } from '../helpers/panel.js';
+import { ACCENT_SWATCHES } from '../../analysis/caption-looks.js';
 import { workflowToolsTools } from '../../tools/domains/workflow-tools.js';
 
 const GUI_DIR = path.join(__dirname, '..', '..', '..', 'cep-plugin', 'gui');
@@ -92,12 +93,12 @@ describe('gui-core resolveRunner', () => {
 
 describe('gui-core buildArgs', () => {
   it('gives the recap defaults for an empty form', () => {
-    expect(core.buildArgs(card('recap'), {})).toEqual({ targetSec: 90, aspect: '16:9', captionStyle: 'clean', audioLeadSec: 0 });
+    expect(core.buildArgs(card('recap'), {})).toEqual({ minSec: 75, maxSec: 105, aspect: '16:9', captionStyle: 'none', audioLeadSec: 0 });
   });
 
   it('converts form text and clamps numbers', () => {
-    const args = core.buildArgs(card('shorts'), { count: '9', minSec: '25,5', maxSec: 'abc', captionStyle: 'pop' });
-    expect(args).toEqual({ count: 5, minSec: 25.5, maxSec: 60, captionStyle: 'pop' });
+    const args = core.buildArgs(card('shorts'), { count: '9', minSec: '25,5', maxSec: 'abc', caption: { style: 'pop' } });
+    expect(args).toEqual({ count: 5, minSec: 25.5, maxSec: 60, aspect: '9:16', captionStyle: 'pop' });
   });
 
   it('leaves empty paths out and maps filler tiers', () => {
@@ -105,17 +106,24 @@ describe('gui-core buildArgs', () => {
     expect(args.fillerTiers).toEqual(['A', 'B']);
     expect(args.cutFillers).toBe(false);
     expect(core.buildArgs(card('clean_voiceover'), {}).fillerTiers).toBeUndefined();
-    expect(core.buildArgs(card('subtitles'), {})).toEqual({ output: 'srt', maxCharsPerLine: 42 });
+    expect(core.buildArgs(card('subtitles'), {})).toEqual({ output: 'srt' });
   });
 
   it('asks for the footage folder of the rough cut, and a length when there is no music', () => {
     const args = core.buildArgs(card('rough_cut'), {});
     expect(core.missingRequired(card('rough_cut'), args)).toEqual([
-      'Cần điền: Thư mục footage.',
+      'Cần điền: Footage (bin, thư mục hoặc mục đang chọn).',
       'Cần điền: Thời lượng mong muốn (giây), hoặc chọn file nhạc.',
     ]);
     expect(core.missingRequired(card('rough_cut'), core.buildArgs(card('rough_cut'), { folderPath: ' D:\\clips ', targetSec: '45' }))).toEqual([]);
     expect(core.missingRequired(card('rough_cut'), core.buildArgs(card('rough_cut'), { folderPath: 'D:/c', musicPath: 'D:/m.mp3' }))).toEqual([]);
+  });
+
+  it('recap: the shortest length must be under the longest', () => {
+    expect(core.missingRequired(card('recap'), core.buildArgs(card('recap'), { minSec: '60', maxSec: '90' }))).toEqual([]);
+    expect(core.missingRequired(card('recap'), core.buildArgs(card('recap'), { minSec: '90', maxSec: '90' }))).toEqual([
+      '"Ngắn nhất" phải nhỏ hơn "Dài nhất".',
+    ]);
   });
 
   it('rough cut: targetSec defaults to empty and is never sent with a music file', () => {
@@ -147,7 +155,7 @@ describe('workflows.json against the tool schemas', () => {
       const tool = workflowToolsTools.find((t) => t.name === c.tool)!;
       const schema: any = tool.inputSchema;
       for (const field of c.fields) {
-        expect(Object.keys(schema.shape)).toContain(field.key);
+        expect(Object.keys(schema.shape)).toContain(field.type === 'caption' ? 'captionStyle' : field.key);
       }
       // What the panel sends for an untouched card must pass the tool's own validation.
       const parsed = schema.safeParse({ ...core.buildArgs(c, {}), folderPath: 'x' });
@@ -428,6 +436,12 @@ describe('gui-core vi', () => {
     expect(text).not.toContain('backup=false');
   });
 
+  it('tells the user to update an outdated sidecar, also inside a caption render failure', () => {
+    const expected = 'Bộ phân tích đã cũ, chưa vẽ được kiểu phụ đề mới. Chạy "premiere-pro-mcp --setup-asr" trong terminal để cập nhật rồi thử lại.';
+    expect(core.vi({ success: false, error: 'The analysis sidecar is outdated. Run this in a terminal on this machine to update it, then retry preview_caption_style once: premiere-pro-mcp --setup-asr' })).toBe(expected);
+    expect(core.vi({ success: false, error: 'Caption render failed: The analysis sidecar is outdated and cannot draw the caption looks. Run in a terminal: premiere-pro-mcp --setup-asr' })).toBe(expected);
+  });
+
   it('prefixes unknown English text with "Lỗi: "', () => {
     expect(core.vi({ success: false, error: 'Something odd' })).toBe('Lỗi: Something odd');
   });
@@ -443,6 +457,37 @@ describe('gui-core vi', () => {
 
   it('copes with an empty result', () => {
     expect(core.vi({})).toContain('không rõ nguyên nhân');
+  });
+
+  it('translates the project media lookup errors', () => {
+    expect(core.vi({ error: 'File not found: "song.mp3" is neither a file on disk nor an imported audio/video item in the project.' }))
+      .toBe('Không tìm thấy "song.mp3" trên máy hay trong dự án. Bấm "Từ dự án…" để chọn file đã import.');
+    expect(core.vi({ error: '"01 Foot" is neither a folder on disk nor a bin in the project.' })).toContain('không phải bin trong dự án');
+    expect(core.vi({ error: 'Cannot use bin "B-roll": it holds no video clips (pass recursive=true to include sub-bins).' }))
+      .toBe('Bin "B-roll" không có clip video nào (bin con không được tính).');
+  });
+});
+
+describe('gui-core projectChoices', () => {
+  const media = {
+    bins: [{ path: '01 Footage', selected: false }, { path: '02 Music', selected: false }, { path: 'Empty', selected: false }],
+    items: [
+      { name: 'a.mp4', bin: '01 Footage', mediaPath: 'E:/a.mp4', kind: 'video', offline: false, selected: true },
+      { name: 'b.mp4', bin: '01 Footage', mediaPath: 'E:/b.mp4', kind: 'video', offline: false, selected: false },
+      { name: 'song.mp3', bin: '02 Music', mediaPath: 'D:/song.mp3', kind: 'audio', offline: false, selected: false },
+    ],
+  };
+
+  it('offers the selection and the bins that hold video for footage', () => {
+    expect(core.projectChoices(media, 'folderPath')).toEqual([
+      { value: '@selection', label: 'Mục đang chọn trong Project (1 clip)' },
+      { value: '01 Footage', label: 'Bin 01 Footage (2 clip)' },
+    ]);
+  });
+
+  it('offers imported audio by its file path for music', () => {
+    expect(core.projectChoices(media, 'musicPath')).toEqual([{ value: 'D:/song.mp3', label: '02 Music/song.mp3' }]);
+    expect(core.projectChoices({}, 'musicPath')).toEqual([]);
   });
 });
 
@@ -461,5 +506,74 @@ describe('Kết nối tab keeps the old panel behaviour', () => {
     for (const handler of ['saveConfig()', 'startBridge()', 'stopBridge()', 'runDiagnostics()', 'clearLog()', 'copyUpdateCommand()', 'updateLater()', 'saveTelemetryPreference()']) {
       expect(html).toContain(`onclick="${handler}"`.replace('onclick="saveTelemetryPreference()"', 'onchange="saveTelemetryPreference()"'));
     }
+  });
+});
+
+describe('gui-core caption look helpers', () => {
+  it('captionArgs drops defaults', () => {
+    expect(core.captionArgs({ style: 'clean', accent: '', position: 'bottom', size: 'medium' })).toEqual({ captionStyle: 'clean' });
+    expect(core.captionArgs({ style: 'pop', accent: '#ff3b5c', position: 'middle', size: 'large' })).toEqual({
+      captionStyle: 'pop', captionAccent: '#ff3b5c', captionPosition: 'middle', captionSize: 'large',
+    });
+  });
+
+  it('isHexColor accepts #ff3b5c and rejects #f00', () => {
+    expect(core.isHexColor('#ff3b5c')).toBe(true);
+    expect(core.isHexColor('#f00')).toBe(false);
+    expect(core.isHexColor('')).toBe(false);
+  });
+
+  it('keeps the swatches and labels in step with the server', () => {
+    expect(core.ACCENT_SWATCHES).toEqual([...ACCENT_SWATCHES]);
+    expect(Object.keys(core.CAPTION_STYLE_LABELS)).toEqual(['clean', 'pop', 'karaoke', 'highlight', 'minimal', 'none']);
+  });
+
+  it('captionOptionsVisible hides the options for none', () => {
+    expect(core.captionOptionsVisible('none')).toBe(false);
+    expect(core.captionOptionsVisible('')).toBe(false);
+    expect(core.captionOptionsVisible('pop')).toBe(true);
+  });
+
+  it('previewRequest builds the tool call and returns null for none', () => {
+    const req = core.previewRequest({}, 'shorts', '9:16', { style: 'pop', accent: '#FFD400', position: 'middle' });
+    expect(req).toEqual({ tool: 'preview_caption_style', args: { style: 'pop', captionAccent: '#FFD400', captionPosition: 'middle', aspect: '9:16' } });
+    expect(core.previewRequest({}, 'recap', '16:9', { style: 'none' })).toBeNull();
+  });
+
+  it('nextPreview keeps only the latest request while busy and sends it when free', () => {
+    const a = { tool: 'preview_caption_style', args: { style: 'a' } };
+    const b = { tool: 'preview_caption_style', args: { style: 'b' } };
+    const c = { tool: 'preview_caption_style', args: { style: 'c' } };
+    expect(core.nextPreview(null, false, a)).toEqual({ send: a, pending: null });
+    expect(core.nextPreview(null, true, a)).toEqual({ send: null, pending: a });
+    expect(core.nextPreview(a, true, b)).toEqual({ send: null, pending: b });
+    expect(core.nextPreview(b, false, null)).toEqual({ send: b, pending: null });
+    expect(core.nextPreview(b, false, c)).toEqual({ send: c, pending: null });
+    expect(core.nextPreview(null, false, null)).toEqual({ send: null, pending: null });
+  });
+
+  it('missingRequired flags a bad hex', () => {
+    const args = core.buildArgs(card('shorts'), { caption: { style: 'pop', accent: '#f00' } });
+    expect(core.missingRequired(card('shorts'), args)).toContain('Màu phải có dạng #RRGGBB.');
+    const ok = core.buildArgs(card('shorts'), { caption: { style: 'pop', accent: '#ff3b5c' } });
+    expect(core.missingRequired(card('shorts'), ok)).not.toContain('Màu phải có dạng #RRGGBB.');
+  });
+
+  it('recap and shorts cards offer 1:1 and 4:5', () => {
+    for (const id of ['recap', 'shorts']) {
+      const values = card(id).fields.find((f: any) => f.key === 'aspect').options.map((o: any) => o.value);
+      expect(values).toEqual(expect.arrayContaining(['9:16', '1:1', '4:5']));
+    }
+    expect(card('recap').fields.find((f: any) => f.key === 'aspect').options.map((o: any) => o.value)).toContain('16:9');
+  });
+
+  it('subtitles card sends no maxCharsPerLine when left empty', () => {
+    expect(core.buildArgs(card('subtitles'), {}).maxCharsPerLine).toBeUndefined();
+    expect(core.buildArgs(card('subtitles'), { maxCharsPerLine: '30' }).maxCharsPerLine).toBe(30);
+  });
+
+  it('describeResult shows the SRT line limits', () => {
+    const r = core.describeResult({ success: true, summary: { cueCount: 3, lineLimits: { maxCharsPerLine: 22, maxLines: 2, layout: '9:16' } } });
+    expect(r.lines).toContain('22 ký tự/dòng (khung 9:16)');
   });
 });

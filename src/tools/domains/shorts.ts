@@ -13,6 +13,8 @@ import {
   modelPaths,
   premiereMcpHome,
   sidecarMissingResult,
+  isOutdatedSidecarError,
+  outdatedSidecarMessage,
   engineMissingResult,
   sidecarPython,
   startJob,
@@ -38,7 +40,9 @@ import { resolveEngine } from '../../analysis/asr-config.js';
 import { ENGINE_IDS, usesZipformer } from '../../analysis/asr-engines.js';
 import { restoreCasing } from '../../analysis/casing.js';
 import { asrStatus } from '../../setup/asr.js';
-import { applyCaptionOverrides, groupCaptions, safeFileName, SAFE_AREA } from '../../analysis/captions.js';
+import { applyCaptionOverrides, groupCaptions, safeFileName } from '../../analysis/captions.js';
+import { ASPECT_RATIOS, CAPTION_RENDERER_VERSION, CAPTION_STYLE_IDS, captionOptionsFrom, resolveLook, type CaptionOptions, type CaptionPosition, type CaptionSize, type CaptionStyleId } from '../../analysis/caption-looks.js';
+import { captionOptionFields } from './caption-preview.js';
 import { isError, normalizeLoudness, readSequence, uniquePaths, type SequenceSnapshot } from './cleanup.js';
 import { ensureBackup, qaSequence } from './editing.js';
 import { importMedia } from './media.js';
@@ -445,12 +449,19 @@ const samePath = (a: string, b: string): boolean =>
 /** How long the readback waits for Auto Reframe's subject-tracking keyframes. Tests shorten it. */
 export const buildShortTiming = { pollMs: 2000, timeoutMs: 30000 };
 
+/** Frame shapes build_short can export through Auto Reframe. */
+export type ShortAspect = '9:16' | '1:1' | '4:5';
+
 interface BuildShortArgs extends TranscriptArgs {
   expectedFingerprint?: string | undefined;
   startSentenceId: number;
   endSentenceId: number;
   name: string;
-  captionStyle: 'clean' | 'pop' | 'karaoke';
+  aspect?: ShortAspect | undefined;
+  captionStyle: CaptionStyleId;
+  captionAccent?: string | undefined;
+  captionPosition?: CaptionPosition | undefined;
+  captionSize?: CaptionSize | undefined;
   captions?: Array<{ start: number; end: number; text: string }> | undefined;
   font?: string | undefined;
   targetLufs: number;
@@ -483,7 +494,7 @@ function multiFaceStretches(
   return out;
 }
 
-const probeScript = (sequenceId: string): string => `
+export const probeScript = (sequenceId: string): string => `
   // build_short:probe
   try {
     var seq = __findSequence(${JSON.stringify(sequenceId)});
@@ -494,7 +505,7 @@ const probeScript = (sequenceId: string): string => `
   }
 `;
 
-const reframeScript = (sequenceId: string, range: { start: number; end: number } | null, name: string): string => `
+const reframeScript = (sequenceId: string, range: { start: number; end: number } | null, name: string, ratio: { num: number; den: number }): string => `
   // build_short:reframe
   try {
     var seq = __findSequence(${JSON.stringify(sequenceId)});
@@ -515,7 +526,7 @@ ${range ? `      seq.setInPoint(__secondsToTicks(${range.start}));
       seq.setOutPoint(seq.end);
 `}      sub = seq.createSubsequence(true);
       if (!sub) throw new Error("createSubsequence returned no sequence");
-      r = sub.autoReframeSequence(9, 16, "default", ${JSON.stringify(name)}, false);
+      r = sub.autoReframeSequence(${ratio.num}, ${ratio.den}, "default", ${JSON.stringify(name)}, false);
     } catch (e1) { err = e1.toString(); }
     if (sub) { try { deleted = app.project.deleteSequence(sub) !== false; } catch (eDel) {} }
     try {
@@ -647,16 +658,17 @@ export interface ReframeResult {
 }
 
 /**
- * Auto Reframe to 9:16 through a subsequence of `range` (the whole sequence when omitted). The
+ * Auto Reframe to `ratio` (e.g. 9:16, 1:1, 4:5) through a subsequence of `range` (the whole sequence when omitted). The
  * source sequence is not changed; the new sequence is named `name`.
  */
-export async function reframeToVertical(
+export async function reframeTo(
   ctx: ToolContext,
   sequenceId: string,
   name: string,
+  ratio: { num: number; den: number },
   range?: { start: number; end: number },
 ): Promise<ReframeResult | { error: string }> {
-  const reframe: any = await ctx.bridge.executeScript(reframeScript(sequenceId, range ?? null, name));
+  const reframe: any = await ctx.bridge.executeScript(reframeScript(sequenceId, range ?? null, name, ratio));
   if (!reframe || reframe.success === false || !reframe.sequenceID) {
     return { error: reframe?.error ?? 'Auto Reframe did not return a sequence.' };
   }
@@ -668,12 +680,12 @@ export async function reframeToVertical(
   };
 }
 
-export type CaptionStyle = 'clean' | 'pop' | 'karaoke';
+export type CaptionStyle = CaptionStyleId;
 
 /** Renders the caption groups to a ProRes 4444 alpha .mov under the renders folder; throws on failure. */
 async function renderCaptionFile(opts: {
   groups: unknown[];
-  style: CaptionStyle;
+  caption: CaptionOptions;
   width: number;
   height: number;
   fps: number;
@@ -685,17 +697,26 @@ async function renderCaptionFile(opts: {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
   const outPath = join(renders, `${safeFileName(opts.name)}-${stamp}.mov`);
   await mkdir(renders, { recursive: true });
-  const rendered = await runSidecar<{ path?: string; frames?: number }>('captions', {
-    groups: opts.groups,
-    style: opts.style,
-    width: opts.width,
-    height: opts.height,
-    fps: opts.fps,
-    duration: opts.duration,
-    ...(opts.font ? { font: opts.font } : {}),
-    safeArea: SAFE_AREA,
-    outPath,
-  });
+  const { look } = resolveLook(opts.caption, opts.width, opts.height);
+  let rendered: { path?: string; frames?: number; renderer?: number };
+  try {
+    rendered = await runSidecar<{ path?: string; frames?: number; renderer?: number }>('captions', {
+      groups: opts.groups,
+      look: opts.font ? { ...look, font: opts.font } : look,
+      width: opts.width,
+      height: opts.height,
+      fps: opts.fps,
+      duration: opts.duration,
+      outPath,
+    });
+  } catch (error) {
+    if (isOutdatedSidecarError(error)) throw new Error(outdatedSidecarMessage());
+    throw error;
+  }
+  // An old sidecar ignores the look and draws the legacy styles, so refuse its output.
+  if (typeof rendered.renderer !== 'number' || rendered.renderer < CAPTION_RENDERER_VERSION) {
+    throw new Error(outdatedSidecarMessage());
+  }
   return rendered.path ?? outPath;
 }
 
@@ -728,7 +749,7 @@ export async function addAlphaCaptions(
   ctx: ToolContext,
   sequenceId: string,
   words: TimelineWord[],
-  style: CaptionStyle,
+  caption: CaptionOptions,
   timeMap: (t: number) => number | null,
 ): Promise<{ ok: true; warnings?: string[] } | { error: string }> {
   const snapshot = await readSequence(ctx, sequenceId);
@@ -744,16 +765,24 @@ export async function addAlphaCaptions(
     const end = timeMap(word.end);
     mapped.push({ w: word.w, start, end: end !== null && end > start ? end : start + Math.max(0.05, word.end - word.start) });
   }
-  const groups = groupCaptions(mapped, 0);
+  const width = Math.round(Number(probe.frameSizeHorizontal));
+  const height = Math.round(Number(probe.frameSizeVertical));
+  let groups;
+  try {
+    const { grouping } = resolveLook(caption, width, height);
+    groups = groupCaptions(mapped, 0, grouping.maxWords, grouping.maxChars);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
   const warnings: string[] = [];
   if (groups.length === 0) warnings.push('No words fall in the sequence, so the caption track is empty.');
   let captionFile: string;
   try {
     captionFile = await renderCaptionFile({
       groups,
-      style,
-      width: Math.round(Number(probe.frameSizeHorizontal)),
-      height: Math.round(Number(probe.frameSizeVertical)),
+      caption,
+      width,
+      height,
       fps: round3(1 / snapshot.frameDuration),
       duration: round3(snapshot.endTime),
       name: snapshot.sequenceName,
@@ -807,7 +836,16 @@ export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promis
   const end = round6(Math.ceil(last.end / fd - 1e-6) * fd);
   const durationSec = round3(end - start);
   const inRange = loaded.words.filter((w) => w.start >= start && w.start < end);
-  const captions = applyCaptionOverrides(groupCaptions(inRange, start), args.captions ?? []);
+  const caption = captionOptionsFrom(args);
+  // Grouping depends only on the frame shape; a dry run has no probe, so use the chosen target at a nominal size.
+  const target = ASPECT_RATIOS[args.aspect ?? '9:16'];
+  let grouping;
+  try {
+    grouping = resolveLook(caption, target.num * 120, target.den * 120).grouping;
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const captions = applyCaptionOverrides(groupCaptions(inRange, start, grouping.maxWords, grouping.maxChars), args.captions ?? []);
   if (args.dryRun) {
     return { success: true, dryRun: true, start, end, durationSec, name: args.name, captions, warnings };
   }
@@ -815,13 +853,13 @@ export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promis
   const ffmpeg = await findFfTool('ffmpeg');
   if (!ffmpeg) return ffmpegMissingResult('build_short');
 
-  // Auto Reframe keeps the source height: width = round(height × 9 / 16). Read only, before any change.
+  // Auto Reframe keeps the source height: width = round(height × num / den). Read only, before any change.
   const probe: any = await ctx.bridge.executeScript(probeScript(loaded.sequenceId));
   if (!probe || probe.success === false || !(probe.frameSizeVertical > 0)) {
     return { success: false, error: probe?.error ?? 'Could not read the sequence frame size.' };
   }
   const height = Math.round(Number(probe.frameSizeVertical));
-  const width = Math.round(height * 9 / 16);
+  const width = Math.round(height * target.num / target.den);
   if (captions.length === 0) warnings.push('No words fall in this range, so the caption track is empty.');
 
   // 1. Render the captions first: a failure here leaves the project untouched.
@@ -829,7 +867,7 @@ export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promis
   try {
     captionFile = await renderCaptionFile({
       groups: captions,
-      style: args.captionStyle,
+      caption,
       width,
       height,
       fps: round3(1 / fd),
@@ -860,9 +898,9 @@ export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promis
     if ('failure' in backup) return { ...backup.failure, verified: false, failedStep: 'backup', captionFile, warnings };
     backupPath = backup.path;
 
-    // 3. Subsequence of the range, Auto Reframe to 9:16, drop the intermediate subsequence.
+    // 3. Subsequence of the range, Auto Reframe to the chosen ratio, drop the intermediate subsequence.
     step = 'reframe';
-    const reframe = await reframeToVertical(ctx, loaded.sequenceId, args.name, { start, end });
+    const reframe = await reframeTo(ctx, loaded.sequenceId, args.name, target, { start, end });
     if ('error' in reframe) return fail(step, reframe.error);
     shortSequenceId = reframe.sequenceId;
     if (!reframe.deleted) warnings.push('The intermediate subsequence could not be deleted; remove it from the project by hand.');
@@ -928,11 +966,11 @@ export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promis
     }
     const w = Number(read.frameSizeHorizontal);
     const h = Number(read.frameSizeVertical);
-    const aspectOk = h > 0 && Math.abs(w - Math.round(h * 9 / 16)) <= 1;
+    const aspectOk = h > 0 && Math.abs(w - Math.round(h * target.num / target.den)) <= 1;
     const actualDuration = Number(read.endSeconds);
     const durationOk = Math.abs(actualDuration - (end - start)) <= fd + 1e-6;
     const captionOk = Array.isArray(read.topTrackPaths) && read.topTrackPaths.some((p: string) => samePath(String(p), captionFile));
-    if (!aspectOk) warnings.push(`The short is ${w}×${h}, not 9:16.`);
+    if (!aspectOk) warnings.push(`The short is ${w}×${h}, not ${args.aspect ?? '9:16'}.`);
     if (!durationOk) warnings.push(`The short lasts ${round3(actualDuration)} s, expected ${durationSec} s.`);
     if (!captionOk) warnings.push('The caption clip was not found on the top video track.');
 
@@ -993,7 +1031,7 @@ export const shortsTools: ToolModule[] = [
   {
     name: 'build_short',
     description:
-      'Builds a vertical 9:16 short from a range of transcribed sentences (ids from transcribe_sequence): renders the captions to an alpha .mov first, then backs up the project, makes a subsequence of the range, runs Auto Reframe (9:16, its height follows the source), imports the captions into bin Shorts/<name> on a new top video track, normalises loudness to targetLufs, runs qa_sequence and reads the result back (verified). Use dryRun=true first to get the caption groups; edit their text and pass them back as `captions` (an empty text removes a group). Pass expectedFingerprint (the fingerprint returned by find_highlight_candidates or transcribe_sequence) so a sequence edited after selection is refused; without it a warning is returned. On a failure after the render it stops, keeps what was built and returns failedStep and backupPath. Needs the analysis sidecar and ffmpeg.',
+      'Builds a short (9:16 by default; aspect 1:1 or 4:5) from a range of transcribed sentences (ids from transcribe_sequence): renders the captions to an alpha .mov first, then backs up the project, makes a subsequence of the range, runs Auto Reframe (to the chosen aspect, its height follows the source), imports the captions into bin Shorts/<name> on a new top video track, normalises loudness to targetLufs, runs qa_sequence and reads the result back (verified). Use dryRun=true first to get the caption groups; edit their text and pass them back as `captions` (an empty text removes a group). Pass expectedFingerprint (the fingerprint returned by find_highlight_candidates or transcribe_sequence) so a sequence edited after selection is refused; without it a warning is returned. On a failure after the render it stops, keeps what was built and returns failedStep and backupPath. Needs the analysis sidecar and ffmpeg.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as transcribe_sequence. Defaults to every audio track that has a clip with a media file.'),
@@ -1003,7 +1041,9 @@ export const shortsTools: ToolModule[] = [
       startSentenceId: z.number().int().min(0).describe('Id of the first sentence of the short.'),
       endSentenceId: z.number().int().min(0).describe('Id of the last sentence of the short (inclusive).'),
       name: z.string().min(1).describe('Name of the new sequence. Any characters are kept; the caption file name is made safe.'),
-      captionStyle: z.enum(['clean', 'pop', 'karaoke']).default('clean').describe('Caption look (default clean).'),
+      aspect: z.enum(['9:16', '1:1', '4:5']).default('9:16').describe('Frame shape of the short: "9:16" (default), "1:1" or "4:5", made with Auto Reframe.'),
+      captionStyle: z.enum(CAPTION_STYLE_IDS as [CaptionStyleId, ...CaptionStyleId[]]).default('clean').describe('Caption look: clean, pop, karaoke, highlight or minimal (default clean).'),
+      ...captionOptionFields,
       captions: z.array(z.object({ start: z.number(), end: z.number(), text: z.string() })).optional()
         .describe('Caption text overrides from a dryRun, matched by start/end (seconds from 0 of the short). Empty text removes that caption.'),
       font: z.string().optional().describe('Path to a .ttf font. Defaults to Be Vietnam Pro.'),

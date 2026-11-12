@@ -8,6 +8,8 @@ import { z } from 'zod';
 import type { ToolContext, ToolModule } from '../context.js';
 import { ENGINE_IDS } from '../../analysis/asr-engines.js';
 import { detectScenes } from '../../analysis/scenes.js';
+import { ASPECT_RATIOS, CAPTION_STYLE_IDS, captionOptionsFrom, type CaptionPosition, type CaptionSize, type CaptionStyleId } from '../../analysis/caption-looks.js';
+import { captionOptionFields } from './caption-preview.js';
 import { steadyReframe } from '../steady-reframe.js';
 import { ffmpegMissingResult, findFfTool } from '../../analysis/ffmpeg.js';
 import { candidateWindows, scoreCandidates, signalsFor } from '../../analysis/highlights.js';
@@ -15,6 +17,7 @@ import {
   bestShotRun,
   planShotRecap,
   planSpeechRecap,
+  recapBounds,
   recapCandidates,
   shotPool,
   speechCoverage,
@@ -34,7 +37,7 @@ import {
   addAlphaCaptions,
   loadTranscript,
   median,
-  reframeToVertical,
+  reframeTo,
   timelineLoudness,
   type TranscriptArgs,
   type TranscriptPending,
@@ -43,6 +46,9 @@ import {
 
 export type PlanRecapArgs = TranscriptArgs & {
   targetSec: number;
+  /** Given together: the recap lands in [minSec, maxSec] (aiming at the middle) and never exceeds maxSec. */
+  minSec?: number | undefined;
+  maxSec?: number | undefined;
   mode: 'auto' | 'speech' | 'shots';
   /** Omitted: SPEECH_MIN_SEGMENT_SEC in speech mode, SHOT_MIN_SEGMENT_SEC in shot mode. */
   minSegmentSec?: number | undefined;
@@ -78,12 +84,16 @@ const MIN_SPEECH_COVERAGE = 0.3;
 const SPEED_TOLERANCE = 0.01;
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 
-/** Warns (Vietnamese) when the plan is more than 10% under the target. */
-function shortfallWarning(segments: RecapSegment[], targetSec: number, warnings: string[]): void {
+/** Warns (Vietnamese) when the plan is under minSec, or more than 10% under the target without a range. */
+function shortfallWarning(segments: RecapSegment[], opts: RecapOpts, warnings: string[]): void {
   const planned = segments.reduce((sum, s) => sum + (s.end - s.start), 0);
-  if (planned < targetSec * 0.9) {
-    warnings.push(`Chỉ chọn được ${round3(planned)} giây, thấp hơn mục tiêu ${targetSec} giây (dưới 90%).`);
-  }
+  const { lo } = recapBounds(opts);
+  if (planned >= lo - 1e-6) return;
+  warnings.push(
+    opts.minSec !== undefined
+      ? `Chỉ chọn được ${round3(planned)} giây, ngắn hơn mức tối thiểu ${opts.minSec} giây.`
+      : `Chỉ chọn được ${round3(planned)} giây, thấp hơn mục tiêu ${opts.targetSec} giây (dưới 90%).`,
+  );
 }
 
 const roundSegment = (s: RecapSegment): RecapSegment => ({ ...s, start: round3(s.start), end: round3(s.end), score: round3(s.score) });
@@ -162,7 +172,7 @@ async function planShots(
 
   const total = snapshot.endTime;
   const segments = planShotRecap(scored, total, opts);
-  shortfallWarning(segments, opts.targetSec, warnings);
+  shortfallWarning(segments, opts, warnings);
   const candidates = recapCandidates(shotPool(scored, opts), segments, opts);
   const fingerprint = shotsFingerprint(video);
   return {
@@ -181,8 +191,10 @@ export async function planRecap(
   ctx: ToolContext,
   args: PlanRecapArgs,
 ): Promise<PlanRecapResult | TranscriptPending | { success: false; error: string }> {
+  const ranged = args.minSec !== undefined && args.maxSec !== undefined;
   const opts: RecapOpts = {
-    targetSec: args.targetSec,
+    targetSec: ranged ? (args.minSec! + args.maxSec!) / 2 : args.targetSec,
+    ...(ranged ? { minSec: args.minSec, maxSec: args.maxSec } : {}),
     minSegmentSec: Math.min(args.minSegmentSec ?? SPEECH_MIN_SEGMENT_SEC, args.maxSegmentSec),
     maxSegmentSec: args.maxSegmentSec,
   };
@@ -249,7 +261,7 @@ export async function planRecap(
 
   const segments = planSpeechRecap(scored, total, opts);
   if (segments.length === 0 && windows.length > 0) warnings.push('Không chọn được đoạn nào trong giới hạn thời lượng.');
-  shortfallWarning(segments, opts.targetSec, warnings);
+  shortfallWarning(segments, opts, warnings);
   const candidates = recapCandidates(speechPool(scored), segments, opts);
   return {
     success: true,
@@ -269,8 +281,11 @@ export interface BuildRecapArgs extends TranscriptArgs {
   segments: Array<{ id?: string | undefined; start: number; end: number; text?: string | undefined; score?: number | undefined }>;
   expectedFingerprint?: string | undefined;
   name: string;
-  aspect: '16:9' | '9:16';
-  captionStyle: 'none' | 'clean' | 'pop' | 'karaoke';
+  aspect: '16:9' | '9:16' | '1:1' | '4:5';
+  captionStyle: 'none' | CaptionStyleId;
+  captionAccent?: string | undefined;
+  captionPosition?: CaptionPosition | undefined;
+  captionSize?: CaptionSize | undefined;
   audioLeadSec: number;
   targetLufs: number;
   dryRun: boolean;
@@ -500,8 +515,9 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   const withBackup = (extra: Partial<BuildRecapResult>): Partial<BuildRecapResult> => ({ ...(backupPath ? { backupPath } : {}), ...extra });
 
   const finalName = await uniqueSequenceName(ctx, args.name);
-  const vertical = args.aspect === '9:16';
-  // The 9:16 reframe makes its own sequence from the cut copy; the copy keeps a plain name.
+  const aspect = args.aspect ?? '16:9';
+  const vertical = aspect !== '16:9';
+  // The reframe makes its own sequence from the cut copy; the copy keeps a plain name.
   const copyName = vertical ? await uniqueSequenceName(ctx, `${finalName} (16:9)`) : finalName;
 
   // 1. Copy the sequence; the original is never touched.
@@ -544,9 +560,9 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
     }
   }
 
-  // 3. 9:16 reframe of the whole cut copy.
+  // 3. Reframe of the whole cut copy to the chosen aspect.
   if (vertical) {
-    const reframed = await reframeToVertical(ctx, sequenceId, finalName);
+    const reframed = await reframeTo(ctx, sequenceId, finalName, ASPECT_RATIOS[aspect as '9:16' | '1:1' | '4:5']);
     if ('error' in reframed) return fail(reframed.error, withBackup({ failedStep: 'reframe', sequenceId }));
     sequenceId = reframed.sequenceId;
     if (!(await deleteSequenceById(ctx, String(copy.newSequenceId)))) {
@@ -561,7 +577,8 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   // 4. Captions from the transcript words, moved to recap time.
   const ready = transcript as TranscriptReady | null;
   if (needWords && ready) {
-    const captioned = await addAlphaCaptions(ctx, sequenceId, ready.words, args.captionStyle as 'clean' | 'pop' | 'karaoke', timeMap);
+    // needWords is false for 'none', so the style is a real CaptionStyleId here.
+    const captioned = await addAlphaCaptions(ctx, sequenceId, ready.words, captionOptionsFrom({ ...args, captionStyle: args.captionStyle as CaptionStyleId }), timeMap);
     if ('error' in captioned) return fail(captioned.error, withBackup({ failedStep: 'captions', sequenceId }));
     for (const w of captioned.warnings ?? []) warnings.push(w);
   }
@@ -604,27 +621,37 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   };
 }
 
+/** Problems with a minSec/maxSec pair, shared by plan_recap and workflow_recap. */
+export function recapRangeIssues(a: { minSec?: number | undefined; maxSec?: number | undefined }): string[] {
+  if ((a.minSec === undefined) !== (a.maxSec === undefined)) return ['Give minSec and maxSec together.'];
+  if (a.minSec !== undefined && a.maxSec !== undefined && a.minSec >= a.maxSec) return ['minSec must be less than maxSec.'];
+  return [];
+}
+
 export const recapTools: ToolModule[] = [
   {
     name: 'plan_recap',
     description:
-      'Plans a recap of a sequence: returns the segments to keep, in time order, plus extra candidates. Mode "speech" picks runs of whole transcribed sentences (4-20 s each) spread over chapters of about 12 s of the target, dropping near-duplicate passages; mode "shots" picks the best stretch (at most 6 s) of each shot of the clips on the lowest video track, scored by exposure and sharpness. "auto" (default) uses speech when the dialogue covers at least 30% of the sequence, otherwise shots. The total lands within targetSec +/-10%. Speech uses the transcript from transcribe_sequence (returns status "running" until it is done) and ffmpeg loudness; shots need ffmpeg. Segment times are sequence seconds; pass the segments unchanged to build_recap with the returned fingerprint. Read-only.',
+      'Plans a recap of a sequence: returns the segments to keep, in time order, plus extra candidates. Mode "speech" picks runs of whole transcribed sentences (4-20 s each) spread over chapters of about 12 s of the target, dropping near-duplicate passages; mode "shots" picks the best stretch (at most 6 s) of each shot of the clips on the lowest video track, scored by exposure and sharpness. "auto" (default) uses speech when the dialogue covers at least 30% of the sequence, otherwise shots. The total lands within targetSec +/-10%; with minSec and maxSec it lands in that range (aiming at the middle; targetSec is then ignored) and never exceeds maxSec. Speech uses the transcript from transcribe_sequence (returns status "running" until it is done) and ffmpeg loudness; shots need ffmpeg. Segment times are sequence seconds; pass the segments unchanged to build_recap with the returned fingerprint. Read-only.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as transcribe_sequence. Defaults to every audio track that has a clip with a media file.'),
       glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward; use the same list as transcribe_sequence.'),
       engine: z.enum(ENGINE_IDS).optional().describe('Speech engine; use the same value as transcribe_sequence.'),
-      targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90).'),
+      targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90). Ignored when minSec and maxSec are given.'),
+      minSec: z.number().min(5).optional().describe('Shortest acceptable recap in seconds; give with maxSec. A plan under it is returned with a warning.'),
+      maxSec: z.number().min(5).optional().describe('Hard ceiling on the recap in seconds; give with minSec. The plan never exceeds it.'),
       mode: z.enum(['auto', 'speech', 'shots']).default('auto').describe('auto (default) picks speech when the dialogue covers at least 30% of the sequence, else shots.'),
       minSegmentSec: z.number().positive().optional().describe('Shortest segment in seconds (default 8 for speech, 4 for shots).'),
       maxSegmentSec: z.number().positive().default(20).describe('Longest segment in seconds (default 20; shot segments are capped at 6).'),
-    }).refine((a) => a.minSegmentSec === undefined || a.minSegmentSec <= a.maxSegmentSec, { message: 'minSegmentSec must not exceed maxSegmentSec.' }),
+    }).refine((a) => a.minSegmentSec === undefined || a.minSegmentSec <= a.maxSegmentSec, { message: 'minSegmentSec must not exceed maxSegmentSec.' })
+      .superRefine((a, issue) => recapRangeIssues(a).forEach((message) => issue.addIssue({ code: 'custom', message }))),
     run: (ctx, args) => planRecap(ctx, args),
   },
   {
     name: 'build_recap',
     description:
-      'Builds a recap sequence from the segments of plan_recap. Never edits the original: backs up the project, duplicates the sequence, keeps exactly the given segments with one remove_ranges call (30 ms audio crossfades), optionally Auto Reframes to 9:16 (aspect "9:16"), burns transcript captions (captionStyle clean/pop/karaoke; needs transcribe_sequence done), normalises loudness to targetLufs and runs qa_sequence, then reads the result back (verified). Pass the segments and fingerprint from plan_recap unchanged; a changed sequence is refused. Warns with "music-chopped" when a long audio clip (background music) would be cut into 3+ pieces. audioLeadSec > 0 makes a J-cut at every join (the audio of the next segment starts that much before its picture, in whole frames; joins without enough audio or source handle are skipped with a warning). The new sequence name gets " (2)", " (3)" ... when taken. dryRun=true only validates and reports the planned length.',
+      'Builds a recap sequence from the segments of plan_recap. Never edits the original: backs up the project, duplicates the sequence, keeps exactly the given segments with one remove_ranges call (30 ms audio crossfades), optionally Auto Reframes to 9:16, 1:1 or 4:5 (aspect), burns transcript captions (captionStyle clean/pop/karaoke/highlight/minimal, with captionAccent, captionPosition and captionSize; needs transcribe_sequence done), normalises loudness to targetLufs and runs qa_sequence, then reads the result back (verified). Pass the segments and fingerprint from plan_recap unchanged; a changed sequence is refused. Warns with "music-chopped" when a long audio clip (background music) would be cut into 3+ pieces. audioLeadSec > 0 makes a J-cut at every join (the audio of the next segment starts that much before its picture, in whole frames; joins without enough audio or source handle are skipped with a warning). The new sequence name gets " (2)", " (3)" ... when taken. dryRun=true only validates and reports the planned length.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as plan_recap. Also the tracks loudness is applied to.'),
@@ -639,8 +666,9 @@ export const recapTools: ToolModule[] = [
       })).min(1).describe('The segments from plan_recap (sequence seconds), in time order. Pass them unchanged, or drop ones you do not want.'),
       expectedFingerprint: z.string().optional().describe('fingerprint returned by plan_recap. If the sequence changed since, build_recap refuses.'),
       name: z.string().min(1).describe('Name of the new sequence.'),
-      aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe; "16:9" (default) keeps the source frame.'),
-      captionStyle: z.enum(['none', 'clean', 'pop', 'karaoke']).default('none').describe('Burned-in alpha captions from the transcript. Default none.'),
+      aspect: z.enum(['16:9', '9:16', '1:1', '4:5']).default('16:9').describe('"9:16", "1:1" or "4:5" reframes the recap with Auto Reframe; "16:9" (default) keeps the source frame.'),
+      captionStyle: z.enum(['none', ...CAPTION_STYLE_IDS] as ['none', ...CaptionStyleId[]]).default('none').describe('Burned-in alpha captions from the transcript: none (default), clean, pop, karaoke, highlight or minimal.'),
+      ...captionOptionFields,
       audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds (default 0 = straight cuts). Rounded to whole frames.'),
       targetLufs: z.number().min(-30).max(-6).default(-14).describe('Loudness target (default -14).'),
       dryRun: z.boolean().default(false).describe('Only validate and report the planned length; changes nothing.'),

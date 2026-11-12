@@ -97,6 +97,53 @@
         };
     }
 
+    // ------------------------------------------------------------------- caption look
+
+    var CAPTION_STYLE_LABELS = {
+        clean: 'Gọn', pop: 'Nổi bật', karaoke: 'Karaoke', highlight: 'Tô nền từ', minimal: 'Tối giản', none: 'Không phụ đề'
+    };
+
+    /** Copy of ACCENT_SWATCHES in src/analysis/caption-looks.ts (the panel cannot import TS; a test checks they match). */
+    var ACCENT_SWATCHES = ['#FFD400', '#FF3B5C', '#22D3EE', '#4ADE80', '#A855F7'];
+
+    function isHexColor(v) { return isString(v) && /^#[0-9A-Fa-f]{6}$/.test(v); }
+
+    /** { style, accent, position, size } to the caption* tool arguments, without defaults and empty values. */
+    function captionArgs(value) {
+        var v = value || {};
+        var out = {};
+        if (hasValue(v.style)) out.captionStyle = v.style;
+        if (hasValue(v.accent)) out.captionAccent = v.accent;
+        if (hasValue(v.position) && v.position !== 'bottom') out.captionPosition = v.position;
+        if (hasValue(v.size) && v.size !== 'medium') out.captionSize = v.size;
+        return out;
+    }
+
+    /** Colour, position and size only apply when there are captions. */
+    function captionOptionsVisible(style) { return hasValue(style) && style !== 'none'; }
+
+    /** The preview_caption_style call for a caption look; null when there are no captions to preview. */
+    function previewRequest(state, cardId, aspect, caption) {
+        var v = caption || {};
+        if (!hasValue(v.style) || v.style === 'none') return null;
+        var args = { style: v.style };
+        if (hasValue(v.accent) && isHexColor(v.accent)) args.captionAccent = v.accent;
+        if (hasValue(v.position) && v.position !== 'bottom') args.captionPosition = v.position;
+        if (hasValue(v.size) && v.size !== 'medium') args.captionSize = v.size;
+        if (hasValue(aspect)) args.aspect = aspect;
+        return { tool: 'preview_caption_style', args: args };
+    }
+
+    /**
+     * Keeps preview calls from piling up: while the runner is busy only the newest request is kept
+     * (pending); when it is free a request, or the one kept, is sent at once.
+     */
+    function nextPreview(pending, busy, request) {
+        var want = request || pending || null;
+        if (busy) return { send: null, pending: want };
+        return { send: want, pending: null };
+    }
+
     // ------------------------------------------------------------------- buildArgs
 
     /** The form value as the tool expects it; undefined for a number field left empty with no default. */
@@ -113,6 +160,7 @@
             return n;
         }
         if (field.type === 'path') return isString(value) ? value.trim() : '';
+        if (field.type === 'caption') return value && typeof value === 'object' ? value : field.default;
         return value;
     }
 
@@ -130,6 +178,11 @@
             var value = coerceField(field, form[field.key]);
             if (value === undefined) continue;
             if (field.type === 'path' && value === '') continue;
+            if (field.type === 'caption') {
+                var cap = captionArgs(value);
+                for (var ck in cap) if (Object.prototype.hasOwnProperty.call(cap, ck)) args[ck] = cap[ck];
+                continue;
+            }
             if (hasValue(field.omitValue) && value === field.omitValue) continue;
             if (field.map && Object.prototype.hasOwnProperty.call(field.map, value)) value = field.map[value];
             args[field.key] = value;
@@ -145,8 +198,12 @@
         for (var i = 0; i < fields.length; i++) {
             if (fields[i].required && !hasValue(args[fields[i].key])) out.push('Cần điền: ' + fields[i].label + '.');
         }
+        if (hasValue(args.captionAccent) && !isHexColor(args.captionAccent)) out.push('Màu phải có dạng #RRGGBB.');
         if (card.tool === 'workflow_shorts' && args.minSec > args.maxSec) {
             out.push('"Ngắn nhất" không được lớn hơn "Dài nhất".');
+        }
+        if (card.tool === 'workflow_recap' && args.minSec >= args.maxSec) {
+            out.push('"Ngắn nhất" phải nhỏ hơn "Dài nhất".');
         }
         if (card.tool === 'workflow_rough_cut' && !hasValue(args.musicPath) && !hasValue(args.targetSec)) {
             out.push('Cần điền: Thời lượng mong muốn (giây), hoặc chọn file nhạc.');
@@ -372,6 +429,9 @@
         }
         if (Array.isArray(s.shorts)) lines.push('Đã dựng ' + s.shorts.length + ' short');
         if (isNumber(s.cueCount)) lines.push(s.cueCount + ' dòng phụ đề');
+        if (s.lineLimits && isNumber(s.lineLimits.maxCharsPerLine)) {
+            lines.push(s.lineLimits.maxCharsPerLine + ' ký tự/dòng' + (s.lineLimits.layout ? ' (khung ' + s.lineLimits.layout + ')' : ''));
+        }
         if (s.srtPath) lines.push('File SRT: ' + s.srtPath);
         if (isNumber(s.shotCount)) {
             lines.push(s.shotCount + ' shot' + (isNumber(s.totalSeconds) ? ', tổng ' + formatDuration(s.totalSeconds) : ''));
@@ -462,6 +522,7 @@
      * Vietnamese part may be a function of the match, to keep the numbers of the message.
      */
     var KNOWN_MESSAGES = [
+        [/analysis sidecar is outdated/i, 'Bộ phân tích đã cũ, chưa vẽ được kiểu phụ đề mới. Chạy "premiere-pro-mcp --setup-asr" trong terminal để cập nhật rồi thử lại.'],
         [/^Backup failed/i, 'Không sao lưu được project: hãy lưu project (Ctrl+S) rồi chạy lại.'],
         [/^Only (\d+) of (\d+) audio crossfades/i, function (m) {
             return 'Chỉ đặt được ' + m[1] + '/' + m[2] + ' crossfade âm thanh. Các vết cắt vẫn đúng.';
@@ -502,7 +563,30 @@
         [/^Caption render failed(?:, nothing in the project was changed)?(?::\s*(.*))?$/i, 'Không dựng được phụ đề burn-in', true],
         [/^Auto Reframe did not return a sequence/i, 'Premiere không trả về sequence sau khi Auto Reframe. Thử lại, hoặc kiểm tra Auto Reframe trong Premiere.'],
         [/^No words fall in (?:the sequence|this range)/i, 'Không có từ nào trong đoạn này, nên không có phụ đề để tạo.'],
-        [/^Sequence not found/i, 'Không tìm thấy sequence. Bấm làm mới danh sách sequence rồi chọn lại.'],
+        [/^"(.+)" is neither a folder on disk nor a bin in the project/i, function (m) {
+            return '"' + m[1] + '" không phải thư mục trên máy, cũng không phải bin trong dự án. Bấm "Từ dự án…" để chọn bin.';
+        }],
+        [/^File not found: "(.+)" is neither a file on disk nor an imported/i, function (m) {
+            return 'Không tìm thấy "' + m[1] + '" trên máy hay trong dự án. Bấm "Từ dự án…" để chọn file đã import.';
+        }],
+        [/^Several bins are named "(.+)": (.+)\. Give the full bin path/i, function (m) {
+            return 'Có nhiều bin tên "' + m[1] + '": ' + m[2] + '. Gõ đủ đường dẫn bin, ví dụ "Cha/Con".';
+        }],
+        [/^"(.+)" matches (\d+) project items: (.+?)\. Give the bin path/i, function (m) {
+            return '"' + m[1] + '" trùng ' + m[2] + ' mục trong dự án: ' + m[3] + '. Gõ kèm bin ("bin/tên") hoặc chọn bằng "Từ dự án…".';
+        }],
+        [/^Nothing is selected in the Project panel/i, 'Chưa chọn gì trong panel Project. Chọn clip hoặc bin ở đó rồi chạy lại.'],
+        [/^No (\S+) item is selected in the Project panel/i, 'Chưa chọn file nhạc nào trong panel Project.'],
+        [/^Cannot use (.+?): its (\d+) video clip\(s\) are offline/i, function (m) {
+            return 'Không dùng được ' + m[1].replace('the Project panel selection', 'mục đang chọn') + ': cả ' + m[2] + ' clip video đều offline. Relink trong Premiere trước.';
+        }],
+        [/^Cannot use (.+?): it holds no video clips/i, function (m) {
+            return m[1].replace('the Project panel selection', 'Mục đang chọn').replace(/^bin/, 'Bin') + ' không có clip video nào (bin con không được tính).';
+        }],
+        [/^Project item "(.+)" is offline/i, function (m) {
+            return 'File "' + m[1] + '" trong dự án đang offline. Relink trong Premiere trước.';
+        }],
+        [/^Sequence not found/i,'Không tìm thấy sequence. Bấm làm mới danh sách sequence rồi chọn lại.'],
         [/^Tool '.*' not found/i, 'Không tìm thấy công cụ cần dùng. Cập nhật premiere-pro-mcp rồi mở lại panel.'],
         [/already exists|must not exist/i, 'File đã tồn tại và sẽ không bị ghi đè. Đổi tên hoặc chọn thư mục khác.'],
         [/ffmpeg.*(?:not found|missing|not installed)|(?:missing|not found).*ffmpeg/i, 'Thiếu ffmpeg. Chạy "premiere-pro-mcp --doctor" để kiểm tra rồi thử lại.'],
@@ -574,11 +658,58 @@
         return next && next !== message ? message + '\n' + next : message;
     }
 
+    var PROJECT_SELECTION = '@selection';
+
+    /**
+     * Choices for a path field's "Từ dự án…" list, from list_project_media. Footage fields get
+     * the Project panel selection and every bin holding video; music fields get audio items.
+     * Each choice is { value, label }; value goes into the field as typed.
+     */
+    function projectChoices(media, fieldKey) {
+        var items = media && Array.isArray(media.items) ? media.items : [];
+        var bins = media && Array.isArray(media.bins) ? media.bins : [];
+        var out = [];
+        var i;
+        if (fieldKey === 'folderPath') {
+            var selected = 0;
+            var selectedBins = [];
+            for (i = 0; i < bins.length; i++) if (bins[i].selected) selectedBins.push(bins[i].path);
+            for (i = 0; i < items.length; i++) {
+                if (items[i].kind !== 'video') continue;
+                var inSelectedBin = false;
+                for (var b = 0; b < selectedBins.length; b++) if (items[i].bin === selectedBins[b]) inSelectedBin = true;
+                if (items[i].selected || inSelectedBin) selected++;
+            }
+            if (selected > 0) out.push({ value: PROJECT_SELECTION, label: 'Mục đang chọn trong Project (' + selected + ' clip)' });
+            for (i = 0; i < bins.length; i++) {
+                var count = 0;
+                for (var j = 0; j < items.length; j++) if (items[j].kind === 'video' && items[j].bin === bins[i].path) count++;
+                if (count > 0) out.push({ value: bins[i].path, label: 'Bin ' + bins[i].path + ' (' + count + ' clip)' });
+            }
+            return out;
+        }
+        for (i = 0; i < items.length; i++) {
+            if (items[i].kind !== 'audio') continue;
+            var where = items[i].bin ? items[i].bin + '/' + items[i].name : items[i].name;
+            out.push({ value: items[i].mediaPath, label: (items[i].selected ? '★ ' : '') + where + (items[i].offline ? ' (offline)' : '') });
+        }
+        return out;
+    }
+
     return {
         ASR_ENGINES: ASR_ENGINES,
+        PROJECT_SELECTION: PROJECT_SELECTION,
+        projectChoices: projectChoices,
         DEFAULT_SETTINGS: DEFAULT_SETTINGS,
         resolveRunner: resolveRunner,
         buildArgs: buildArgs,
+        CAPTION_STYLE_LABELS: CAPTION_STYLE_LABELS,
+        ACCENT_SWATCHES: ACCENT_SWATCHES,
+        isHexColor: isHexColor,
+        captionOptionsVisible: captionOptionsVisible,
+        captionArgs: captionArgs,
+        previewRequest: previewRequest,
+        nextPreview: nextPreview,
         missingRequired: missingRequired,
         normalizeSettings: normalizeSettings,
         applySettings: applySettings,

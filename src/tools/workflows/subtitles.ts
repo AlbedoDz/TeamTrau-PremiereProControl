@@ -15,7 +15,7 @@ import { awaitTranscript, resolveSource, runSteps, uniqueSequenceName, type Step
 export interface SubtitlesArgs extends TranscriptArgs {
   name?: string | undefined;
   output: 'srt' | 'caption_track';
-  maxCharsPerLine: number;
+  maxCharsPerLine?: number | undefined;
   outputPath?: string | undefined;
   dryRun: boolean;
   backup: boolean;
@@ -67,6 +67,7 @@ export async function workflowSubtitles(ctx: ToolContext, args: SubtitlesArgs): 
       if (Array.isArray(result.warnings)) warnings.push(...result.warnings);
       summary.cueCount = result.cueCount;
       summary.preview = result.preview;
+      if (result.lineLimits) summary.lineLimits = result.lineLimits;
       if (result.srtPath) {
         srtPath = String(result.srtPath);
         summary.srtPath = srtPath;

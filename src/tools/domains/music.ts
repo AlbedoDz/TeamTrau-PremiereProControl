@@ -14,6 +14,7 @@ import { assignShots, cutSlots } from '../../analysis/beatcut.js';
 import { bestWindows, type Candidate } from '../../analysis/roughcut.js';
 import { backupProject, BACKUP_FAILED_HINT, isError, readSequence } from './cleanup.js';
 import { closeFrameGaps, ensureProjectItems, listFootage, scoreAll } from './roughcut.js';
+import { FOOTAGE_SOURCE_HELP, MUSIC_PATH_HELP, resolveProjectFile, type MediaKind } from '../project-media.js';
 
 const ENVELOPE_FILTER = 'aresample=22050,asetnsamples=n=221:p=0,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-';
 
@@ -49,7 +50,13 @@ const confidenceNote = (r: Rhythm): string | undefined =>
 
 // -------------------------------------------------------------- analyze_music
 
-async function analyzeMusic(_ctx: ToolContext, args: { musicPath: string; beatsPerBar: number; includeBeats: boolean }): Promise<any> {
+/** Music may be a file on disk or an audio/video item already imported into the project. */
+const MUSIC_KINDS: MediaKind[] = ['audio', 'video'];
+
+async function analyzeMusic(ctx: ToolContext, args: { musicPath: string; beatsPerBar: number; includeBeats: boolean }): Promise<any> {
+  const music = await resolveProjectFile(ctx, args.musicPath, MUSIC_KINDS);
+  if ('error' in music) return { success: false, error: music.error };
+  args = { ...args, musicPath: music.path };
   const result = await rhythmOf(args.musicPath, args.beatsPerBar, 'analyze_music');
   if ('failure' in result) return result.failure;
   const { rhythm } = result;
@@ -98,10 +105,13 @@ export async function assembleBeatCut(
 ): Promise<any> {
   const before = await readSequence(ctx, args.sequenceId);
   if (isError(before)) return { success: false, error: before.error };
+  const music = await resolveProjectFile(ctx, args.musicPath, MUSIC_KINDS);
+  if ('error' in music) return { success: false, error: music.error };
+  args = { ...args, musicPath: music.path };
   const heard = await rhythmOf(args.musicPath, args.beatsPerBar, 'assemble_beat_cut');
   if ('failure' in heard) return heard.failure;
   const { rhythm } = heard;
-  const listed = await listFootage(args);
+  const listed = await listFootage(ctx, args);
   if ('error' in listed) return { success: false, error: listed.error };
 
   const length = Math.min(args.durationSeconds ?? rhythm.durationSeconds, rhythm.durationSeconds);
@@ -197,7 +207,7 @@ export const musicTools: ToolModule[] = [
     description:
       'Finds the tempo (BPM), beat grid, bars and sections (low, mid, high energy) of a music file from its loudness, measured with ffmpeg. Read-only; cached on disk. Assumes a steady tempo, as in produced music, and reports a confidence; below 0.3 treat the grid as a guess. Use the beats to place markers or cut to music, or assemble_beat_cut to do it for you. Requires ffmpeg.',
     inputSchema: z.object({
-      musicPath: z.string().describe('Absolute path to the audio or video file with the music.'),
+      musicPath: z.string().describe(MUSIC_PATH_HELP),
       beatsPerBar: z.number().int().min(2).max(7).default(4).describe('Beats in a bar (default 4).'),
       includeBeats: z.boolean().default(false).describe('Also return every beat time (default false: bars only).'),
     }),
@@ -208,10 +218,10 @@ export const musicTools: ToolModule[] = [
     description:
       'Builds a music-driven cut: analyses the song, cuts on its beats (every 4, 2 or 1 beats depending on how loud that section is and the preset), gives the best-scored footage from a folder to the loudest sections, places the shots back to back on a video track and puts the music on an audio track. Cut points are snapped to the sequence frame grid. Footage is reused (and reported) if there are fewer good stretches than cuts. Refuses to overwrite existing clips on the track unless overwrite=true. Use dryRun=true to see the cut list first. Requires ffmpeg.',
     inputSchema: z.object({
-      musicPath: z.string().describe('Absolute path to the music file.'),
+      musicPath: z.string().describe(MUSIC_PATH_HELP),
       mediaPaths: z.array(z.string()).optional().describe('Video files to choose from. Use this or folderPath.'),
-      folderPath: z.string().optional().describe('Folder of video files to choose from. Use this or mediaPaths.'),
-      recursive: z.boolean().default(false).describe('Include subfolders of folderPath (default false).'),
+      folderPath: z.string().optional().describe(FOOTAGE_SOURCE_HELP),
+      recursive: z.boolean().default(false).describe('Include subfolders or sub-bins of folderPath (default false).'),
       preset: z.enum(['calm', 'balanced', 'energetic']).default('balanced').describe('How fast the cut is: calm 8/8/4 beats per shot in low/mid/high sections, balanced 4/4/2, energetic 4/2/1 (default balanced).'),
       cutEveryBeats: z.number().int().min(1).max(16).optional().describe('Fixed beats per shot, overriding the preset.'),
       beatsPerBar: z.number().int().min(2).max(7).default(4).describe('Beats in a bar (default 4).'),

@@ -246,7 +246,7 @@ describe('setupAsr and asrStatus', () => {
       });
       expect(spawned[5]).toEqual({
         cmd: 'uv',
-        args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), expect.stringMatching(/python$/)],
+        args: ['pip', 'install', '-p', expect.stringMatching(/Scripts[\\/]python\.exe$/), '--reinstall-package', 'premiere-mcp-sidecar', expect.stringMatching(/python$/)],
       });
       expect(spawned[6]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
@@ -291,7 +291,7 @@ describe('setupAsr and asrStatus', () => {
       });
       expect(spawned[3]).toEqual({
         cmd: 'uv',
-        args: ['pip', 'install', '-p', expect.stringMatching(/bin[\\/]python$/), expect.stringMatching(/python$/)],
+        args: ['pip', 'install', '-p', expect.stringMatching(/bin[\\/]python$/), '--reinstall-package', 'premiere-mcp-sidecar', expect.stringMatching(/python$/)],
       });
       expect(spawned[4].args).toContain('download-models');
       expect(spawned[5].args).toContain('check');
@@ -426,7 +426,7 @@ describe('setupAsr and asrStatus', () => {
       });
       expect(spawned[3]).toEqual({
         cmd: expect.stringMatching(/bin[\\/]python$/),
-        args: ['-m', 'pip', 'install', expect.stringMatching(/python$/)],
+        args: ['-m', 'pip', 'install', '--force-reinstall', '--no-deps', expect.stringMatching(/python$/)],
       });
       expect(spawned[4].args).toContain('download-models');
       expect(spawned[5].args).toContain('check');
@@ -503,7 +503,7 @@ describe('setupAsr and asrStatus', () => {
       });
       expect(spawned[6]).toEqual({
         cmd: expect.stringMatching(/Scripts[\\/]python\.exe$/),
-        args: ['-m', 'pip', 'install', expect.stringMatching(/python$/)],
+        args: ['-m', 'pip', 'install', '--force-reinstall', '--no-deps', expect.stringMatching(/python$/)],
       });
       expect(spawned[7].args).toContain('download-models');
       expect(spawned[8].args).toContain('check');

@@ -3,7 +3,7 @@ import type { ToolContext } from '../../tools/context.js';
 jest.mock('../../tools/domains/shorts.js', () => ({
   ...jest.requireActual('../../tools/domains/shorts.js'),
   loadTranscript: jest.fn(),
-  reframeToVertical: jest.fn(),
+  reframeTo: jest.fn(),
   addAlphaCaptions: jest.fn(),
 }));
 jest.mock('../../analysis/sidecar.js', () => ({
@@ -36,7 +36,7 @@ import * as editing from '../../tools/domains/editing.js';
 import { recapTools } from '../../tools/domains/recap.js';
 
 const loadTranscript = shorts.loadTranscript as jest.Mock;
-const reframeToVertical = shorts.reframeToVertical as jest.Mock;
+const reframeTo = shorts.reframeTo as jest.Mock;
 const addAlphaCaptions = shorts.addAlphaCaptions as jest.Mock;
 const readSequence = cleanup.readSequence as jest.Mock;
 const removeRanges = cleanup.removeRanges as jest.Mock;
@@ -81,7 +81,7 @@ beforeEach(() => {
   });
   normalizeLoudness.mockResolvedValue({ success: true });
   qaSequence.mockResolvedValue({ success: true, errors: 0, findings: [] });
-  reframeToVertical.mockResolvedValue({ sequenceId: 'vert', deleted: true, frameSizeHorizontal: 1215, frameSizeVertical: 2160 });
+  reframeTo.mockResolvedValue({ sequenceId: 'vert', deleted: true, frameSizeHorizontal: 1215, frameSizeVertical: 2160 });
   addAlphaCaptions.mockResolvedValue({ ok: true });
 });
 
@@ -105,7 +105,7 @@ describe('build_recap', () => {
     });
     expect(ensureBackup).toHaveBeenCalledTimes(1);
     expect(result.backupPath).toBe('C:/backup.prproj');
-    expect(reframeToVertical).not.toHaveBeenCalled();
+    expect(reframeTo).not.toHaveBeenCalled();
     expect(normalizeLoudness).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sequenceId: 'new', targetLufs: -14, backup: false, audioTrackIndices: [0] }));
   });
 
@@ -185,20 +185,36 @@ describe('build_recap', () => {
     expect(result.warnings.some((w: string) => w.includes('music-chopped'))).toBe(false);
   });
 
+  it('passes caption options to addAlphaCaptions', async () => {
+    const words = [{ w: 'xin', start: 12, end: 12.4, trackIndex: 0, clipId: 'a1' }];
+    loadTranscript.mockResolvedValue({ status: 'done', fingerprint: shotsFingerprint(), words, sentences: [] });
+    await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), captionStyle: 'minimal', captionSize: 'large', captionPosition: 'middle' });
+    expect(addAlphaCaptions.mock.calls[0][3]).toEqual({ style: 'minimal', size: 'large', position: 'middle' });
+  });
+
+  it('4:5 reframes, 16:9 does not', async () => {
+    loadTranscript.mockResolvedValue({ status: 'done', fingerprint: shotsFingerprint(), words: [], sentences: [] });
+    await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), aspect: '4:5' });
+    expect(reframeTo).toHaveBeenCalledWith(expect.anything(), 'new', 'Recap', { num: 4, den: 5 });
+    reframeTo.mockClear();
+    await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), aspect: '16:9' });
+    expect(reframeTo).not.toHaveBeenCalled();
+  });
+
   it('reframes to 9:16 and captions the reframed sequence', async () => {
     const words = [{ w: 'xin', start: 12, end: 12.4, trackIndex: 0, clipId: 'a1' }];
     loadTranscript.mockResolvedValue({ status: 'done', fingerprint: shotsFingerprint(), words, sentences: [] });
     const result = await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), aspect: '9:16', captionStyle: 'pop' });
 
     expect(result).toMatchObject({ success: true, sequenceId: 'vert' });
-    expect(reframeToVertical).toHaveBeenCalledTimes(1);
-    expect(reframeToVertical).toHaveBeenCalledWith(expect.anything(), 'new', 'Recap');
+    expect(reframeTo).toHaveBeenCalledTimes(1);
+    expect(reframeTo).toHaveBeenCalledWith(expect.anything(), 'new', 'Recap', { num: 9, den: 16 });
     expect(duplicateSequence).toHaveBeenCalledWith(expect.anything(), 'src', 'Recap (16:9)');
     expect(addAlphaCaptions).toHaveBeenCalledTimes(1);
     const [, seqId, passedWords, style, timeMap] = addAlphaCaptions.mock.calls[0];
     expect(seqId).toBe('vert');
     expect(passedWords).toBe(words);
-    expect(style).toBe('pop');
+    expect(style).toEqual({ style: 'pop' });
     expect(timeMap(12)).toBe(2); // 10 s removed before it
     expect(timeMap(55)).toBe(15); // 10 s removed, then 30 s removed, minus 0: 55-10-30
     expect(timeMap(30)).toBeNull(); // inside a removed stretch

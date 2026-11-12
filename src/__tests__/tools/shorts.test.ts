@@ -26,7 +26,7 @@ jest.mock('../../analysis/ffmpeg.js', () => {
 import * as sidecar from '../../analysis/sidecar.js';
 import * as ffmpeg from '../../analysis/ffmpeg.js';
 import { asrStatus } from '../../setup/asr.js';
-import { buildShortTiming, median, reframeToVertical, timelineLoudness } from '../../tools/domains/shorts.js';
+import { buildShortTiming, median, reframeTo, timelineLoudness } from '../../tools/domains/shorts.js';
 import { SAFE_AREA, safeFileName } from '../../analysis/captions.js';
 
 const sidecarPython = sidecar.sidecarPython as jest.Mock;
@@ -515,7 +515,7 @@ describe('build_short', () => {
       events.push(command);
       if (command === 'captions') {
         captionPath = input.outPath;
-        return { path: input.outPath, frames: 588 };
+        return { path: input.outPath, frames: 588, renderer: 2 };
       }
       return { samples: [] };
     });
@@ -569,6 +569,29 @@ describe('build_short', () => {
     expect(runSidecar).not.toHaveBeenCalled();
     expect(importMedia).not.toHaveBeenCalled();
     expect(writes()).toEqual([]);
+  });
+
+  it('dryRun groups with limits of the chosen look', async () => {
+    const base = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', dryRun: true });
+    const minimal = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', dryRun: true, captionStyle: 'minimal' });
+    const longest = (r: any): number => Math.max(...r.captions.map((c: any) => c.words.length));
+    expect(longest(base)).toBeLessThanOrEqual(3);
+    expect(longest(minimal)).toBeGreaterThan(3);
+    expect(longest(minimal)).toBeLessThanOrEqual(6);
+  });
+
+  it('sends a highlight look to the sidecar', async () => {
+    await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', captionStyle: 'highlight', captionAccent: '#22d3ee' });
+    const render = runSidecar.mock.calls.find(([c]) => c === 'captions')![1];
+    expect(render.look).toMatchObject({ active: 'pill', accentColor: '#22D3EE' });
+    expect(render).not.toHaveProperty('style');
+  });
+
+  it('refuses captions from an outdated sidecar that returns no renderer version', async () => {
+    runSidecar.mockImplementation(async (command: string, input: any) => (command === 'captions' ? { path: input.outPath, frames: 588 } : { samples: [] }));
+    const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short' });
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r)).toMatch(/sidecar is outdated.*premiere-pro-mcp --setup-asr/);
   });
 
   it('rejects a reversed or out-of-range sentence range', async () => {
@@ -694,7 +717,8 @@ describe('build_short', () => {
     expect(events).not.toContain('faces');
 
     const render = runSidecar.mock.calls.find(([c]) => c === 'captions')![1];
-    expect(render).toMatchObject({ style: 'pop', width: 1215, height: 2160, fps: 25, duration: 23.52, safeArea: SAFE_AREA });
+    expect(render).toMatchObject({ width: 1215, height: 2160, fps: 25, duration: 23.52 });
+    expect(render.look).toMatchObject({ active: 'pop', uppercase: true });
     expect(render.groups[0].start).toBe(0);
     expect(render.outPath.startsWith(join(home, 'renders', 'Short-'))).toBe(true);
     expect(render.outPath.endsWith('.mov')).toBe(true);
@@ -716,6 +740,26 @@ describe('build_short', () => {
     });
     expect(r.qa).toMatchObject({ success: true });
     expect(r.markers).toEqual([]);
+  });
+
+  it('build_short 1:1 calls autoReframeSequence(1, 1, …) and renders captions at height × height', async () => {
+    await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', aspect: '1:1' });
+    const reframe = scripts.find((s) => s.includes('build_short:reframe'))!;
+    expect(reframe).toContain('autoReframeSequence(1, 1,');
+    const render = runSidecar.mock.calls.find(([c]) => c === 'captions')![1];
+    expect(render.width).toBe(render.height);
+  });
+
+  it('build_short verifies 4:5', async () => {
+    const base = { success: true, endSeconds: 23.5, topTrackIndex: 1, topTrackPaths: [], reframeKeys: 42 };
+    readbacks = [{ ...base, frameSizeHorizontal: 864, frameSizeVertical: 1080 }];
+    const ok = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', aspect: '4:5' });
+    expect(ok.warnings.join(' ')).not.toContain('not 4:5'); // 864×1080 is 4:5 (caption clip check is separate)
+    expect(scripts.find((s) => s.includes('build_short:reframe'))!).toContain('autoReframeSequence(4, 5,');
+    readbacks = [{ ...base, frameSizeHorizontal: 608, frameSizeVertical: 1080 }];
+    const bad = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', aspect: '4:5' });
+    expect(bad.warnings).toContain('The short is 608×1080, not 4:5.');
+    expect(bad.verified).toBe(false);
   });
 
   it('reports verified false when the readback does not match', async () => {
@@ -771,7 +815,7 @@ describe('build_short', () => {
   it('adds a warning marker for each multi-face stretch', async () => {
     runSidecar.mockImplementation(async (command: string, input: any) => {
       events.push(command);
-      if (command === 'captions') { captionPath = input.outPath; return { path: input.outPath, frames: 1 }; }
+      if (command === 'captions') { captionPath = input.outPath; return { path: input.outPath, frames: 1, renderer: 2 }; }
       return { samples: Array.from({ length: 48 }, (_, t) => ({ t, count: t === 20 || t === 21 ? 2 : 1 })) };
     });
     const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', detectFaces: true });
@@ -798,10 +842,10 @@ describe('build_short', () => {
   });
 });
 
-describe('reframeToVertical', () => {
+describe('reframeTo', () => {
   const capture = async (range?: { start: number; end: number }): Promise<string> => {
     const executeScript = jest.fn().mockResolvedValue({ success: true, sequenceID: 'v', deleted: true, frameSizeHorizontal: 1080, frameSizeVertical: 1920 });
-    await reframeToVertical({ bridge: { executeScript } } as any, 'seq1', 'Vertical', range);
+    await reframeTo({ bridge: { executeScript } } as any, 'seq1', 'Vertical', { num: 9, den: 16 }, range);
     return String(executeScript.mock.calls[0][0]);
   };
 

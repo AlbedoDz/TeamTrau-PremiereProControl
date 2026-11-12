@@ -499,7 +499,8 @@ describe('workflow_subtitles', () => {
 
   it('writes only the SRT by default and leaves the project alone', async () => {
     const result = await runTool('workflow_subtitles', ctxWith(), {});
-    expect(createCaptions.mock.calls[0][1]).toMatchObject({ srtOnly: true, maxCharsPerLine: 42 });
+    expect(createCaptions.mock.calls[0][1]).toMatchObject({ srtOnly: true });
+    expect(createCaptions.mock.calls[0][1].maxCharsPerLine).toBeUndefined();
     expect(duplicateSequence).not.toHaveBeenCalled();
     expect(createCaptionTrack).not.toHaveBeenCalled();
     expect(result).toMatchObject({ success: true, outputSequenceIds: [] });
@@ -664,6 +665,19 @@ describe('workflow_shorts', () => {
     expect(buildShort.mock.calls[0][1]).toMatchObject({ sequenceId: 'src', name: 'Tap 1 - short 1' });
   });
 
+  it('forwards caption options to build_short', async () => {
+    await runTool('workflow_shorts', ctxWith(), { count: 1, captionStyle: 'highlight', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'small' });
+    expect(buildShort.mock.calls[0][1]).toMatchObject({ captionStyle: 'highlight', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'small' });
+  });
+
+  it('forwards aspect to build_short, 9:16 by default', async () => {
+    await runTool('workflow_shorts', ctxWith(), { count: 1 });
+    expect(buildShort.mock.calls[0][1]).toMatchObject({ aspect: '9:16' });
+    buildShort.mockClear();
+    await runTool('workflow_shorts', ctxWith(), { count: 1, aspect: '1:1' });
+    expect(buildShort.mock.calls[0][1]).toMatchObject({ aspect: '1:1' });
+  });
+
   it('dryRun builds nothing', async () => {
     const result = await runTool('workflow_shorts', ctxWith(), { count: 2, dryRun: true });
     expect(buildShort).not.toHaveBeenCalled();
@@ -716,6 +730,31 @@ describe('workflow_recap', () => {
     expect(result.success).toBe(true);
     expect(planRecap.mock.calls.map((c) => c[1].sequenceId)).toEqual(['src', 'src']);
     expect(buildRecap.mock.calls[0][1].sequenceId).toBe('src');
+  });
+
+  it('passes minSec and maxSec to the plan and validates them', async () => {
+    await runTool('workflow_recap', ctxWith(), { minSec: 75, maxSec: 105 });
+    expect(planRecap.mock.calls[0][1]).toMatchObject({ minSec: 75, maxSec: 105 });
+    expect(() => tool('workflow_recap').inputSchema.parse({ minSec: 105, maxSec: 75 })).toThrow(/minSec must be less than maxSec/);
+    expect(() => tool('workflow_recap').inputSchema.parse({ maxSec: 75 })).toThrow(/minSec and maxSec/);
+  });
+
+  it('flags a built recap longer than maxSec by more than a frame', async () => {
+    buildRecap.mockResolvedValue({ success: true, sequenceId: 'rc', durationSec: 17.05, verified: true, warnings: [], audioLeadSupported: false });
+    const result = await runTool('workflow_recap', ctxWith(), { minSec: 10, maxSec: 17 });
+    expect(result.summary.verified).toBe(false);
+    expect(result.warnings.join(' ')).toMatch(/dài 17.05 giây, vượt mức tối đa 17 giây/);
+  });
+
+  it('accepts a built recap within a frame of maxSec', async () => {
+    buildRecap.mockResolvedValue({ success: true, sequenceId: 'rc', durationSec: 17.03, verified: true, warnings: [], audioLeadSupported: false });
+    const result = await runTool('workflow_recap', ctxWith(), { minSec: 10, maxSec: 17 });
+    expect(result.summary.verified).toBe(true);
+  });
+
+  it('forwards caption options to build_recap', async () => {
+    await runTool('workflow_recap', ctxWith(), { captionStyle: 'minimal', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'large' });
+    expect(buildRecap.mock.calls[0][1]).toMatchObject({ captionStyle: 'minimal', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'large' });
   });
 
   it('dryRun plans only', async () => {

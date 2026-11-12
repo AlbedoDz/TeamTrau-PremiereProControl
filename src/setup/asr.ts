@@ -300,7 +300,7 @@ export async function setupAsr(
       if (code !== 0) return code;
     }
 
-    code = await runCommand('uv', ['pip', 'install', ...offline, '-p', py, pkgPythonDir], log, spawnFn);
+    code = await runCommand('uv', ['pip', 'install', ...offline, '-p', py, '--reinstall-package', 'premiere-mcp-sidecar', pkgPythonDir], log, spawnFn);
     if (code !== 0) return code;
   } else {
     if (!venvExists) {
@@ -335,7 +335,7 @@ export async function setupAsr(
       if (code !== 0) return code;
     }
 
-    code = await runCommand(py, ['-m', 'pip', 'install', ...offline, pkgPythonDir], log, spawnFn);
+    code = await runCommand(py, ['-m', 'pip', 'install', ...offline, '--force-reinstall', '--no-deps', pkgPythonDir], log, spawnFn);
     if (code !== 0) return code;
   }
 

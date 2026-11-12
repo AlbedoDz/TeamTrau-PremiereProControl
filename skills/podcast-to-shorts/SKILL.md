@@ -150,10 +150,17 @@ Tool arguments:
 - `expectedFingerprint?: string` (optional): Timeline fingerprint from `find_highlight_candidates`. Agents MUST pass this to every `build_short` call (dry run and real run).
 - `detectFaces?: boolean = false` (optional): Face counting is opt-in (default `false`). Turn it on ONLY when the podcast has wide two-person shots, because it decodes video (uses GPU decoding of keyframes only). When `false`, `multiFaceRatio` is 0 and no "Cảnh nhiều người — kiểm tra khung reframe" markers are added.
 - `captions?: {start, end, text}[]` (optional): Edited caption groups from the dry run; an empty text removes that group.
-- `captionStyle` (optional): `"clean"` (default), `"pop"`, or `"karaoke"`.
+- `captionStyle` (optional): `"clean"` (default), `"pop"`, `"karaoke"`, `"highlight"`, or `"minimal"`.
   - `clean`: White text, 6 px black stroke, active word highlighted in `#FFD400`.
   - `pop`: Uppercase text, active word scales 1.0 -> 1.15 -> 1.0 over 120 ms.
   - `karaoke`: Full phrase visible, word color sweeps as spoken.
+  - `highlight`: A colored pill sits behind the active word.
+  - `minimal`: Small, plain text with a soft shadow and longer groups (up to 6 words).
+- `captionAccent` (optional): Accent color as `#RRGGBB` (active word or pill); defaults to the style's own accent.
+- `captionPosition` (optional): `"bottom"` (default) or `"middle"`.
+- `captionSize` (optional): `"small"`, `"medium"` (default) or `"large"`.
+- `aspect` (optional): `"9:16"` (default), `"1:1"` or `"4:5"`; Auto Reframe uses it and the caption layout follows it.
+- Use `preview_caption_style` (same style, accent, position, size and aspect arguments) to show the user a PNG of a look before building. If it reports `sidecar.outdated`, have the user run `premiere-pro-mcp --setup-asr`.
 - `font` (optional): Path to custom `.ttf` font (default: bundled Be Vietnam Pro OFL).
 - `targetLufs` (optional): Integrated loudness target (default: -14).
 - `dryRun`: `true`

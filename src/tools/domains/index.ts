@@ -27,6 +27,7 @@ import { timelineTools } from './timeline.js';
 import { tracksTools } from './tracks.js';
 import { workflowsTools } from './workflows.js';
 import { workflowToolsTools } from './workflow-tools.js';
+import { captionPreviewTools } from './caption-preview.js';
 
 export const domainTools: ToolModule[] = [
   ...audioTools,
@@ -50,4 +51,5 @@ export const domainTools: ToolModule[] = [
   ...tracksTools,
   ...workflowsTools,
   ...workflowToolsTools,
+  ...captionPreviewTools,
 ];
