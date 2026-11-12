@@ -20,6 +20,24 @@ function loadCore(): any {
 }
 
 const core = loadCore();
+
+describe('gui-core loading in the CEP panel', () => {
+  it('sets window.GuiCore even when Node exposes `module` (CEP --mixed-context)', () => {
+    // Live: the panel runs with --enable-nodejs --mixed-context, where `module` exists.
+    // The UMD used to export only to module.exports there, so gui.js found no
+    // window.GuiCore, threw on start-up, and no button in the panel responded.
+    const window: any = {};
+    const sandbox: any = { window, module: { exports: {} }, console };
+    vm.createContext(sandbox);
+    vm.runInContext(realFs.readFileSync(path.join(GUI_DIR, 'gui-core.js'), 'utf8'), sandbox);
+    expect(typeof window.GuiCore?.reduceRunState).toBe('function');
+    expect(typeof sandbox.module.exports.reduceRunState).toBe('function');
+  });
+
+  it('gui.js reads GuiCore from window', () => {
+    expect(realFs.readFileSync(path.join(GUI_DIR, 'gui.js'), 'utf8')).toMatch(/window\.GuiCore/);
+  });
+});
 const { cards } = JSON.parse(readFileSync(path.join(GUI_DIR, 'workflows.json'), 'utf8')) as { cards: any[] };
 const card = (id: string): any => cards.find((c) => c.id === id);
 

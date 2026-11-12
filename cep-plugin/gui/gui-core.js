@@ -4,11 +4,12 @@
  * <script> tag (window.GuiCore) and by tests (module.exports).
  */
 (function (root, factory) {
-    if (typeof module === 'object' && module && module.exports) {
-        module.exports = factory();
-    } else {
-        root.GuiCore = factory();
-    }
+    // Both, not either: CEP runs this panel with --enable-nodejs --mixed-context, where
+    // Node's `module` exists in the page too. Exporting only to module.exports there left
+    // window.GuiCore undefined, so gui.js failed on start-up and no button responded.
+    var api = factory();
+    if (root) root.GuiCore = api;
+    if (typeof module === 'object' && module && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : this, function () {
     'use strict';
 
