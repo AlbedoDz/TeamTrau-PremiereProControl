@@ -9,7 +9,8 @@ Nhánh `feature/panel-gui`, worktree `.worktrees/panel-gui`. Ghi kết quả th�
 
 ## 1. Spike 1: ASR có giữ "ờ/ừm" không (quyết định có cần phát hiện bằng âm thanh)
 - [ ] Chọn một đoạn voice khoảng 2 phút có "ờ/ừm" thật. Chạy `transcribe_sequence`.
-- [ ] Số từ ngập ngừng nghe được: ___ · Số có trong transcript: ___ · Tỉ lệ: ___
+- [x] 2026-11-12, sequence "Ngách 41-2 Đông Tác 3" (voice-off 196 s, engine **whisper-turbo**): transcript có 546 từ, **0 từ ngập ngừng**. Có 25 đoạn tiếng ngắn (< 0,6 s, giữa hai khoảng lặng −35 dB); **24/25 khớp với một từ thật**, chỉ 1 đoạn không có từ (0:17.11–0:17.38, có thể là "ờ" hoặc tiếng lấy hơi).
+- [x] Kết luận tạm: tỉ lệ ≥ 96%, nên **chưa cần** phát hiện bằng âm thanh. Bằng chứng còn yếu vì bản đọc này rất sạch; cần thử lại trên một bản nói tự nhiên có nhiều "ờ/ừm".
 - [ ] Nếu tỉ lệ dưới 0,7 thì cần thêm cách phát hiện bằng âm thanh (spec §5.2), theo ruling R1.
 
 ## 2. Spike 2: J-cut
@@ -18,7 +19,12 @@ Nhánh `feature/panel-gui`, worktree `.worktrees/panel-gui`. Ghi kết quả th�
 
 ## 3. Năm quy trình chạy từ panel, không mở client AI nào
 Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian chạy, các số trong `summary`, cảnh báo, và kết quả có đúng không.
-- [ ] **Dọn voice-over:**
+- [x] **Dọn voice-over** (chạy qua runner trên máy thật):
+  - Xem trước: 22 khoảng lặng và 1 câu vấp. Câu vấp ở 148–158,7 s là câu đọc lại thật ("nhiều lượt" sửa thành "887 lượt"), tool giữ bản đọc sau. Đúng.
+  - Chạy thật: tạo "… - clean", 196,0 s → 162,1 s, đã xác minh độ dài. DeNoise và Dynamics áp lên 19/19 clip, chuẩn −16 LUFS, QA sạch, có sao lưu.
+  - **Lỗi tìm thấy và đã sửa:** tham số thứ hai của QE `addTransition` nghĩa là "đặt ở đầu clip" (`true`). Ruling R4 hiểu ngược, nên crossfade rơi vào cuối clip (mất ở mối nối đầu, thừa một cái ở cuối sequence), và bước xác minh qua QE báo nhầm "0/18".
+  - Đã sửa: dùng `true` và xác minh qua `track.transitions.numItems` của DOM. Chạy lại trên máy thật: crossfade nằm ngay tại mối nối (99,967–100,000 s), không còn cảnh báo.
+  - Việc còn lại cho Dọn voice-over:
   - Xem trước có liệt kê vết cắt kèm lý do và câu gốc không.
   - Sau khi chạy: crossfade **có thật trên từng vết cắt không** (ruling R4), và nghe có tiếng "tách" ở mối nối không.
   - Câu chứa "chẳng", "ạ", "nhé" có còn nguyên không.

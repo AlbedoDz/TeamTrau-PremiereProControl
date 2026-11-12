@@ -89,9 +89,13 @@ describe('remove_ranges', () => {
     expect(fade).toContain('__findQeNamed("audioTransition", "Constant Power")');
     expect(fade).toContain('__qeSequenceFor(sequence)');
     expect(fade).toContain('String(item.type) !== "Clip"');
-    expect(fade).toContain('addTransition(transition, false, "3", "0", 0.5, true, true)');
+    expect(fade).toContain('addTransition(transition, true, "3", "0", 0.5, true, true)');
     expect(fade).not.toContain('getActiveSequence');
     expect(fade).toContain('[5]');
+    // Live Premiere 25.6 only reflects the new audio transition in the DOM track's
+    // transitions collection, so placement must also be verified there.
+    expect(fade).toContain('sequence.audioTracks[trackIndex].transitions.numItems');
+    expect(fade).toContain('domAfter > domBefore');
   });
 
   it('uses a one-frame crossfade for 30 ms at 25 fps', async () => {

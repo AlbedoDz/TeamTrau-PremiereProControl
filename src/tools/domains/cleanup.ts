@@ -395,6 +395,12 @@ async function addAudioCrossfades(ctx: ToolContext, sequenceId: string, joins: n
         }
         return null;
       }
+      // Live Premiere 25.6: the QE transition state does not reflect a newly added
+      // audio transition, while the DOM track's transitions collection does. Count
+      // either signal as proof of placement.
+      function __domTransitionCount(trackIndex) {
+        try { return Number(sequence.audioTracks[trackIndex].transitions.numItems) || 0; } catch (eDom) { return -1; }
+      }
       var joins = ${JSON.stringify(joins)};
       var placed = 0, attempted = 0, firstError = "", joinsPlaced = 0;
       for (var k = 0; k < joins.length; k++) {
@@ -406,10 +412,14 @@ async function addAudioCrossfades(ctx: ToolContext, sequenceId: string, joins: n
           attempted++;
           try {
             var before = __readQeTransitionState(qeClip);
-            qeClip.addTransition(transition, false, ${JSON.stringify(String(frames))}, "0", 0.5, true, true);
+            var domBefore = __domTransitionCount(t);
+            // The second argument is "add at start": verified live on Premiere 25.6.3, where
+            // true places the transition at this clip's head (the join) and false at its tail.
+            qeClip.addTransition(transition, true, ${JSON.stringify(String(frames))}, "0", 0.5, true, true);
             try { if (typeof $ !== "undefined" && $.sleep) $.sleep(150); } catch (eWait) {}
             var after = __readQeTransitionState(__clipStartingAt(qeTrack, joins[k]));
-            if (__transitionWasVerified(before, after)) { placed++; joinHit = true; }
+            var domAfter = __domTransitionCount(t);
+            if ((domBefore >= 0 && domAfter > domBefore) || __transitionWasVerified(before, after)) { placed++; joinHit = true; }
           } catch (e1) {
             if (!firstError) firstError = e1.toString();
           }
