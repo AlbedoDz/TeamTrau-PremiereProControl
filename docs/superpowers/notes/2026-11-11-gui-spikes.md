@@ -28,14 +28,23 @@ Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian c
   - Xem trước có liệt kê vết cắt kèm lý do và câu gốc không.
   - Sau khi chạy: crossfade **có thật trên từng vết cắt không** (ruling R4), và nghe có tiếng "tách" ở mối nối không.
   - Câu chứa "chẳng", "ạ", "nhé" có còn nguyên không.
-- [ ] **Recap 16:9** và **Recap 9:16:**
+- [x] **Recap** trên FINAL_01 (talk show 69,5 phút, transcript đã có sẵn trong cache):
+  - Lỗi 1 (sửa ở `e047fcc`): bộ chấm điểm của Shorts cộng điểm cho câu hỏi, nên 11/16 đoạn là câu hỏi không có câu trả lời. Ngoài ra `totalSec` báo độ dài cả sequence.
+  - Lỗi 2 (sửa ở `4288c34`): độ dài tối thiểu 4 s tạo ra 21 mẩu vụn. Nâng lên 8 s thì còn 10 ý trọn, mỗi ý 8–13 s, tổng 93,9 s. Vẫn nghiêng về lời người dẫn hơn câu trả lời của bác sĩ, đây là giới hạn của heuristic (xem mục 5).
+  - Lỗi 3 (sửa ở `e5fecf4`): `removeRanges` chỉ ripple clip cuối, nên với video và audio liên kết, sequence chỉ ngắn đi 86 s và còn lại khoảng trống 700 s. Sau khi sửa: 16:9 dài 93,92 s, đã xác minh, QA sạch, mất 44 s.
+  - 9:16 có phụ đề clean: 93,92 s, đã xác minh, QA sạch, mất 74 s. Sequence trung gian "(16:9)" đã bị xóa, phụ đề `.mov` nằm trên V4. **Khung là 607×1080** (Auto Reframe giữ chiều cao nguồn); muốn ra 1080×1920 thì phải đổi kích thước sequence, việc này để làm sau.
+  - Còn lại cho Recap:
   - Bản 9:16 có đủ độ dài không, kể cả khi sequence gốc có điểm In/Out.
   - Sequence trung gian "(16:9)" có bị xóa không.
   - Phụ đề có nằm trong vùng an toàn không.
-- [ ] **Podcast → Shorts** (3 short):
+- [x] **Podcast → Shorts** (2 short, 30–60 s): 32,2 s và 36,0 s, cả hai đã xác minh, mất 34 s.
+  - Chất lượng: short 1 dừng ở "Xin được mời… bác sĩ giải đáp", tức là hết trước câu trả lời. Cần nối câu hỏi với câu trả lời (để làm sau).
+  - Một cảnh báo tiếng Anh vẫn lọt qua panel: "Captions were rendered at 608×1080…".
+  - Còn lại cho Shorts:
   - Mỗi short có đúng khoảng thời gian không, và các short có chồng nhau không.
   - Bấm Hủy giữa chừng: các short đã xong phải giữ nguyên tên.
-- [ ] **Phụ đề tiếng Việt:** thử cả hai kiểu xuất SRT và track caption trên bản sao.
+- [x] **Phụ đề tiếng Việt** (SRT): 3069 cue, mất 2 s, dòng ≤ 42 ký tự. File mặc định nằm trong `~/.premiere-mcp/renders`.
+  - Còn lại: thử cả hai kiểu xuất SRT và track caption trên bản sao.
 - [ ] **Rough cut và Cắt theo nhạc:**
   - Có nhạc: nhạc nằm ở A2.
   - Nếu sequence chỉ có một track audio thì có báo lỗi rõ ràng không.
