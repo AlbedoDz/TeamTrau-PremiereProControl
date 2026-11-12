@@ -116,6 +116,7 @@ describe('rough cut tools', () => {
         .mockResolvedValueOnce(sequence())                                   // before
         .mockResolvedValueOnce({ success: true, path: project })             // backup
         .mockResolvedValueOnce({ success: true, items: [{ id: 'item-a', path: join(folder, 'a.mp4').replace(/\\/g, '/') }] })
+        .mockResolvedValueOnce({ success: true, closed: 0 })                 // close one-frame gaps
         .mockResolvedValueOnce(sequence({ clips: [placedClip] }));           // after
       importMedia.mockImplementation(async (path: string) => ({ success: true, id: `imp-${path.slice(-5)}` }));
       addToTimelineBatch.mockResolvedValue({ success: true, results: [{ success: true }, { success: true }, { success: true }] });

@@ -17,7 +17,7 @@ import { createCaptionTrack } from './sequence.js';
 import { loadTranscript } from './shorts.js';
 import { ensureRootBin } from './project.js';
 
-interface Args {
+export interface CaptionsArgs {
   sequenceId?: string | undefined;
   dialogueTrackIndices?: number[] | undefined;
   glossary?: string[] | undefined;
@@ -29,9 +29,11 @@ interface Args {
   overwrite?: boolean | undefined;
   dryRun: boolean;
   backup: boolean;
+  /** Stop after writing the SRT: no import, no caption track, the project is not touched. */
+  srtOnly?: boolean | undefined;
 }
 
-async function createCaptionsFromTranscript(ctx: ToolContext, args: Args): Promise<unknown> {
+export async function createCaptionsFromTranscript(ctx: ToolContext, args: CaptionsArgs): Promise<unknown> {
   const loaded = await loadTranscript(ctx, args);
   if ('success' in loaded) return loaded;
   if (loaded.status === 'running') {
@@ -70,6 +72,10 @@ async function createCaptionsFromTranscript(ctx: ToolContext, args: Args): Promi
     await writeFile(srtPath, `\uFEFF${toSrt(cues)}`, 'utf8');
   } catch (error) {
     return { success: false, failedStep: 'write_srt', error: error instanceof Error ? error.message : String(error), warnings };
+  }
+
+  if (args.srtOnly) {
+    return { success: true, sequenceId: loaded.sequenceId, cueCount: cues.length, srtPath, preview, warnings };
   }
 
   let backupPath: string | undefined;

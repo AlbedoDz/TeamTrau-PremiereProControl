@@ -80,9 +80,31 @@ export function cutSlots(rhythm: Rhythm, opts: SlotOptions): CutSlot[] {
 const LABEL_RANK: Record<Section['label'], number> = { high: 0, mid: 1, low: 2 };
 
 /**
+ * Best first, but taking one candidate from each file in turn (files ordered by their best
+ * score). A plain score sort put 21 shots of one file before 19 of the other on a live cut;
+ * alternating sources keeps neighbouring shots from looking like jump cuts.
+ */
+function interleaveByFile(candidates: Candidate[]): Candidate[] {
+  const byScore = (a: Candidate, b: Candidate) => b.score - a.score || a.mediaPath.localeCompare(b.mediaPath) || a.start - b.start;
+  const files = new Map<string, Candidate[]>();
+  for (const c of [...candidates].sort(byScore)) {
+    const list = files.get(c.mediaPath);
+    if (list) list.push(c);
+    else files.set(c.mediaPath, [c]);
+  }
+  const queues = [...files.values()];
+  const out: Candidate[] = [];
+  for (let round = 0; out.length < candidates.length; round++) {
+    for (const q of queues) if (q[round]) out.push(q[round]!);
+  }
+  return out;
+}
+
+/**
  * Gives every slot a stretch of footage: the best-scored candidates go to the
- * highest-energy slots. When there are fewer candidates than slots the best ones are
- * reused (reused counts how many), because a repeat reads better than a short cut.
+ * highest-energy slots, alternating between source files. When there are fewer candidates
+ * than slots the best ones are reused (reused counts how many), because a repeat reads
+ * better than a short cut.
  */
 export function assignShots(
   slots: CutSlot[],
@@ -90,7 +112,7 @@ export function assignShots(
   frameDuration: number,
 ): { shots: Shot[]; reused: number } {
   if (candidates.length === 0 || slots.length === 0) return { shots: [], reused: 0 };
-  const ranked = [...candidates].sort((a, b) => b.score - a.score || a.mediaPath.localeCompare(b.mediaPath) || a.start - b.start);
+  const ranked = interleaveByFile(candidates);
   const order = slots
     .map((slot, index) => ({ slot, index }))
     .sort((a, b) => LABEL_RANK[a.slot.label] - LABEL_RANK[b.slot.label] || a.index - b.index);

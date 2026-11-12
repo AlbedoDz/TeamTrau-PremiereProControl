@@ -121,11 +121,14 @@ describe('music tools', () => {
         .mockResolvedValueOnce(sequence())
         .mockResolvedValueOnce({ success: true, path: project })
         .mockResolvedValueOnce({ success: true, items: [] })
+        .mockResolvedValueOnce({ success: true, closed: 1 })                // close one-frame gaps
         .mockResolvedValueOnce(sequence({ clips: [placedClip] }));
       importMedia.mockImplementation(async (path: string) => ({ success: true, id: `id-${path.slice(-6)}` }));
       addToTimelineBatch.mockImplementation(async (_s: string, specs: unknown[]) => ({ success: true, results: specs.map(() => ({ success: true })) }));
 
       const r = await tools.executeTool('assemble_beat_cut', args());
+      expect(r).toMatchObject({ frameGapsClosed: 1 });
+      expect(executeScript.mock.calls[3]![0]).toContain('roughcut:close_gaps');
 
       expect(r).toMatchObject({ success: true, applied: true, verified: true });
       expect(r.backupPath).toContain('premiere-mcp-backups');

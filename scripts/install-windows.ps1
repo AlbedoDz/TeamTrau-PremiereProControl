@@ -52,6 +52,7 @@ $repoRoot = Split-Path -Parent $scriptDir
 $cepExtensionsDir = Join-Path $env:APPDATA 'Adobe\CEP\extensions'
 $cepTargetDir = Join-Path $cepExtensionsDir 'MCPBridgeCEP'
 $distEntry = Join-Path $repoRoot 'dist\index.js'
+$cliEntry = Join-Path $repoRoot 'dist\cli.js'
 
 function Resolve-CommandPath([string] $Name) {
     $command = Get-Command $Name -ErrorAction SilentlyContinue
@@ -181,6 +182,9 @@ if ($SkipBuild) {
 if (-not (Test-Path -LiteralPath $distEntry -PathType Leaf)) {
     throw "Built entrypoint not found: $distEntry"
 }
+if (-not (Test-Path -LiteralPath $cliEntry -PathType Leaf)) {
+    throw "Built CLI not found: $cliEntry"
+}
 
 if ($SkipAdobeDebugMode) {
     Write-Host 'Skipping Adobe CEP debug mode (-SkipAdobeDebugMode).'
@@ -205,6 +209,10 @@ if (-not (Test-Path -LiteralPath $cepTargetDir)) {
 # Copy over the live extension so a running panel is not deleted out from
 # under itself.
 Copy-Item -Path (Join-Path $repoRoot 'cep-plugin\*') -Destination $cepTargetDir -Recurse -Force
+
+Write-Host 'Registering the panel runner...'
+& $script:nodePath $cliEntry --register-panel-runner
+if ($LASTEXITCODE -ne 0) { throw 'Registering the panel runner failed.' }
 
 Write-Host "Preparing bridge temp directory: $TempDir"
 if (-not (Test-Path -LiteralPath $TempDir)) {

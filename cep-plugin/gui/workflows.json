@@ -1,0 +1,110 @@
+{
+  "cards": [
+    {
+      "id": "clean_voiceover",
+      "tool": "workflow_clean_voiceover",
+      "title": "Dọn voice-over",
+      "hint": "Cắt khoảng lặng, từ đệm và câu vấp, làm sạch tiếng. Kết quả nằm trong sequence mới \"… - clean\".",
+      "fields": [
+        { "key": "cutSilence", "label": "Cắt khoảng lặng", "type": "toggle", "default": true },
+        { "key": "cutFillers", "label": "Cắt từ đệm (ờ, ừm…)", "type": "toggle", "default": true },
+        {
+          "key": "fillerTiers", "label": "Mức cắt từ đệm", "type": "select", "default": "auto",
+          "options": [
+            { "value": "auto", "label": "Tự chọn" },
+            { "value": "A", "label": "Chỉ tiếng ngập ngừng (ờ, ừm)" },
+            { "value": "AB", "label": "Cả cụm câu giờ (kiểu như, đại loại là)" }
+          ],
+          "omitValue": "auto",
+          "map": { "A": ["A"], "AB": ["A", "B"] }
+        },
+        { "key": "cutRetakes", "label": "Cắt câu vấp (nói lại)", "type": "toggle", "default": true },
+        { "key": "dialogueChain", "label": "Làm sạch tiếng (khử ồn, nén)", "type": "toggle", "default": true },
+        { "key": "targetLufs", "label": "Âm lượng mục tiêu (LUFS)", "type": "number", "default": -16, "min": -60, "max": 0 },
+        { "key": "crossfadeMs", "label": "Độ mờ chỗ nối âm thanh (ms)", "type": "number", "default": 30, "min": 0, "max": 1000 }
+      ]
+    },
+    {
+      "id": "recap",
+      "tool": "workflow_recap",
+      "title": "Recap dài thành ngắn",
+      "hint": "Chọn tự động các đoạn hay và dựng thành sequence mới \"… - recap\".",
+      "fields": [
+        { "key": "targetSec", "label": "Thời lượng mong muốn (giây)", "type": "number", "default": 90, "min": 5 },
+        {
+          "key": "aspect", "label": "Khung hình", "type": "select", "default": "16:9",
+          "options": [
+            { "value": "16:9", "label": "Ngang 16:9" },
+            { "value": "9:16", "label": "Dọc 9:16" }
+          ]
+        },
+        {
+          "key": "captionStyle", "label": "Kiểu phụ đề", "type": "select", "default": "clean",
+          "options": [
+            { "value": "none", "label": "Không phụ đề" },
+            { "value": "clean", "label": "Gọn" },
+            { "value": "pop", "label": "Nổi bật" },
+            { "value": "karaoke", "label": "Karaoke" }
+          ]
+        },
+        { "key": "audioLeadSec", "label": "J-cut: âm thanh vào sớm (giây, 0 = cắt thẳng)", "type": "number", "default": 0, "min": 0, "max": 2 }
+      ]
+    },
+    {
+      "id": "shorts",
+      "tool": "workflow_shorts",
+      "title": "Podcast thành Shorts",
+      "hint": "Tìm các đoạn nổi bật và dựng mỗi đoạn thành một short dọc 9:16.",
+      "fields": [
+        { "key": "count", "label": "Số short", "type": "number", "default": 3, "min": 1, "max": 5, "integer": true },
+        { "key": "minSec", "label": "Ngắn nhất (giây)", "type": "number", "default": 30, "min": 5 },
+        { "key": "maxSec", "label": "Dài nhất (giây)", "type": "number", "default": 60, "min": 10 },
+        {
+          "key": "captionStyle", "label": "Kiểu phụ đề", "type": "select", "default": "clean",
+          "options": [
+            { "value": "clean", "label": "Gọn" },
+            { "value": "pop", "label": "Nổi bật" },
+            { "value": "karaoke", "label": "Karaoke" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "subtitles",
+      "tool": "workflow_subtitles",
+      "title": "Phụ đề tiếng Việt",
+      "hint": "Nhận dạng giọng nói và tạo file SRT, hoặc thêm luôn track phụ đề vào bản sao.",
+      "fields": [
+        {
+          "key": "output", "label": "Kết quả", "type": "select", "default": "srt",
+          "options": [
+            { "value": "srt", "label": "Chỉ file SRT" },
+            { "value": "caption_track", "label": "SRT và track phụ đề trên bản sao" }
+          ]
+        },
+        { "key": "maxCharsPerLine", "label": "Số ký tự tối đa mỗi dòng", "type": "number", "default": 42, "min": 10, "integer": true },
+        { "key": "outputPath", "label": "Lưu SRT tại (để trống là tự chọn)", "type": "path", "default": "", "placeholder": "phu-de.srt" }
+      ]
+    },
+    {
+      "id": "rough_cut",
+      "tool": "workflow_rough_cut",
+      "title": "Rough cut / Cắt theo nhạc",
+      "hint": "Chọn clip hay trong một thư mục và dựng vào sequence mới \"… - rough cut\".",
+      "fields": [
+        { "key": "folderPath", "label": "Thư mục footage", "type": "path", "default": "", "required": true, "placeholder": "footage" },
+        { "key": "targetSec", "label": "Thời lượng mong muốn (giây, bỏ qua khi có nhạc)", "type": "number", "default": "", "min": 5 },
+        { "key": "musicPath", "label": "File nhạc (để trống: không theo nhạc)", "type": "path", "default": "", "placeholder": "nhac.mp3" },
+        {
+          "key": "pace", "label": "Nhịp cắt", "type": "select", "default": "balanced",
+          "options": [
+            { "value": "calm", "label": "Chậm" },
+            { "value": "balanced", "label": "Vừa" },
+            { "value": "energetic", "label": "Nhanh" }
+          ]
+        },
+        { "key": "hasVoiceover", "label": "Có voice-over (hạ nhạc khi có tiếng nói)", "type": "toggle", "default": false }
+      ]
+    }
+  ]
+}

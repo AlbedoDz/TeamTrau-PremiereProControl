@@ -111,7 +111,11 @@ export class PremiereProTools {
     });
   }
 
-  async executeTool(name: string, args: Record<string, any>): Promise<any> {
+  async executeTool(
+    name: string,
+    args: Record<string, any>,
+    options?: { progress?: ToolContext['progress']; signal?: AbortSignal },
+  ): Promise<any> {
     // Premiere truncates a string at the first NUL when it is assigned — a
     // marker named "p\0q" is created as "p" — and reports success for the
     // truncated result. JSON.stringify escapes the NUL on the way into the
@@ -200,15 +204,20 @@ export class PremiereProTools {
 
     this.logger.info(`Executing tool: ${name} with args:`, args);
 
+    // Calls can overlap, so per-call options go on a copy, never on this.context.
+    const context: ToolContext = { ...this.context };
+    if (options?.progress) context.progress = options.progress;
+    if (options?.signal) context.signal = options.signal;
+
     const localToolNames = new Set(this.getLocalTools().map((localTool) => localTool.name));
     if (!localToolNames.has(name) && isExpandedTool(name)) {
-      return await executeExpandedTool(this.context.bridge, name, args);
+      return await executeExpandedTool(context.bridge, name, args);
     }
     
     try {
       const handler = TOOL_HANDLERS.get(name);
       if (handler) {
-        return await handler.run(this.context, args);
+        return await handler.run(context, args);
       }
 
       switch (name) {
@@ -217,7 +226,7 @@ export class PremiereProTools {
         case 'get_tool_schema':
           return this.getToolSchema(String(args.name || ''));
         case 'invoke_tool':
-          return this.invokeCatalogTool(args);
+          return this.invokeCatalogTool(args, options);
 
         default:
           return {
@@ -295,7 +304,10 @@ export class PremiereProTools {
     };
   }
 
-  private async invokeCatalogTool(args: Record<string, unknown>): Promise<unknown> {
+  private async invokeCatalogTool(
+    args: Record<string, unknown>,
+    options?: { progress?: ToolContext['progress']; signal?: AbortSignal },
+  ): Promise<unknown> {
     const innerName = typeof args.name === 'string' ? args.name.trim() : '';
     if (!innerName) {
       return {
@@ -320,6 +332,6 @@ export class PremiereProTools {
       rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
         ? (rawArgs as Record<string, unknown>)
         : {};
-    return this.executeTool(innerName, innerArgs);
+    return this.executeTool(innerName, innerArgs, options);
   }
 }

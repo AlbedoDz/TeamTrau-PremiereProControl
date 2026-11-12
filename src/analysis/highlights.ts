@@ -5,9 +5,10 @@
  * in, plain data out; no I/O.
  */
 import type { FrameSample } from './roughcut.js';
+import { DEFAULT_FILLER_LEXICON } from './fillers-vi.js';
 import type { Sentence, TimelineWord } from './transcript.js';
 
-export const FILLERS = ['ờ', 'à', 'ừ', 'kiểu', 'thì là'];
+export const FILLERS = [...DEFAULT_FILLER_LEXICON.A, ...DEFAULT_FILLER_LEXICON.B];
 
 export interface Window {
   startSentenceId: number;
@@ -65,6 +66,15 @@ const normalizeText = (s: string): string =>
 const PARSED_FILLERS = FILLERS.map((f) =>
   normalizeText(f).split(/\s+/).filter(Boolean),
 ).sort((a, b) => b.length - a.length);
+
+// Index by first token so each word checks only the fillers that can start there.
+const FILLERS_BY_FIRST_TOKEN = new Map<string, string[][]>();
+for (const filler of PARSED_FILLERS) {
+  const list = FILLERS_BY_FIRST_TOKEN.get(filler[0]!) ?? [];
+  list.push(filler);
+  FILLERS_BY_FIRST_TOKEN.set(filler[0]!, list);
+}
+const JOINED_FILLERS = new Set(PARSED_FILLERS.filter((f) => f.length > 1).map((f) => f.join(' ')));
 
 function lowerBound<T>(arr: readonly T[], target: number, getKey: (item: T) => number): number {
   let low = 0;
@@ -173,25 +183,22 @@ export function signalsFor(
     let idx = 0;
     while (idx < tokens.length) {
       let matchedLength = 0;
-      for (const filler of PARSED_FILLERS) {
-        if (idx + filler.length <= tokens.length) {
-          let match = true;
-          for (let k = 0; k < filler.length; k++) {
-            if (tokens[idx + k] !== filler[k]) {
-              match = false;
-              break;
-            }
-          }
-          if (match) {
-            matchedLength = filler.length;
+      for (const filler of FILLERS_BY_FIRST_TOKEN.get(tokens[idx]!) ?? []) {
+        if (idx + filler.length > tokens.length) continue;
+        let match = true;
+        for (let k = 1; k < filler.length; k++) {
+          if (tokens[idx + k] !== filler[k]) {
+            match = false;
             break;
           }
         }
-        if (filler.length > 1 && tokens[idx] === filler.join(' ')) {
-          matchedLength = 1;
+        if (match) {
+          matchedLength = filler.length;
           break;
         }
       }
+      // A multi-word filler delivered as one ASR token.
+      if (matchedLength === 0 && JOINED_FILLERS.has(tokens[idx]!)) matchedLength = 1;
       if (matchedLength > 0) {
         fillerWords += matchedLength;
         idx += matchedLength;

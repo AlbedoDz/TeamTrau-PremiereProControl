@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TeamTrau PremiereProControl</title>
+    <link rel="stylesheet" href="gui/gui.css">
     <style>
         :root {
             --bg-0: #0b1218;
@@ -518,6 +519,18 @@
     </style>
 </head>
 <body>
+    <header class="gui-topbar">
+        <span class="gui-title">TeamTrau PremiereProControl</span>
+        <nav class="gui-tabs" role="tablist">
+            <button type="button" class="gui-tab active" id="guiTabWorkflows" data-tab="workflows" role="tab">Quy trình</button>
+            <button type="button" class="gui-tab" id="guiTabConnection" data-tab="connection" role="tab">Kết nối</button>
+        </nav>
+        <button type="button" class="gui-gear" id="guiSettingsButton" title="Cài đặt" aria-label="Cài đặt">&#9881;</button>
+    </header>
+
+    <main class="gui-pane" id="guiPaneWorkflows"></main>
+
+    <div class="gui-pane" id="guiPaneConnection" hidden>
     <div class="shell">
         <section class="hero">
             <div class="eyebrow">Premiere Automation</div>
@@ -648,10 +661,22 @@
             </div>
         </section>
 
+        <section class="panel">
+            <div class="panel-title">
+                <h2>Runner</h2>
+                <span>Chạy quy trình</span>
+            </div>
+            <div class="micro-copy" id="runnerStatus" style="margin-bottom: 0;">Chưa khởi động. Runner chạy ở lần chạy quy trình đầu tiên.</div>
+            <div class="log-container" id="runnerLog" style="margin-top: 10px;" hidden></div>
+        </section>
+
         <div class="footer-note">TeamTrau PremiereProControl</div>
+    </div>
     </div>
 
     <script src="CSInterface.js"></script>
     <script src="bridge-cep.js"></script>
+    <script src="gui/gui-core.js"></script>
+    <script src="gui/gui.js"></script>
 </body>
 </html>

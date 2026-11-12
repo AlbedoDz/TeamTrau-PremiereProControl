@@ -81,7 +81,8 @@ describe('cleanup tools', () => {
     expect(result).toMatchObject({ success: true, applied: true, verified: true, cutCount: 1 });
     const scripts = executeScript.mock.calls.map((c) => c[0] as string);
     expect(scripts[1]).toContain('razor(');
-    expect(scripts[3]).toContain('inside[inside.length - 1].remove(true, true)');
+    expect(scripts[3]).toContain('inside[k].remove(false, false)');
+    expect(scripts[3]).toContain('later.move(-gap)');
   });
 
   it('flags verified=false when the sequence did not shorten as planned', async () => {
@@ -98,6 +99,23 @@ describe('cleanup tools', () => {
     expect(result.success).toBe(true);
     expect(result.verified).toBe(false);
     expect(result.warning).toContain('locked');
+  });
+
+  it('puts a Constant Power crossfade on the join after cutting silence', async () => {
+    executeScript
+      .mockResolvedValueOnce(snapshot(20))
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true, removedClips: 2 })
+      .mockResolvedValueOnce(snapshot(20 - 2.76))
+      .mockResolvedValueOnce({ success: true, joins: 1, joinsPlaced: 1, placed: 1, attempted: 1 });
+    runFf.mockResolvedValue({ code: 0, stdout: '', stderr: 'silence_start: 5\nsilence_end: 8 | silence_duration: 3' });
+
+    const result = await tools.executeTool('remove_silence_from_sequence', { backup: false });
+
+    expect(result).toMatchObject({ success: true, verified: true, crossfadeFrames: 1 });
+    expect(result.warning).toBeUndefined();
+    expect(executeScript.mock.calls[5]![0]).toContain('Constant Power');
   });
 
   it('stops and reports partial progress when a razor fails', async () => {

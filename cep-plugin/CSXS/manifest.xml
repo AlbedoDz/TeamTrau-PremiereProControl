@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="10.0" ExtensionBundleId="com.mcp.premiere.cepbridge" ExtensionBundleVersion="1.1.6" ExtensionBundleName="TeamTrau PremiereProControl">
+<ExtensionManifest Version="10.0" ExtensionBundleId="com.mcp.premiere.cepbridge" ExtensionBundleVersion="1.5.0" ExtensionBundleName="TeamTrau PremiereProControl">
   <ExtensionList>
-    <Extension Id="com.mcp.premiere.cepbridge.panel" Version="1.1.6"/>
+    <Extension Id="com.mcp.premiere.cepbridge.panel" Version="1.5.0"/>
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>
@@ -32,12 +32,12 @@
           <Menu>TeamTrau PremiereProControl</Menu>
           <Geometry>
             <Size>
-              <Height>400</Height>
-              <Width>320</Width>
+              <Height>760</Height>
+              <Width>420</Width>
             </Size>
             <MinSize>
-              <Height>300</Height>
-              <Width>280</Width>
+              <Height>480</Height>
+              <Width>320</Width>
             </MinSize>
             <MaxSize>
               <Height>2000</Height>

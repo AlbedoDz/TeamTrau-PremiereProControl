@@ -21,7 +21,7 @@ describe('groupCaptions', () => {
   });
 
   it('exposes the safe area', () => {
-    expect(SAFE_AREA).toEqual({ top: 0.1, bottom: 0.15, side: 0.06 });
+    expect(SAFE_AREA).toEqual({ top: 250 / 1920, bottom: 350 / 1920, side: 80 / 1080 });
   });
 });
 

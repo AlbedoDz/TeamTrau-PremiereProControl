@@ -35,7 +35,7 @@ export async function ensureBackup(ctx: ToolContext, wanted: boolean): Promise<{
 
 // ------------------------------------------------------------- auto_duck_music
 
-async function autoDuckMusic(
+export async function autoDuckMusic(
   ctx: ToolContext,
   args: {
     sequenceId?: string;
@@ -144,7 +144,7 @@ export async function qaSequence(
 
 // ------------------------------------------------------- apply_dialogue_chain
 
-async function applyDialogueChain(
+export async function applyDialogueChain(
   ctx: ToolContext,
   args: {
     sequenceId?: string;

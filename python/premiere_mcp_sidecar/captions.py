@@ -42,9 +42,9 @@ STROKE_COLOR = (0, 0, 0, 255)
 STROKE_WIDTH = 6
 ACTIVE_COLOR = (0xFF, 0xD4, 0x00, 255)
 
-SAFE_TOP = 0.10
-SAFE_BOTTOM = 0.15
-SAFE_SIDE = 0.06
+SAFE_TOP = 250 / 1920
+SAFE_BOTTOM = 350 / 1920
+SAFE_SIDE = 80 / 1080
 # Gap under the caption block at 1920 px, scaled with the frame like the type.
 BOTTOM_GAP_AT_1920 = 40
 

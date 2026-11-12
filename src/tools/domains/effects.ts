@@ -127,7 +127,7 @@ export const effectsTools: ToolModule[] = [
   },
 ];
 
-function transitionVerificationScript(): string {
+export function transitionVerificationScript(): string {
   return `
         function __readQeTransitionState(qeClip) {
           var state = { available: false, count: null, names: [] };

@@ -21,6 +21,9 @@ Usage:
                                    Remove premiere-pro from those clients
   premiere-pro-mcp --clients-status
                                    Show which clients are up to date, without changing anything
+  premiere-pro-mcp --panel-runner  Run catalog tools for the Premiere panel (JSON lines on stdio)
+  premiere-pro-mcp --register-panel-runner
+                                   Tell the Premiere panel where to find this runner
   premiere-pro-mcp --doctor        Check the local server, CEP bridge, and client configuration
   premiere-pro-mcp --setup-asr     Install the Python analysis sidecar and the default Zipformer-68M model (about 300 MB)
   premiere-pro-mcp --setup-asr --engine <id> [--yes] [--no-default]
@@ -118,6 +121,26 @@ async function main(): Promise<void> {
       const results = await syncClients(defaultServerSpec(packageRoot, tempDir), mode);
       for (const r of results) console.log(`${r.label}: ${r.state}${r.detail ? ` (${r.detail})` : ''}`);
       if (results.some((r) => r.state === 'error')) process.exitCode = 1;
+      return;
+    }
+    case '--panel-runner': {
+      // stdout carries the protocol; everything else logs to stderr.
+      const { startPanelRunner, readPanelConfig, resolveRunnerTempDir } = await import('./runner/panel-runner.js');
+      const config = await readPanelConfig();
+      process.env.PREMIERE_TEMP_DIR = resolveRunnerTempDir(process.env, config.tempDirectory);
+      const [{ PremiereProBridge }, { PremiereProTools }] = await Promise.all([
+        import('./bridge/index.js'),
+        import('./tools/index.js'),
+      ]);
+      const bridge = new PremiereProBridge();
+      await bridge.initialize();
+      await startPanelRunner({ input: process.stdin, output: process.stdout }, new PremiereProTools(bridge)).done;
+      return;
+    }
+    case '--register-panel-runner': {
+      const { registerPanelRunner } = await import('./runner/panel-runner.js');
+      const configPath = await registerPanelRunner(fileURLToPath(import.meta.url), process.execPath);
+      console.log(`Premiere panel runner registered in ${configPath}`);
       return;
     }
     case '--doctor':

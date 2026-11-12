@@ -121,6 +121,15 @@ describe('assignShots', () => {
     expect(new Set(shots.map((s) => s.in)).size).toBe(3);
   });
 
+  it('alternates source files even when one file scores higher throughout', () => {
+    const at = (name: string, score: number, start: number): Candidate => ({ mediaPath: name, sourceDuration: 60, start, end: start + 3, score });
+    const cands = [at('a', 0.9, 0), at('a', 0.8, 10), at('a', 0.7, 20), at('b', 0.3, 0), at('b', 0.2, 10), at('b', 0.1, 20)];
+    const flat = Array.from({ length: 6 }, (_, i) => ({ start: i, end: i + 1, beats: 2, label: 'mid' as const }));
+    const { shots } = assignShots(flat, cands, FRAME);
+    expect(shots.map((s) => s.mediaPath)).toEqual(['a', 'b', 'a', 'b', 'a', 'b']);
+    expect(shots[0]!.score).toBe(0.9);
+  });
+
   it('returns nothing without footage', () => {
     expect(assignShots(slots, [], FRAME)).toEqual({ shots: [], reused: 0 });
   });

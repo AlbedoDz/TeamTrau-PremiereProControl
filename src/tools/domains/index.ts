@@ -11,6 +11,8 @@ import { cleanupTools } from './cleanup.js';
 import { editingTools } from './editing.js';
 import { roughcutTools } from './roughcut.js';
 import { shortsTools } from './shorts.js';
+import { fillersTools } from './fillers.js';
+import { recapTools } from './recap.js';
 import { subtitlesTools } from './subtitles.js';
 import { musicTools } from './music.js';
 import { discoveryTools } from './discovery.js';
@@ -24,6 +26,7 @@ import { sequenceTools } from './sequence.js';
 import { timelineTools } from './timeline.js';
 import { tracksTools } from './tracks.js';
 import { workflowsTools } from './workflows.js';
+import { workflowToolsTools } from './workflow-tools.js';
 
 export const domainTools: ToolModule[] = [
   ...audioTools,
@@ -31,6 +34,8 @@ export const domainTools: ToolModule[] = [
   ...editingTools,
   ...roughcutTools,
   ...shortsTools,
+  ...fillersTools,
+  ...recapTools,
   ...subtitlesTools,
   ...musicTools,
   ...discoveryTools,
@@ -44,4 +49,5 @@ export const domainTools: ToolModule[] = [
   ...timelineTools,
   ...tracksTools,
   ...workflowsTools,
+  ...workflowToolsTools,
 ];

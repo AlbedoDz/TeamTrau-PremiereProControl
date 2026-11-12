@@ -17,6 +17,19 @@ export interface ToolContext {
   listTools(): MCPTool[];
   /** The subset advertised in tools/list under the active PREMIERE_MCP_TOOLSET. */
   listAdvertisedTools(): MCPTool[];
+  /**
+   * Reports progress: `step` is how much of `stepCount` is done (it rises with every call and may be
+   * fractional while a step waits; the step being run is `floor(step) + 1`). Absent when the caller
+   * is not listening.
+   */
+  progress?: (step: number, stepCount: number, label: string) => void;
+  /** Aborted when the caller cancels; long handlers should check it between steps. */
+  signal?: AbortSignal;
+}
+
+/** Throws `Error('cancelled')` once the signal has been aborted. */
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error('cancelled');
 }
 
 /** A tool declaration bound to the handler that implements it. */

@@ -31,7 +31,7 @@ describe('tool catalog structure', () => {
   it('gives every domain tool a callable handler', () => {
     const unrunnable = domainTools.filter((tool) => typeof tool.run !== 'function');
     expect(unrunnable.map((tool) => tool.name)).toEqual([]);
-    expect(domainTools.length).toBe(128);
+    expect(domainTools.length).toBe(138);
   });
 
   it('exposes every domain module through the barrel', () => {
@@ -40,7 +40,8 @@ describe('tool catalog structure', () => {
     for (const name of domainModules) {
       if (name === 'shared') continue; // helpers only; contributes no tools
       expect(barrel).toContain(`from './${name}.js'`);
-      expect(barrel).toContain(`...${name}Tools,`);
+      const exportName = name.replace(/-(\w)/g, (_m, c: string) => c.toUpperCase()); // workflow-tools -> workflowToolsTools
+      expect(barrel).toContain(`...${exportName}Tools,`);
     }
   });
 

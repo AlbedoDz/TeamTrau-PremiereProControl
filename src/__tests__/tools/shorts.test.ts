@@ -26,7 +26,7 @@ jest.mock('../../analysis/ffmpeg.js', () => {
 import * as sidecar from '../../analysis/sidecar.js';
 import * as ffmpeg from '../../analysis/ffmpeg.js';
 import { asrStatus } from '../../setup/asr.js';
-import { buildShortTiming, median, timelineLoudness } from '../../tools/domains/shorts.js';
+import { buildShortTiming, median, reframeToVertical, timelineLoudness } from '../../tools/domains/shorts.js';
 import { SAFE_AREA, safeFileName } from '../../analysis/captions.js';
 
 const sidecarPython = sidecar.sidecarPython as jest.Mock;
@@ -795,5 +795,31 @@ describe('build_short', () => {
     expect(file).not.toMatch(/[:"?]/);
     const place = scripts.find((s) => s.includes('build_short:place'))!;
     expect(place).toContain(JSON.stringify(safeFileName(name)));
+  });
+});
+
+describe('reframeToVertical', () => {
+  const capture = async (range?: { start: number; end: number }): Promise<string> => {
+    const executeScript = jest.fn().mockResolvedValue({ success: true, sequenceID: 'v', deleted: true, frameSizeHorizontal: 1080, frameSizeVertical: 1920 });
+    await reframeToVertical({ bridge: { executeScript } } as any, 'seq1', 'Vertical', range);
+    return String(executeScript.mock.calls[0][0]);
+  };
+
+  it('without a range resets In to 0 and Out to the sequence end before createSubsequence', async () => {
+    const script = await capture();
+    const sub = script.indexOf('seq.createSubsequence(true)');
+    expect(script.indexOf('seq.setInPoint(0)')).toBeGreaterThan(-1);
+    expect(script.indexOf('seq.setInPoint(0)')).toBeLessThan(sub);
+    expect(script.indexOf('seq.setOutPoint(seq.end)')).toBeLessThan(sub);
+    expect(script.indexOf('seq.setOutPoint(seq.end)')).toBeGreaterThan(-1);
+    // The marks are still put back afterwards by the hadMarks logic.
+    expect(script.indexOf('if (hadMarks) {')).toBeGreaterThan(sub);
+  });
+
+  it('with a range marks exactly that range', async () => {
+    const script = await capture({ start: 2, end: 5 });
+    const sub = script.indexOf('seq.createSubsequence(true)');
+    expect(script.indexOf('seq.setInPoint(__secondsToTicks(2))')).toBeLessThan(sub);
+    expect(script.slice(0, sub)).not.toContain('seq.setInPoint(0)');
   });
 });
