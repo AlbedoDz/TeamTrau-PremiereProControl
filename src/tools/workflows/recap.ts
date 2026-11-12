@@ -16,7 +16,7 @@ export interface RecapArgs extends TranscriptArgs {
   /** Given together (the schema checks): the recap lands in [minSec, maxSec] and never exceeds maxSec. */
   minSec?: number | undefined;
   maxSec?: number | undefined;
-  aspect: '16:9' | '9:16';
+  aspect: '16:9' | '9:16' | '1:1' | '4:5';
   captionStyle: 'none' | CaptionStyleId;
   captionAccent?: string | undefined;
   captionPosition?: CaptionPosition | undefined;

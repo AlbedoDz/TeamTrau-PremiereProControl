@@ -669,6 +669,14 @@ describe('workflow_shorts', () => {
     expect(buildShort.mock.calls[0][1]).toMatchObject({ captionStyle: 'highlight', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'small' });
   });
 
+  it('forwards aspect to build_short, 9:16 by default', async () => {
+    await runTool('workflow_shorts', ctxWith(), { count: 1 });
+    expect(buildShort.mock.calls[0][1]).toMatchObject({ aspect: '9:16' });
+    buildShort.mockClear();
+    await runTool('workflow_shorts', ctxWith(), { count: 1, aspect: '1:1' });
+    expect(buildShort.mock.calls[0][1]).toMatchObject({ aspect: '1:1' });
+  });
+
   it('dryRun builds nothing', async () => {
     const result = await runTool('workflow_shorts', ctxWith(), { count: 2, dryRun: true });
     expect(buildShort).not.toHaveBeenCalled();

@@ -62,7 +62,7 @@ export const workflowToolsTools: ToolModule[] = [
   {
     name: 'workflow_recap',
     description:
-      'One-call recap. Plans the recap (speech mode when the dialogue covers at least 30% of the sequence, otherwise shots; waits for the background transcription), aiming at targetSec, or inside minSec-maxSec when both are given (never over maxSec), then builds it as a new sequence "<name> - recap" with build_recap (30 ms crossfades, optional 9:16 Auto Reframe and captions, loudness -14, qa_sequence and readback). The source sequence is never changed. dryRun=true only returns the planned segments and creates nothing. Reports per-step progress and can be cancelled. Needs ffmpeg and, for speech mode, the analysis sidecar.',
+      'One-call recap. Plans the recap (speech mode when the dialogue covers at least 30% of the sequence, otherwise shots; waits for the background transcription), aiming at targetSec, or inside minSec-maxSec when both are given (never over maxSec), then builds it as a new sequence "<name> - recap" with build_recap (30 ms crossfades, optional 9:16, 1:1 or 4:5 Auto Reframe and captions, loudness -14, qa_sequence and readback). The source sequence is never changed. dryRun=true only returns the planned segments and creates nothing. Reports per-step progress and can be cancelled. Needs ffmpeg and, for speech mode, the analysis sidecar.',
     inputSchema: z.object({
       sequenceId: sequenceIdArg,
       name: z.string().min(1).optional().describe('Name of the recap sequence. Default "<source name> - recap"; " (2)" is added when the name is taken.'),
@@ -72,7 +72,7 @@ export const workflowToolsTools: ToolModule[] = [
       targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90); the result lands within +/-10%. Ignored when minSec and maxSec are given.'),
       minSec: z.number().min(5).optional().describe('Shortest acceptable recap in seconds; give with maxSec. A shorter plan is kept with a warning.'),
       maxSec: z.number().min(5).optional().describe('Hard ceiling in seconds; give with minSec. The plan never exceeds it and a built recap more than a frame over it is reported as not verified.'),
-      aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe (default "16:9").'),
+      aspect: z.enum(['16:9', '9:16', '1:1', '4:5']).default('16:9').describe('"9:16", "1:1" or "4:5" reframes the recap with Auto Reframe (default "16:9" keeps the source frame).'),
       captionStyle: z.enum(['none', ...CAPTION_STYLE_IDS] as ['none', ...CaptionStyleId[]]).default('none').describe('Burned-in captions from the transcript: none (default), clean, pop, karaoke, highlight or minimal.'),
       ...captionOptionFields,
       audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds: the next segment\'s audio starts this much before its picture (default 0 = straight cuts).'),
@@ -84,7 +84,7 @@ export const workflowToolsTools: ToolModule[] = [
   {
     name: 'workflow_shorts',
     description:
-      'One-call vertical shorts. Waits for the transcript, finds highlight windows, takes the count best that do not overlap in time and builds one 9:16 short from each as a new sequence "<source name> - short N" (Auto Reframe, captions, loudness -14, qa_sequence). If a later short fails the earlier ones are kept. The source sequence is never changed. dryRun=true returns the chosen windows and builds nothing. Reports per-step progress and can be cancelled. Needs the analysis sidecar and ffmpeg.',
+      'One-call shorts. Waits for the transcript, finds highlight windows, takes the count best that do not overlap in time and builds one short (9:16 by default, aspect 1:1 or 4:5) from each as a new sequence "<source name> - short N" (Auto Reframe, captions, loudness -14, qa_sequence). If a later short fails the earlier ones are kept. The source sequence is never changed. dryRun=true returns the chosen windows and builds nothing. Reports per-step progress and can be cancelled. Needs the analysis sidecar and ffmpeg.',
     inputSchema: z.object({
       sequenceId: sequenceIdArg,
       dialogueTrackIndices: dialogueArg,
@@ -93,6 +93,7 @@ export const workflowToolsTools: ToolModule[] = [
       count: z.number().int().min(1).max(5).default(3).describe('How many shorts to build, 1-5 (default 3).'),
       minSec: z.number().positive().default(30).describe('Shortest short in seconds (default 30).'),
       maxSec: z.number().positive().default(60).describe('Longest short in seconds (default 60).'),
+      aspect: z.enum(['9:16', '1:1', '4:5']).default('9:16').describe('Frame shape of each short: "9:16" (default), "1:1" or "4:5", made with Auto Reframe.'),
       captionStyle: z.enum(CAPTION_STYLE_IDS as [CaptionStyleId, ...CaptionStyleId[]]).default('clean').describe('Caption look: clean, pop, karaoke, highlight or minimal (default clean).'),
       ...captionOptionFields,
       dryRun: z.boolean().default(false).describe('Only choose the windows; create and change nothing.'),

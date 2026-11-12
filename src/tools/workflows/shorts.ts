@@ -14,6 +14,7 @@ export interface ShortsArgs extends TranscriptArgs {
   count: number;
   minSec: number;
   maxSec: number;
+  aspect?: '9:16' | '1:1' | '4:5' | undefined;
   captionStyle: CaptionStyleId;
   captionAccent?: string | undefined;
   captionPosition?: CaptionPosition | undefined;
@@ -169,6 +170,7 @@ export async function workflowShorts(ctx: ToolContext, args: ShortsArgs): Promis
         startSentenceId: pick.startSentenceId,
         endSentenceId: pick.endSentenceId,
         name,
+        aspect: args.aspect ?? '9:16',
         captionStyle: args.captionStyle,
         captionAccent: args.captionAccent,
         captionPosition: args.captionPosition,

@@ -26,7 +26,7 @@ jest.mock('../../analysis/ffmpeg.js', () => {
 import * as sidecar from '../../analysis/sidecar.js';
 import * as ffmpeg from '../../analysis/ffmpeg.js';
 import { asrStatus } from '../../setup/asr.js';
-import { buildShortTiming, median, reframeToVertical, timelineLoudness } from '../../tools/domains/shorts.js';
+import { buildShortTiming, median, reframeTo, timelineLoudness } from '../../tools/domains/shorts.js';
 import { SAFE_AREA, safeFileName } from '../../analysis/captions.js';
 
 const sidecarPython = sidecar.sidecarPython as jest.Mock;
@@ -735,6 +735,26 @@ describe('build_short', () => {
     expect(r.markers).toEqual([]);
   });
 
+  it('build_short 1:1 calls autoReframeSequence(1, 1, …) and renders captions at height × height', async () => {
+    await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', aspect: '1:1' });
+    const reframe = scripts.find((s) => s.includes('build_short:reframe'))!;
+    expect(reframe).toContain('autoReframeSequence(1, 1,');
+    const render = runSidecar.mock.calls.find(([c]) => c === 'captions')![1];
+    expect(render.width).toBe(render.height);
+  });
+
+  it('build_short verifies 4:5', async () => {
+    const base = { success: true, endSeconds: 23.5, topTrackIndex: 1, topTrackPaths: [], reframeKeys: 42 };
+    readbacks = [{ ...base, frameSizeHorizontal: 864, frameSizeVertical: 1080 }];
+    const ok = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', aspect: '4:5' });
+    expect(ok.warnings.join(' ')).not.toContain('not 4:5'); // 864×1080 is 4:5 (caption clip check is separate)
+    expect(scripts.find((s) => s.includes('build_short:reframe'))!).toContain('autoReframeSequence(4, 5,');
+    readbacks = [{ ...base, frameSizeHorizontal: 608, frameSizeVertical: 1080 }];
+    const bad = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', aspect: '4:5' });
+    expect(bad.warnings).toContain('The short is 608×1080, not 4:5.');
+    expect(bad.verified).toBe(false);
+  });
+
   it('reports verified false when the readback does not match', async () => {
     readbacks = [{ success: true, frameSizeHorizontal: 1080, frameSizeVertical: 1080, endSeconds: 20, topTrackIndex: 1, topTrackPaths: [], reframeKeys: 42 }];
     const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short' });
@@ -815,10 +835,10 @@ describe('build_short', () => {
   });
 });
 
-describe('reframeToVertical', () => {
+describe('reframeTo', () => {
   const capture = async (range?: { start: number; end: number }): Promise<string> => {
     const executeScript = jest.fn().mockResolvedValue({ success: true, sequenceID: 'v', deleted: true, frameSizeHorizontal: 1080, frameSizeVertical: 1920 });
-    await reframeToVertical({ bridge: { executeScript } } as any, 'seq1', 'Vertical', range);
+    await reframeTo({ bridge: { executeScript } } as any, 'seq1', 'Vertical', { num: 9, den: 16 }, range);
     return String(executeScript.mock.calls[0][0]);
   };
 
