@@ -25,7 +25,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from . import io
 
@@ -122,12 +122,14 @@ def side_safe_width(width: int, side: float) -> int:
     return int(usable / SIDE_HEADROOM) - 2 * STROKE_WIDTH - 4
 
 
-def _ink_width(font: ImageFont.FreeTypeFont, text: str) -> float:
+def _ink_width(font: ImageFont.FreeTypeFont, text: str, stroke: float = STROKE_WIDTH) -> float:
     """Advance plus the stroke that ``getlength`` ignores, on both sides."""
-    return font.getlength(text) + 2 * STROKE_WIDTH
+    return font.getlength(text) + 2 * stroke
 
 
-def wrap_words(font: ImageFont.FreeTypeFont, words: list[str], max_width: int) -> list[list[str]]:
+def wrap_words(
+    font: ImageFont.FreeTypeFont, words: list[str], max_width: int, stroke: float = STROKE_WIDTH
+) -> list[list[str]]:
     """Wrap ``words`` into at most ``MAX_LINES`` rows, balanced round the middle.
 
     A row never exceeds ``max_width`` (plus its stroke) unless a single word does.
@@ -138,8 +140,8 @@ def wrap_words(font: ImageFont.FreeTypeFont, words: list[str], max_width: int) -
     """
     if not words:
         return []
-    limit = max(int(max_width), int(max(_ink_width(font, word) for word in words)))
-    greedy = _greedy_lines(font, words, limit)
+    limit = max(int(max_width), int(max(_ink_width(font, word, stroke) for word in words)))
+    greedy = _greedy_lines(font, words, limit, stroke)
     if len(greedy) == 1:
         return greedy
 
@@ -152,9 +154,9 @@ def wrap_words(font: ImageFont.FreeTypeFont, words: list[str], max_width: int) -
         best_score = evenness(greedy)
     for index in range(1, len(words)):
         head_words, tail_words = words[:index], words[index:]
-        if _ink_width(font, " ".join(head_words)) > limit:
+        if _ink_width(font, " ".join(head_words), stroke) > limit:
             continue
-        if _ink_width(font, " ".join(tail_words)) > limit:
+        if _ink_width(font, " ".join(tail_words), stroke) > limit:
             continue
         # Balance on the drawn line widths: both rows carry the same stroke, so
         # only the advances decide how even they look. A tie keeps the earlier break.
@@ -164,12 +166,14 @@ def wrap_words(font: ImageFont.FreeTypeFont, words: list[str], max_width: int) -
     return best_lines
 
 
-def _greedy_lines(font: ImageFont.FreeTypeFont, words: list[str], limit: int) -> list[list[str]]:
+def _greedy_lines(
+    font: ImageFont.FreeTypeFont, words: list[str], limit: int, stroke: float = STROKE_WIDTH
+) -> list[list[str]]:
     lines: list[list[str]] = []
     current: list[str] = []
     for word in words:
         candidate = " ".join([*current, word])
-        if current and _ink_width(font, candidate) > limit:
+        if current and _ink_width(font, candidate, stroke) > limit:
             lines.append(current)
             current = [word]
         else:
@@ -216,16 +220,16 @@ def _group_at(groups: list[dict], t: float) -> int | None:
     return after[0] if after else None
 
 
-def _pieces(group: dict, style: str) -> list[str]:
+def _pieces(group: dict, uppercase: bool) -> list[str]:
     """The words to draw: ``group["words"]`` is the source of truth.
 
     ``text`` is only a display fallback for ``words``-less groups, so text that
     splits differently (punctuation, a collapsed space) cannot shift the active
-    word onto its neighbour. The pop style renders CHỮ HOA.
+    word onto its neighbour. A look with ``uppercase`` renders CHỮ HOA.
     """
     words = [word["w"] for word in group.get("words") or []]
     pieces = words or group["text"].split()
-    if style == "pop":
+    if uppercase:
         return [piece.upper() for piece in pieces]
     return pieces
 
@@ -233,6 +237,36 @@ def _pieces(group: dict, style: str) -> list[str]:
 def _line_height(font: ImageFont.FreeTypeFont) -> int:
     ascent, descent = font.getmetrics()
     return ascent + descent
+
+
+def legacy_look(style: str, width: int, height: int) -> dict:
+    """The look the three original styles draw, in the shape TypeScript sends."""
+    if style not in STYLES:
+        raise ValueError(f"unknown style {style!r}; expected one of {', '.join(STYLES)}")
+    return {
+        "font": FONT_NAME,
+        "sizePx": font_size_for(height),
+        "uppercase": style == "pop",
+        "textColor": "#FFFFFF",
+        "accentColor": "#FFD400",
+        "stroke": {"widthPx": STROKE_WIDTH, "color": "#000000"},
+        "shadow": None,
+        "active": "pop" if style == "pop" else "color",
+        "pill": None,
+        "position": "bottom",
+        "safeArea": {"top": SAFE_TOP, "bottom": SAFE_BOTTOM, "side": SAFE_SIDE},
+        "bottomGapPx": bottom_gap_for(height),
+    }
+
+
+def _rgba(color: str) -> tuple[int, int, int, int]:
+    """``#RRGGBB`` or ``#RRGGBBAA`` as an RGBA tuple."""
+    text = color.lstrip("#")
+    if len(text) == 6:
+        text += "FF"
+    if len(text) != 8:
+        raise ValueError(f"colour must look like #RRGGBB or #RRGGBBAA, got {color!r}")
+    return tuple(int(text[i : i + 2], 16) for i in range(0, 8, 2))  # type: ignore[return-value]
 
 
 def _draw(
@@ -243,16 +277,45 @@ def _draw(
     scale: float,
     width: int,
     height: int,
-    safe: dict,
+    look: dict,
 ) -> None:
-    """Centre the wrapped group horizontally and sit its bottom line on the safe line."""
-    lines = wrap_words(font, pieces, side_safe_width(width, safe["side"]))
+    """Centre the wrapped group horizontally and place it at the look's position."""
+    safe = look["safeArea"]
+    stroke = look.get("stroke")
+    stroke_px = int(stroke["widthPx"]) if stroke else 0
+    stroke_fill = _rgba(stroke["color"]) if stroke else (0, 0, 0, 0)
+    text_color = _rgba(look["textColor"])
+    accent = _rgba(look["accentColor"])
+    shadow = look.get("shadow")
+    pill = look.get("pill")
+    mode = look.get("active", "color")
+    if mode == "pill" and not pill:
+        mode = "none"
+    pad_x = int(pill["padXPx"]) if pill else 0
+    pad_y = int(pill["padYPx"]) if pill else 0
+    margin = max(stroke_px, pad_x if mode == "pill" else 0)
+
+    limit = side_safe_width(width, safe["side"]) - 2 * (margin - STROKE_WIDTH)
+    widest = max((_ink_width(font, piece, margin) for piece in pieces), default=0)
+    if widest > limit > 0:
+        # One word wider than the space: shrink the type rather than run off the frame.
+        font = caption_font(font.path, max(1.0, font.size * limit / widest))
+    lines = wrap_words(font, pieces, limit, margin)
     line_height = _line_height(font)
+    block_h = line_height * len(lines)
     # The bottom line owns the safe line and the block grows upwards from it; the
     # top clamp is only a backstop for a block taller than the space it is given.
-    bottom_y = int(height * (1 - safe["bottom"])) - bottom_gap_for(height)
-    top_limit = int(height * safe["top"]) + STROKE_WIDTH
-    top_y = max(bottom_y - line_height * len(lines), top_limit)
+    bottom_y = int(height * (1 - safe["bottom"])) - int(look["bottomGapPx"])
+    top_limit = int(height * safe["top"]) + stroke_px
+    if look.get("position") == "middle":
+        # Centre the ink (cap top of the first row to baseline of the last), not
+        # the line boxes: those carry the descender and sit the text high.
+        cap_height = -font.getbbox("H", anchor="ls")[1]
+        ink_mid = _baseline(font) + ((len(lines) - 1) * line_height - cap_height) / 2
+        top_y = round(0.60 * height - ink_mid)
+        top_y = max(min(top_y, bottom_y - block_h), top_limit)
+    else:
+        top_y = max(bottom_y - block_h, top_limit)
 
     # The active word is drawn on its own layer for two reasons: enlarging it must
     # not clip at the frame edge, and at pop's peak it is wider than its slot, so
@@ -261,34 +324,60 @@ def _draw(
     overlay_draw = ImageDraw.Draw(overlay)
     active_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
     active_draw = ImageDraw.Draw(active_layer)
+    shadow_layer = Image.new("RGBA", image.size, (0, 0, 0, 0)) if shadow else None
+    shadow_draw = ImageDraw.Draw(shadow_layer) if shadow_layer is not None else None
+    pill_layer = Image.new("RGBA", image.size, (0, 0, 0, 0)) if mode == "pill" else None
+    pill_draw = ImageDraw.Draw(pill_layer) if pill_layer is not None else None
     # Exact, unrounded size: font_variant only takes integers and would quantise
     # the pop ramp (65.55 -> 66 up, then a jump on the way back down).
     active_font = caption_font(font.path, max(1.0, font.size * scale)) if active is not None else None
+    side_px = width * safe["side"]
 
     index = 0
     for row, line in enumerate(lines):
         text = " ".join(line)
         x = (width - font.getlength(text)) / 2
+        row_top = top_y + row * line_height
         # One baseline per row, shared by the active and the still words, so the
         # pair sits on the same line whatever its box height.
-        baseline = top_y + row * line_height + _baseline(font)
+        baseline = row_top + _baseline(font)
         for piece in line:
-            if index == active:
+            is_active = index == active
+            if shadow_draw is not None:
+                shadow_draw.text(
+                    (x + shadow["dxPx"], baseline + shadow["dyPx"]), piece,
+                    font=font, fill=_rgba(shadow["color"]), anchor="ls",
+                    stroke_width=stroke_px, stroke_fill=_rgba(shadow["color"]),
+                )
+            if is_active and mode in ("color", "pop"):
                 active_draw.text(
                     (x, baseline), piece,
-                    font=active_font, fill=ACTIVE_COLOR, anchor="ls",
-                    stroke_width=STROKE_WIDTH, stroke_fill=STROKE_COLOR,
+                    font=active_font, fill=accent, anchor="ls",
+                    stroke_width=stroke_px, stroke_fill=stroke_fill,
                 )
             else:
+                if is_active and pill_draw is not None:
+                    left = max(x - pad_x, side_px)
+                    right = min(x + font.getlength(piece) + pad_x, width - side_px)
+                    pill_draw.rounded_rectangle(
+                        (left, row_top - pad_y, right, row_top + line_height + pad_y),
+                        radius=int(pill["radiusPx"]), fill=accent,
+                    )
                 overlay_draw.text(
                     (x, baseline), piece,
-                    font=font, fill=TEXT_COLOR, anchor="ls",
-                    stroke_width=STROKE_WIDTH, stroke_fill=STROKE_COLOR,
+                    font=font, fill=text_color, anchor="ls",
+                    stroke_width=stroke_px, stroke_fill=stroke_fill,
                 )
             # Step the way the line was measured; the last word has nothing to step to.
             x += font.getlength(piece + " ") if piece is not line[-1] else font.getlength(piece)
             index += 1
 
+    if shadow_layer is not None:
+        if shadow["blurPx"] > 0:
+            shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(shadow["blurPx"]))
+        image.alpha_composite(shadow_layer)
+    if pill_layer is not None:
+        image.alpha_composite(pill_layer)
     image.alpha_composite(overlay)
     image.alpha_composite(active_layer)
 
@@ -321,12 +410,19 @@ def render(spec: dict) -> dict:
         raise ValueError("nothing to render: no groups and no duration")
     if duration <= 0:
         duration = max(group["end"] for group in groups)
-    safe = {
-        "top": float(spec.get("safeArea", {}).get("top", SAFE_TOP)),
-        "bottom": float(spec.get("safeArea", {}).get("bottom", SAFE_BOTTOM)),
-        "side": float(spec.get("safeArea", {}).get("side", SAFE_SIDE)),
-    }
-    font = caption_font(spec.get("font"), font_size_for(height))
+    look = spec.get("look")
+    if not look:
+        # Legacy spec: the three original styles, with the spec's own font/safe area.
+        safe_in = spec.get("safeArea", {})
+        look = legacy_look(style, width, height)
+        look["safeArea"] = {
+            "top": float(safe_in.get("top", SAFE_TOP)),
+            "bottom": float(safe_in.get("bottom", SAFE_BOTTOM)),
+            "side": float(safe_in.get("side", SAFE_SIDE)),
+        }
+        if spec.get("font"):
+            look["font"] = spec["font"]
+    font = caption_font(look["font"], look["sizePx"])
     frame_count = int(round(duration * fps))
     if frame_count <= 0:
         raise ValueError(f"duration {duration} s at {fps} fps yields no frames")
@@ -348,7 +444,7 @@ def render(spec: dict) -> dict:
             scale = 1.0
             if group is not None:
                 active = _active_index(group, t)
-                if style == "pop" and active is not None:
+                if look["active"] == "pop" and active is not None:
                     scale = round(_pop_scale(t - group["words"][active]["start"]), 3)
             # Frames repeat: a word is on screen for 8-20 frames and only pop's
             # 120 ms ramp changes the picture, so draw each distinct picture once.
@@ -358,7 +454,7 @@ def render(spec: dict) -> dict:
             else:
                 frame = Image.new("RGBA", (width, height), (0, 0, 0, 0))
                 if group is not None:
-                    _draw(frame, font, _pieces(group, style), active, scale, width, height, safe)
+                    _draw(frame, font, _pieces(group, bool(look["uppercase"])), active, scale, width, height, look)
                 frame.save(target)
                 rendered[key] = target
             if number % 25 == 0:
@@ -383,3 +479,43 @@ def render(spec: dict) -> dict:
 
     io.write_progress(progress_path, 1.0, None)
     return {"path": str(out_path), "frames": frame_count}
+
+
+_BREAK_AFTER = (".", ",", "!", "?", ";", ":", "…")
+
+
+def _first_cluster(text: str, max_words: int, max_chars: int) -> list[str]:
+    """The first caption group of ``text``, cut like ``groupCaptions`` would."""
+    cluster: list[str] = []
+    for word in text.split():
+        if cluster and len(" ".join([*cluster, word])) > max_chars:
+            break
+        cluster.append(word)
+        if len(cluster) >= max_words or word.endswith(_BREAK_AFTER):
+            break
+    return cluster
+
+
+def preview(spec: dict) -> dict:
+    """Draw one caption group over a grey gradient and save it as a PNG."""
+    width = int(spec["width"])
+    height = int(spec["height"])
+    look = spec["look"]
+    words = _first_cluster(str(spec["text"]), int(spec["maxWords"]), int(spec["maxChars"]))
+    if look.get("uppercase"):
+        words = [word.upper() for word in words]
+    top, bottom = (0x3A, 0x3F, 0x47), (0x9A, 0xA3, 0xAD)
+    column = Image.new("RGB", (1, height))
+    for y in range(height):
+        k = y / max(1, height - 1)
+        column.putpixel((0, y), tuple(round(a + (b - a) * k) for a, b in zip(top, bottom)))
+    image = column.resize((width, height)).convert("RGBA")
+    if words:
+        active = int(spec.get("activeIndex", 0))
+        active = active if 0 <= active < len(words) else None
+        font = caption_font(look["font"], look["sizePx"])
+        _draw(image, font, words, active, 1.0, width, height, look)
+    out_path = Path(spec["outPath"])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(out_path, "PNG")
+    return {"path": str(out_path), "width": width, "height": height}

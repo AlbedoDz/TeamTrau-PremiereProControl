@@ -75,9 +75,9 @@ def probe(path):
     return json.loads(out.stdout)["streams"][0]
 
 
-def render_frame(tmp_path, groups, frame, style="clean"):
+def render_frame(tmp_path, groups, frame, style="clean", **overrides):
     """Render the file at 25 fps and grab the `frame`-th picture back as RGBA."""
-    spec = make_spec(tmp_path, groups, style=style)
+    spec = make_spec(tmp_path, groups, style=style, **overrides)
     result = captions.render(spec)
     assert result == {"path": spec["outPath"], "frames": int(round(spec["duration"] * spec["fps"]))}
     png = tmp_path / f"frame-{frame}.png"
@@ -419,3 +419,123 @@ def test_bottom_line_sits_one_gap_above_the_350px_bottom_margin(tmp_path):
     gap = captions.bottom_gap_for(1920)
     assert bottom <= 1920 - 350 - gap + captions.STROKE_WIDTH * 2
     assert bottom >= 1920 - 350 - gap - 150, f"caption bottom {bottom} is far from the safe line"
+
+
+# ---- looks -----------------------------------------------------------------
+
+def _look(**changes):
+    look = captions.legacy_look("clean", 1080, 1920)
+    look.update(changes)
+    return look
+
+
+def _near(color, target, tol=12):
+    return all(abs(a - b) <= tol for a, b in zip(color[:3], target)) and color[3] > 0
+
+
+def _near_box(image, target):
+    pixels = image.load()
+    xs, ys = [], []
+    for y in range(image.height):
+        for x in range(image.width):
+            if _near(pixels[x, y], target):
+                xs.append(x)
+                ys.append(y)
+    return (min(xs), min(ys), max(xs) + 1, max(ys) + 1) if xs else None
+
+
+def _still(look, words, active, width=1080, height=1920):
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    font = captions.caption_font(look["font"], look["sizePx"])
+    captions._draw(image, font, words, active, 1.0, width, height, look)
+    return image
+
+
+HIGHLIGHT_LOOK = dict(
+    font="BeVietnamPro-ExtraBold.ttf", accentColor="#22D3EE", active="pill",
+    pill={"padXPx": 13, "padYPx": 6, "radiusPx": 16}, stroke=None,
+)
+
+
+@pytest.mark.parametrize("style,frame", [("clean", 3), ("pop", 1)])
+def test_legacy_spec_matches_explicit_legacy_look(tmp_path, style, frame):
+    from PIL import ImageChops
+
+    plain = render_frame(tmp_path, TWO_GROUPS, frame, style=style)
+    explicit = render_frame(
+        tmp_path, TWO_GROUPS, frame, style=style, look=captions.legacy_look(style, 1080, 1920)
+    )
+    assert ImageChops.difference(plain, explicit).getbbox() is None
+
+
+def test_highlight_draws_accent_pill_behind_active_word_only():
+    words = ["alpha", "beta", "gamma"]
+    look = _look(**HIGHLIGHT_LOOK)
+    image = _still(look, words, 1)
+    box = _near_box(image, (0x22, 0xD3, 0xEE))
+    assert box is not None
+    font = captions.caption_font(look["font"], look["sizePx"])
+    line = " ".join(words)
+    x0 = (1080 - font.getlength(line)) / 2 + font.getlength("alpha ")
+    x1 = x0 + font.getlength("beta")
+    assert box[0] <= x0 and box[2] >= x1
+    next_x0 = x1 + font.getlength(" ")
+    assert box[2] <= next_x0
+
+
+def test_highlight_pill_stays_inside_side_margin():
+    look = _look(**HIGHLIGHT_LOOK)
+    image = _still(look, ["abcdefghijklmnopqr"], 0)
+    box = _near_box(image, (0x22, 0xD3, 0xEE))
+    assert box is not None
+    assert box[0] >= 1080 * look["safeArea"]["side"] - 1
+
+
+def test_minimal_has_soft_shadow_and_no_hard_stroke():
+    look = _look(
+        stroke=None, active="none",
+        shadow={"dxPx": 4, "dyPx": 4, "blurPx": 8, "color": "#000000B3"},
+    )
+    image = _still(look, ["Soft", "shadow"], None)
+    pixels = image.load()
+    soft = hard = 0
+    white = [(x, y) for y in range(image.height) for x in range(image.width) if pixels[x, y][:3] == (255, 255, 255) and pixels[x, y][3] == 255]
+    assert white
+    for x, y in white[::20]:
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            r, g, b, a = pixels[x + dx, y + dy]
+            if a == 255 and (r, g, b) == (0, 0, 0):
+                hard += 1
+    soft = sum(1 for y in range(image.height) for x in range(image.width) if 1 <= pixels[x, y][3] <= 200 and pixels[x, y][:3] == (0, 0, 0))
+    assert soft > 50
+    assert hard == 0
+
+
+def test_middle_position_centres_block_at_60_percent():
+    look = _look(position="middle")
+    image = _still(look, ["Middle", "of", "frame"], None)
+    box = image.getbbox()
+    centre = (box[1] + box[3]) / 2
+    assert abs(centre - 0.60 * 1920) <= 0.02 * 1920
+
+
+def test_large_look_keeps_long_word_inside_frame():
+    look = _look(sizePx=104)
+    image = _still(look, ["x" * 30], None)
+    box = image.getbbox()
+    assert box[0] >= 0 and box[2] <= 1080 and box[1] >= 0 and box[3] <= 1920
+
+
+def test_caption_preview_writes_png_of_requested_size(tmp_path):
+    look = _look(**HIGHLIGHT_LOOK)
+    out = tmp_path / "preview.png"
+    result = captions.preview({
+        "look": look, "width": 540, "height": 960, "text": "one two three four",
+        "maxWords": 3, "maxChars": 18, "activeIndex": 1, "outPath": str(out),
+    })
+    assert result == {"path": str(out), "width": 540, "height": 960}
+    image = Image.open(out)
+    assert image.size == (540, 960)
+    rgba = image.convert("RGBA")
+    assert rgba.getchannel("A").getextrema() == (255, 255)
+    assert _near_box(rgba, (0x22, 0xD3, 0xEE)) is not None

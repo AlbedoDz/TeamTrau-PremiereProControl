@@ -23,6 +23,12 @@ def run_captions(payload: dict) -> dict:
     return captions.render(payload)
 
 
+def run_caption_preview(payload: dict) -> dict:
+    from . import captions
+
+    return captions.preview(payload)
+
+
 def run_check(payload: dict) -> dict:
     return check.run(payload.get("ffmpegPath"))
 
@@ -70,6 +76,7 @@ class PartialFailure(Exception):
 
 
 COMMANDS = {
+    "caption_preview": run_caption_preview,
     "captions": run_captions,
     "check": run_check,
     "download-models": run_download_models,
