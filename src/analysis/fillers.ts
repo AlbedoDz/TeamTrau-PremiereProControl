@@ -12,7 +12,7 @@ export type { FillerLexicon } from './fillers-vi.js';
 export interface FillerRange {
   start: number;
   end: number;
-  reason: 'filler-A' | 'filler-B' | 'retake' | 'isolated';
+  reason: 'filler-A' | 'filler-B' | 'retake' | 'isolated' | 'slate';
   text: string;
 }
 
@@ -239,6 +239,27 @@ export function findIsolatedUtterances(
     }
   });
   return ranges;
+}
+
+/**
+ * A slate: the reader announces the piece ("Khuyến học tổ dân 38"), pauses, then starts the
+ * read. Live, the first 2 s of a clean voice-over were this line. Only the first sentence is
+ * considered: short (at most `maxWords` words and `maxSec` long), followed by a pause of at
+ * least `minGapSec`, with a longer sentence after it. Narration only, like isolated utterances.
+ */
+export function findLeadingSlate(
+  words: TimelineWord[],
+  sentences: Sentence[],
+  opts: { maxWords: number; maxSec: number; minGapSec: number },
+): FillerRange[] {
+  if (sentences.length < 2) return [];
+  const [first, next] = [sentences[0]!, sentences[1]!];
+  const toks = sentenceTokenWords(first, words);
+  if (toks.length === 0 || toks.length > opts.maxWords) return [];
+  if (first.end - first.start > opts.maxSec) return [];
+  if (next.start - first.end < opts.minGapSec) return [];
+  if (sentenceTokenWords(next, words).length <= toks.length) return [];
+  return [{ start: first.start, end: first.end, reason: 'slate', text: first.text }];
 }
 
 /**

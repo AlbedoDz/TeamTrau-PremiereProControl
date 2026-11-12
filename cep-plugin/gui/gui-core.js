@@ -348,6 +348,7 @@
         'retake': 'câu vấp',
         'silence': 'khoảng lặng',
         'isolated': 'tiếng lẻ',
+        'slate': 'câu đọc thử / xướng tên',
         'island': 'mẩu tiếng không có lời'
     };
 

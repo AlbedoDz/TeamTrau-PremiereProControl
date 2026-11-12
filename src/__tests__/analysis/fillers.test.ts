@@ -2,7 +2,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_FILLER_LEXICON, loadFillerLexicon } from '../../analysis/fillers-vi.js';
-import { findFillerRanges, findIsolatedUtterances, findRetakeRanges, snapEdges } from '../../analysis/fillers.js';
+import { findFillerRanges, findIsolatedUtterances, findLeadingSlate, findRetakeRanges, snapEdges } from '../../analysis/fillers.js';
 import type { Sentence, TimelineWord } from '../../analysis/transcript.js';
 
 type Spec = Array<string | [string, number]>;
@@ -364,5 +364,30 @@ describe('findIsolatedUtterances', () => {
     const two = [w('a', 0, 1), w('ờ', 2, 2.2), w('thì', 2.2, 2.4), w('b', 4, 4.2)];
     expect(findIsolatedUtterances(two, [s(0, 0, 0, two), s(1, 1, 2, two), s(2, 3, 3, two)], OPT)
       .filter((r) => r.start === 2)).toEqual([]);
+  });
+});
+
+describe('findLeadingSlate', () => {
+  const w = (text: string, start: number, end: number): TimelineWord => ({ w: text, start, end, p: 1, trackIndex: 0, clipId: 'c' });
+  const s = (id: number, first: number, last: number, words: TimelineWord[]): Sentence => ({
+    id, start: words[first]!.start, end: words[last]!.end, text: words.slice(first, last + 1).map((x) => x.w).join(' '), firstWord: first, lastWord: last,
+  });
+  const OPT = { maxWords: 8, maxSec: 3, minGapSec: 1.2 };
+  // Live: "Quyền học tổ dân ba tám" at 3.3-5.0 s, then the read starts at 6.7 s.
+  const slate = ['Quyền', 'học', 'tổ', 'dân', 'ba', 'tám'].map((x, i) => w(x, 3.3 + i * 0.28, 3.58 + i * 0.28));
+  const read = ['Giữa', 'nhịp', 'sống', 'đô', 'thị', 'đang', 'chuyển', 'mình', 'từng', 'ngày'].map((x, i) => w(x, 6.7 + i * 0.3, 7.0 + i * 0.3));
+
+  it('finds a short title line read before a pause (live: clean (4) 0:00-1:28)', () => {
+    const words = [...slate, ...read];
+    expect(findLeadingSlate(words, [s(0, 0, 5, words), s(1, 6, 15, words)], OPT)).toEqual([
+      { start: 3.3, end: slate[5]!.end, reason: 'slate', text: 'Quyền học tổ dân ba tám' },
+    ]);
+  });
+
+  it('keeps an opening line that runs straight into the read, or is long', () => {
+    const tight = [...slate, ...read.map((x) => ({ ...x, start: x.start - 1.2, end: x.end - 1.2 }))];
+    expect(findLeadingSlate(tight, [s(0, 0, 5, tight), s(1, 6, 15, tight)], OPT)).toEqual([]);
+    const words = [...read, ...slate.map((x) => ({ ...x, start: x.start + 8, end: x.end + 8 }))];
+    expect(findLeadingSlate(words, [s(0, 0, 9, words), s(1, 10, 15, words)], OPT)).toEqual([]);
   });
 });

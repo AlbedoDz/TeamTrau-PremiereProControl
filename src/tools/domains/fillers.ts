@@ -9,7 +9,7 @@ import { z } from 'zod';
 import type { ToolContext, ToolModule } from '../context.js';
 import { cached } from '../../analysis/cache.js';
 import { ffmpegMissingResult, findFfTool, runFf } from '../../analysis/ffmpeg.js';
-import { findFillerRanges, findIsolatedUtterances, findRetakeRanges, snapEdges, type FillerRange } from '../../analysis/fillers.js';
+import { findFillerRanges, findIsolatedUtterances, findLeadingSlate, findRetakeRanges, snapEdges, type FillerRange } from '../../analysis/fillers.js';
 import { loadFillerLexicon } from '../../analysis/fillers-vi.js';
 import { parseMetric, type FrameSample } from '../../analysis/roughcut.js';
 import { ENGINE_IDS } from '../../analysis/asr-engines.js';
@@ -98,6 +98,8 @@ export async function findFillersAndRetakes(
   if (args.retakes) ranges.push(...findRetakeRanges(loaded.sentences, loaded.words, { windowSec: 10, jaccard: 0.6 }));
   // Narration only (no video): a lone short word between long pauses is a stray sound.
   if (!hasVideo) ranges.push(...findIsolatedUtterances(loaded.words, loaded.sentences, { maxSec: 0.6, minGapSec: 0.5 }));
+  // Narration only: a short title line read before a pause is a slate, not part of the piece.
+  if (!hasVideo) ranges.push(...findLeadingSlate(loaded.words, loaded.sentences, { maxWords: 8, maxSec: 3, minGapSec: 1.2 }));
   // A "word" lasting seconds means the recogniser swallowed speech, typically a
   // re-read passage (live: Whisper stretched "như" over 9.18 s across a retake).
   for (const w of loaded.words) {
