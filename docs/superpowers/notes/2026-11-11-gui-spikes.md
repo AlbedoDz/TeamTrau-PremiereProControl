@@ -15,8 +15,8 @@ Nhánh `feature/panel-gui`, worktree `.worktrees/panel-gui`. Ghi kết quả th�
 - [ ] Nếu tỉ lệ dưới 0,7 thì cần thêm cách phát hiện bằng âm thanh (spec §5.2), theo ruling R1.
 
 ## 2. Spike 2: J-cut
-- [ ] Trên một sequence nháp có 2 clip liền nhau: bỏ liên kết clip thứ hai, kéo audio của nó sớm hơn 0,5 s, cắt đuôi audio clip trước, rồi đọc lại vị trí. Làm 5 lần.
-- [ ] Kết quả: ___ / 5 lần lệch không quá 1 frame. Nếu đạt cả 5 lần thì bật J-cut trong `build_recap`, thay cho `JCUT_SUPPORTED = false`.
+- [x] Trên một sequence nháp có 2 clip liền nhau: bỏ liên kết clip thứ hai, kéo audio của nó sớm hơn 0,5 s, cắt đuôi audio clip trước, rồi đọc lại vị trí. Làm 5 lần.
+- [x] Kết quả (2026-11-12, sequence "TEST jcut"): **5/5** lần đúng vị trí, không khe hở, hình và tiếng vẫn khớp nhau. Đã bật J-cut (`92a285d`), độ sớm làm tròn theo frame. Chạy recap thật với J-cut: **9/9** mối nối áp J-cut, crossfade đặt đủ trên các mối nối mới. Ô J-cut trên panel không còn ẩn.
 
 ## 3. Năm quy trình chạy từ panel, không mở client AI nào
 Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian chạy, các số trong `summary`, cảnh báo, và kết quả có đúng không.
@@ -53,7 +53,9 @@ Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian c
   - Sequence trung gian "(16:9)" có bị xóa không.
   - Phụ đề có nằm trong vùng an toàn không.
 - [x] **Podcast → Shorts** (2 short, 30–60 s): 32,2 s và 36,0 s, cả hai đã xác minh, mất 34 s.
-  - Chất lượng: short 1 dừng ở "Xin được mời… bác sĩ giải đáp", tức là hết trước câu trả lời. Cần nối câu hỏi với câu trả lời (để làm sau).
+  - Chất lượng: short 1 dừng ở "Xin được mời… bác sĩ giải đáp", tức là hết trước câu trả lời.
+  - Đã sửa (`52d7bb3`): loại các đoạn kết bằng câu hỏi, dấu phẩy, hoặc lời chuyển cho khách. Luật nhận ra cả "mời", "nhờ", "đề nghị", và lỗi ASR "dạy đáp". Đoạn kết bằng dấu chấm được ưu tiên; ASR chấm câu không đều (6/60 đoạn), nên đoạn không có dấu câu vẫn được chọn khi thiếu. Tập ứng viên tăng từ 20 lên 60.
+  - Chạy thử lại trên FINAL_01: cả 2 short kết thúc trọn câu, ở 617,9–654,6 s và 3,0–35,9 s. Short thứ hai là đoạn mở đầu chương trình ("Kính chào quý vị…"): trọn ý nhưng không hấp dẫn, đây là giới hạn của heuristic (mục 5).
   - Một cảnh báo tiếng Anh vẫn lọt qua panel: "Captions were rendered at 608×1080…".
   - Còn lại cho Shorts:
   - Mỗi short có đúng khoảng thời gian không, và các short có chồng nhau không.
