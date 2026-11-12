@@ -83,7 +83,8 @@ describe('plan_recap shots mode', () => {
     // The shot 10-30 becomes source 20-30, which is sequence 100-110; the first shot is gone.
     expect(result.candidates.some((c: any) => c.start === 100)).toBe(true);
     expect(result.candidates.every((c: any) => c.id.startsWith('shot-'))).toBe(true);
-    expect(result.totalSec).toBe(600);
+    expect(result.sequenceSec).toBe(600);
+    expect(result.totalSec).toBeCloseTo(result.segments.reduce((t: number, s: any) => t + s.end - s.start, 0), 2);
     expect(typeof result.fingerprint).toBe('string');
     expect(scoreAll).toHaveBeenCalledWith(['C:/m.mp4'], 2, 'plan_recap');
     expect(detectScenes).toHaveBeenCalledWith('C:/m.mp4', { threshold: 0.3, minShotSec: 0.5 });
@@ -142,6 +143,20 @@ describe('plan_recap auto and speech modes', () => {
     expect(result.candidates.length).toBeLessThanOrEqual(24);
     for (const s of result.segments) expect(s.text).toEqual(expect.any(String));
     expect(detectScenes).not.toHaveBeenCalled();
+    // totalSec is the recap's length, not the sequence's.
+    expect(result.totalSec).toBeCloseTo(sum, 2);
+    expect(result.sequenceSec).toBe(600);
+  });
+
+  it('never ends a recap segment on an unanswered question', async () => {
+    // Every other sentence is a question; the scorer used to favour exactly those.
+    const qa = sentences.map((s, i) => ({ ...s, text: i % 2 === 0 ? `${s.text} phải không?` : s.text }));
+    const qaWords = qa.map((s) => ({ w: s.text, start: s.start, end: s.end, p: 1, trackIndex: 0, clipId: 'a1' }));
+    loadTranscript.mockResolvedValue(ready({ sentences: qa, words: qaWords }));
+    const result: any = await tool.run(ctxWith(clips), parse());
+    expect(result.mode).toBe('speech');
+    expect(result.segments.length).toBeGreaterThan(0);
+    for (const s of result.segments) expect(s.text.trim()).not.toMatch(/\?$/);
   });
 
   it('switches to shots when the speech covers under 30%', async () => {

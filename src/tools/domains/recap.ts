@@ -52,7 +52,10 @@ export interface PlanRecapResult {
   mode: 'speech' | 'shots';
   segments: Array<{ id?: string | undefined; start: number; end: number; text?: string | undefined; score?: number | undefined }>;
   candidates: RecapSegment[];
+  /** Length of the planned recap: the sum of the segments. */
   totalSec: number;
+  /** Length of the source sequence. */
+  sequenceSec: number;
   fingerprint: string;
   warnings: string[];
 }
@@ -157,7 +160,8 @@ async function planShots(
     mode: 'shots',
     segments: segments.map(roundSegment),
     candidates: candidates.map(roundSegment),
-    totalSec: total,
+    totalSec: Math.round(segments.reduce((sum, s) => sum + (s.end - s.start), 0) * 1000) / 1000,
+    sequenceSec: total,
     fingerprint,
     warnings: [...new Set(warnings)],
   };
@@ -210,11 +214,18 @@ export async function planRecap(
   const indexOf = new Map(loaded.sentences.map((s, i) => [s.id, i]));
   const textOf = (startId: number, endId: number): string =>
     loaded.sentences.slice(indexOf.get(startId)!, indexOf.get(endId)! + 1).map((s) => s.text).join(' ');
-  const scored = scoreCandidates(windows.map((w) => ({
-    ...w,
-    text: textOf(w.startSentenceId, w.endSentenceId),
-    signals: signalsFor(w, loaded.words, loudness, medianLufs, []),
-  })));
+  // A recap retells content, so a question is only worth keeping with its answer. The
+  // highlight scorer rewards questions (good hooks for a short); here that reward is
+  // removed, and a window that ENDS on a question is dropped: live on a 69-minute talk
+  // show, 11 of 16 picks were the host's unanswered questions.
+  const endsOnQuestion = (text: string): boolean => /\?[^\p{L}\p{N}]*$/u.test(text.trim());
+  const scored = scoreCandidates(windows
+    .map((w) => ({ ...w, text: textOf(w.startSentenceId, w.endSentenceId) }))
+    .filter((w) => !endsOnQuestion(w.text))
+    .map((w) => ({
+      ...w,
+      signals: { ...signalsFor(w, loaded.words, loudness, medianLufs, []), hasQuestion: false },
+    })));
 
   const segments = planSpeechRecap(scored, total, opts);
   if (segments.length === 0 && windows.length > 0) warnings.push('Không chọn được đoạn nào trong giới hạn thời lượng.');
@@ -225,7 +236,8 @@ export async function planRecap(
     mode: 'speech',
     segments: segments.map(roundSegment),
     candidates: candidates.map(roundSegment),
-    totalSec: total,
+    totalSec: Math.round(segments.reduce((sum, s) => sum + (s.end - s.start), 0) * 1000) / 1000,
+    sequenceSec: total,
     fingerprint: loaded.fingerprint,
     warnings: [...new Set(warnings)],
   };
