@@ -25,7 +25,21 @@ Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian c
   - Chạy thật: tạo "… - clean", 196,0 s → 162,1 s, đã xác minh độ dài. DeNoise và Dynamics áp lên 19/19 clip, chuẩn −16 LUFS, QA sạch, có sao lưu.
   - **Lỗi tìm thấy và đã sửa:** tham số thứ hai của QE `addTransition` nghĩa là "đặt ở đầu clip" (`true`). Ruling R4 hiểu ngược, nên crossfade rơi vào cuối clip (mất ở mối nối đầu, thừa một cái ở cuối sequence), và bước xác minh qua QE báo nhầm "0/18".
   - Đã sửa: dùng `true` và xác minh qua `track.transitions.numItems` của DOM. Chạy lại trên máy thật: crossfade nằm ngay tại mối nối (99,967–100,000 s), không còn cảnh báo.
-  - Việc còn lại cho Dọn voice-over:
+  - **Người dùng duyệt bản clean (2026-11-12) và báo 3 lỗi; phân tích tìm thêm 1 lỗi:**
+    - 12:04, tiếng thừa: Whisper bỏ tiếng ngập ngừng. Zipformer có nghe ra, nhưng nhận thành "Này" (tầng C).
+    - 50:04, thừa chữ: **do vết cắt thử của tôi trên bản clean**, không phải lỗi của tool. Bài học: không bao giờ thử nghiệm trên bản giao cho người dùng.
+    - 1:34–1:40, trùng lặp: Whisper gộp các lần đọc lại; quy trình còn bỏ sót kiểu đọc lại bắt đầu từ giữa câu.
+    - 1:50–2:09, trùng lặp (người dùng chưa báo): Whisper gộp mất lần đọc đầu.
+  - **Đã sửa (`0b19bdb`):**
+    - Dọn voice-over mặc định dùng Zipformer, kèm đường lùi.
+    - Bắt câu vấp kiểu đuôi trùng đầu, xét trước luật độ trùng từ.
+    - Cắt tiếng lẻ đứng riêng (chỉ voice-over).
+    - Lưới an toàn: cắt mẩu tiếng ≤ 0,8 s không có từ nào.
+    - Cảnh báo khi một từ kéo dài hơn 1,5 s.
+  - **Kiểm lại:** bản Xem trước bắt đủ cả 4 vị trí lỗi.
+  - **Lỗi crossfade phát sinh, đã sửa:** chỉ đặt được 7/14. Nguyên nhân là `move(-gap)` dịch theo số giây làm tròn 1 ms, khiến các clip lệch 0,01–0,02 frame. Chỗ nào hai clip chồng nhau, Premiere âm thầm từ chối transition. Đã sửa bằng cách dịch theo số frame nguyên.
+  - **Bản "- clean (4)":** 146,83 s, 14/14 crossfade dài 1 frame, 0 clip lệch lưới, 0 khe hở hay chồng, QA sạch, không cảnh báo.
+  - Việc còn lại cho Dọn voice-over: người dùng nghe lại bản (4).
   - Xem trước có liệt kê vết cắt kèm lý do và câu gốc không.
   - Sau khi chạy: crossfade **có thật trên từng vết cắt không** (ruling R4), và nghe có tiếng "tách" ở mối nối không.
   - Câu chứa "chẳng", "ạ", "nhé" có còn nguyên không.

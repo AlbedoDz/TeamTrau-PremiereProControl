@@ -19,6 +19,7 @@ function snapshot(endTime: number) {
 }
 
 const DELETE = 'later.move(-gap)';
+const FRAME_GAP = 'var gap = (Math.round(8 * fps) - Math.round(5 * fps)) / fps';
 
 describe('remove_ranges', () => {
   let executeScript: jest.Mock;
@@ -74,8 +75,30 @@ describe('remove_ranges', () => {
     expect(s[4]).toContain('Math.round(8 * fps)');
     expect(s[5]).toContain('Math.round(5 * fps)');
     expect(s[6]).toContain('5 - 0.02');
+    // The gap is a whole number of frames, as the razor placed the edges.
+    expect(s[6]).toContain(FRAME_GAP);
     // joins on the shortened timeline: 5 s and 12 - 3 = 9 s
     expect(s[8]).toContain('[5,9]');
+  });
+
+  it('aims each crossfade at the real, frame-snapped clip start, not the computed join', async () => {
+    // Live: moved clips snap to frames, so computed joins drift past half-frame tolerance.
+    const after = {
+      ...snapshot(17),
+      clips: [
+        { id: 'a1', trackType: 'audio', trackIndex: 0, start: 0, end: 5.04, inPoint: 0, outPoint: 5.04, mediaPath: 'talk.mp4' },
+        { id: 'a2', trackType: 'audio', trackIndex: 0, start: 5.04, end: 17, inPoint: 8, outPoint: 20, mediaPath: 'talk.mp4' },
+      ],
+    };
+    executeScript
+      .mockResolvedValueOnce(snapshot(20))
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true, removedClips: 2 })
+      .mockResolvedValueOnce(after)
+      .mockResolvedValueOnce({ success: true, joins: 1, joinsPlaced: 1, placed: 1, attempted: 1 });
+    await tools.executeTool('remove_ranges', { ranges: [{ start: 5, end: 8 }], backup: false });
+    expect(scripts()[5]).toContain('[5.04]');
   });
 
   it('adds a Constant Power audio crossfade of the right length at each new join', async () => {

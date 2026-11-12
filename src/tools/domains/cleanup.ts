@@ -271,7 +271,12 @@ async function rippleDeleteRange(
       // shortened by 86 s and left 700 s gaps. TrackItem.move shifts one clip only
       // (its linked partner stays put), so every track is moved explicitly.
       for (var k = 0; k < inside.length; k++) inside[k].remove(false, false);
-      var gap = ${end} - ${start};
+      // The gap in whole frames, rounded the way the razor placed both edges. Using the
+      // seconds difference (rounded to 1 ms upstream) left clips 0.01-0.02 frame apart or
+      // overlapping after a few cuts; Premiere then silently refused the crossfade at every
+      // overlapping join (live: 7 of 14).
+      var fps = sequence.timebase ? (254016000000 / parseInt(sequence.timebase, 10)) : 30;
+      var gap = (Math.round(${end} * fps) - Math.round(${start} * fps)) / fps;
       var moved = 0;
       function shift(tracks) {
         for (var i = 0; i < tracks.numTracks; i++) {
@@ -387,6 +392,9 @@ export interface RemoveRangesResult {
  * goes on the START of the clip that begins at the join, and a placement counts only
  * when the clip's transition state shows it. Best effort: the caller only warns.
  */
+/** How far a computed join may sit from the real (frame-snapped) clip start it names. */
+const JOIN_SNAP_SEC = 0.25;
+
 async function addAudioCrossfades(ctx: ToolContext, sequenceId: string, joins: number[], frames: number, tolerance: number): Promise<any> {
   const script = `
     try {
@@ -515,6 +523,18 @@ export async function removeRanges(ctx: ToolContext, args: RemoveRangesArgs, sna
       const at = Math.round((cut.start - removedSoFar) * 1000) / 1000;
       removedSoFar += cut.duration;
       if (cut.start > 0 && cut.end < before.endTime - 1e-6) joins.push(at);
+    }
+    // Premiere snaps every moved clip to its frame grid, so the computed joins drift from
+    // the real clip starts as cuts accumulate (live: 7 of 14 fades missed the half-frame
+    // tolerance). Use the real start of the nearest audio clip instead; joins are at least
+    // minKeepSec apart, so the nearest one within JOIN_SNAP_SEC is the right one.
+    const audioStarts = after.clips.filter((c) => c.trackType === 'audio').map((c) => c.start);
+    for (let j = 0; j < joins.length; j++) {
+      let nearest: number | null = null;
+      for (const s of audioStarts) {
+        if (nearest === null || Math.abs(s - joins[j]!) < Math.abs(nearest - joins[j]!)) nearest = s;
+      }
+      if (nearest !== null && Math.abs(nearest - joins[j]!) <= JOIN_SNAP_SEC) joins[j] = nearest;
     }
     if (joins.length > 0) {
       try {
