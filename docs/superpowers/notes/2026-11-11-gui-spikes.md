@@ -39,6 +39,8 @@ Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian c
   - **Kiểm lại:** bản Xem trước bắt đủ cả 4 vị trí lỗi.
   - **Lỗi crossfade phát sinh, đã sửa:** chỉ đặt được 7/14. Nguyên nhân là `move(-gap)` dịch theo số giây làm tròn 1 ms, khiến các clip lệch 0,01–0,02 frame. Chỗ nào hai clip chồng nhau, Premiere âm thầm từ chối transition. Đã sửa bằng cách dịch theo số frame nguyên.
   - **Bản "- clean (4)":** 146,83 s, 14/14 crossfade dài 1 frame, 0 clip lệch lưới, 0 khe hở hay chồng, QA sạch, không cảnh báo.
+  - Người dùng duyệt bản (4) và báo lỗi: 0:00–1:28 là câu đọc thử "Khuyến học tổ dân 38" (ASR nghe là "Quyền học tổ dân ba tám"), sau đó lặng 1,7 s rồi mới vào bài.
+  - Đã sửa (`5d630b4`): câu đầu tiên được cắt với lý do "câu đọc thử / xướng tên" khi đủ cả bốn điều kiện: ≤ 8 từ, ≤ 3 s, có khoảng lặng ≥ 1,2 s phía sau, câu kế tiếp dài hơn. Chỉ áp dụng cho voice-over. Xem trước lại: đã bắt được câu này, 0–6,5 s bị bỏ toàn bộ.
   - Việc còn lại cho Dọn voice-over: người dùng nghe lại bản (4).
   - Xem trước có liệt kê vết cắt kèm lý do và câu gốc không.
   - Sau khi chạy: crossfade **có thật trên từng vết cắt không** (ruling R4), và nghe có tiếng "tách" ở mối nối không.
@@ -57,6 +59,14 @@ Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian c
   - Đã sửa (`52d7bb3`): loại các đoạn kết bằng câu hỏi, dấu phẩy, hoặc lời chuyển cho khách. Luật nhận ra cả "mời", "nhờ", "đề nghị", và lỗi ASR "dạy đáp". Đoạn kết bằng dấu chấm được ưu tiên; ASR chấm câu không đều (6/60 đoạn), nên đoạn không có dấu câu vẫn được chọn khi thiếu. Tập ứng viên tăng từ 20 lên 60.
   - Chạy thử lại trên FINAL_01: cả 2 short kết thúc trọn câu, ở 617,9–654,6 s và 3,0–35,9 s. Short thứ hai là đoạn mở đầu chương trình ("Kính chào quý vị…"): trọn ý nhưng không hấp dẫn, đây là giới hạn của heuristic (mục 5).
   - Một cảnh báo tiếng Anh vẫn lọt qua panel: "Captions were rendered at 608×1080…".
+  - **Người dùng báo: ở mỗi điểm chuyển cảnh trong short và recap, khung hình dịch nhẹ.** Nguyên nhân là Auto Reframe lia khung theo chủ thể và trượt 1–2 s sau mỗi lần đổi máy quay trong nguồn (ví dụ 0,50→0,38).
+  - Thử nghiệm trên bản sao "TEST steady":
+    - Ghi đè "Generated Keyframes" không làm thay đổi hình.
+    - Bật "Overwrite generated path" rồi ghi "Adjust Position" thì hình đổi đúng.
+  - Đã sửa (`6d7a1ac`, `d5b72fd`): sau Auto Reframe, mỗi shot nguồn giữ một vị trí cố định (trung vị của đường lia) và chỉ nhảy đúng tại điểm chuyển cảnh. Điểm chuyển cảnh lấy từ `detectScenes`, chỉ quét trong đoạn của clip. Các shot liền nhau lệch nhau < 0,02 khung được gộp làm một.
+  - Kết quả chạy thật:
+    - Short "short 1 (3)": 3 shot đứng yên. Hai frame cách nhau 20 s có hậu cảnh ở cùng vị trí.
+    - Recap 9:16 "recap (4)": 7/7 clip được giữ khung.
   - Còn lại cho Shorts:
   - Mỗi short có đúng khoảng thời gian không, và các short có chồng nhau không.
   - Bấm Hủy giữa chừng: các short đã xong phải giữ nguyên tên.
@@ -65,7 +75,10 @@ Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian c
 - [x] **Rough cut** (thư mục "1. Giải mã nỗi sợ mang tên Zona…", 2 video, mẫu thông số FINAL_01, đích 30 s, nhịp balanced):
   - Lỗi (đã sửa): Xem trước luôn thất bại vì chạy thử trên sequence mẫu đang có clip, và bước kiểm tra track V1 từ chối. Giờ chỉ khi chạy thử mới truyền `overwrite: true`; khi chạy thật vẫn là `false`, có test giữ điều này.
   - Chạy thật: tạo "… - rough cut" từ bản sao xóa trống của FINAL_01, 4 shot × 7,5 s = 30 s, đã xác minh, mất 13 s.
-  - Chưa thử: chế độ có nhạc (cắt theo nhạc và hạ nhạc dưới thoại).
+  - **Có nhạc** (`mfcc-teaser-trailer…mp3`, 45,8 s, 113 BPM): "… - rough cut (2)" có 40 shot cắt theo nhịp, nhạc nằm trên A2, đã xác minh, mất 18 s.
+    - Lỗi tìm thấy và đã sửa (`ed37893`): còn 4 khe hở 1 frame (nháy đen). Nguồn quay 30 fps đặt trên timeline 25 fps nên Premiere làm tròn điểm kết thúc xuống. Giờ sau khi đặt clip, tool kéo dài clip trước cho khít các khe ≤ 2 frame. Chạy lại: 0 khe hở, 0 chỗ chồng.
+    - Nhận xét: 21 shot đầu lấy từ một file, 19 shot sau từ file còn lại. Chưa xen kẽ hai nguồn.
+    - Chưa thử: hạ nhạc dưới thoại (`hasVoiceover`).
   - Còn lại:
   - Có nhạc: nhạc nằm ở A2.
   - Nếu sequence chỉ có một track audio thì có báo lỗi rõ ràng không.
