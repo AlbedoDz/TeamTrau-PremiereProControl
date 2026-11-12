@@ -90,7 +90,10 @@ export async function workflowRoughCut(ctx: ToolContext, args: RoughCutArgs): Pr
             startTime: 0,
             // Footage audio stays on track 0 only when there is speech to duck the music under.
             linkAudio: args.hasVoiceover,
-            overwrite: false,
+            // A dry run plans against the template (the source sequence), whose clips would
+            // trip the occupancy check; the real run places onto the empty copy. Dry runs
+            // return before placing anything, so allowing overwrite there changes nothing.
+            overwrite: args.dryRun,
             dryRun: args.dryRun,
             backup: false,
           })
@@ -105,7 +108,10 @@ export async function workflowRoughCut(ctx: ToolContext, args: RoughCutArgs): Pr
             videoTrackIndex: 0,
             startTime: 0,
             linkAudio: true,
-            overwrite: false,
+            // A dry run plans against the template (the source sequence), whose clips would
+            // trip the occupancy check; the real run places onto the empty copy. Dry runs
+            // return before placing anything, so allowing overwrite there changes nothing.
+            overwrite: args.dryRun,
             dryRun: args.dryRun,
             backup: false,
           });

@@ -45,7 +45,11 @@ Với mỗi quy trình, ghi lại: Xem trước có đúng không, thời gian c
   - Bấm Hủy giữa chừng: các short đã xong phải giữ nguyên tên.
 - [x] **Phụ đề tiếng Việt** (SRT): 3069 cue, mất 2 s, dòng ≤ 42 ký tự. File mặc định nằm trong `~/.premiere-mcp/renders`.
   - Còn lại: thử cả hai kiểu xuất SRT và track caption trên bản sao.
-- [ ] **Rough cut và Cắt theo nhạc:**
+- [x] **Rough cut** (thư mục "1. Giải mã nỗi sợ mang tên Zona…", 2 video, mẫu thông số FINAL_01, đích 30 s, nhịp balanced):
+  - Lỗi (đã sửa): Xem trước luôn thất bại vì chạy thử trên sequence mẫu đang có clip, và bước kiểm tra track V1 từ chối. Giờ chỉ khi chạy thử mới truyền `overwrite: true`; khi chạy thật vẫn là `false`, có test giữ điều này.
+  - Chạy thật: tạo "… - rough cut" từ bản sao xóa trống của FINAL_01, 4 shot × 7,5 s = 30 s, đã xác minh, mất 13 s.
+  - Chưa thử: chế độ có nhạc (cắt theo nhạc và hạ nhạc dưới thoại).
+  - Còn lại:
   - Có nhạc: nhạc nằm ở A2.
   - Nếu sequence chỉ có một track audio thì có báo lỗi rõ ràng không.
 

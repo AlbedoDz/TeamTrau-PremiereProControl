@@ -702,7 +702,12 @@ describe('workflow_rough_cut', () => {
   it('a dry run plans against the resolved source sequence', async () => {
     await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', targetSec: 30, dryRun: true });
     expect(readSequence).toHaveBeenCalledTimes(1);
-    expect(assembleRoughCut.mock.calls[0][1]).toMatchObject({ sequenceId: 'src', dryRun: true });
+    expect(assembleRoughCut.mock.calls[0][1]).toMatchObject({ sequenceId: 'src', dryRun: true, overwrite: true });
+  });
+
+  it('never allows overwrite when placing for real', async () => {
+    await runTool('workflow_rough_cut', ctxWith(), { folderPath: 'D:/Clips', targetSec: 30 });
+    expect(assembleRoughCut.mock.calls[0][1]).toMatchObject({ dryRun: false, overwrite: false });
   });
 
   it('keeps the built rough cut when cancelled while the music is being ducked', async () => {
