@@ -5,7 +5,8 @@ Nhánh `feature/panel-gui`, worktree `.worktrees/panel-gui`. Ghi kết quả th�
 ## 0. Chuẩn bị
 - [ ] Mở một project **nháp**, không dùng project đang làm thật. Project phải được lưu ít nhất một lần, vì tool sao lưu trước khi sửa.
 - [ ] Lưu ý: cài panel từ worktree (`node dist/cli.js --install-cep` rồi `--register-panel-runner`) sẽ **ghi đè panel 1.4.0 đang cài**. Muốn quay về bản cũ thì chạy lại Setup.exe 1.4.0.
-- [ ] Mở lại Premiere, mở `Window > Extensions > TeamTrau PremiereProControl`. Panel phải có hai tab **Quy trình** và **Kết nối**.
+- [x] Mở lại Premiere, mở `Window > Extensions > TeamTrau PremiereProControl`. Panel phải có hai tab **Quy trình** và **Kết nối**.
+  - Lỗi tìm thấy và đã sửa (`3779fdd`): lúc đầu không nút nào bấm được. CEP chạy ở `--mixed-context` có sẵn biến `module`, nên `gui-core.js` chỉ xuất code ra `module.exports`, `gui.js` hỏng ngay khi khởi tạo. Sau khi sửa và nạp lại panel, người dùng xác nhận các nút đã hoạt động.
 
 ## 1. Spike 1: ASR có giữ "ờ/ừm" không (quyết định có cần phát hiện bằng âm thanh)
 - [ ] Chọn một đoạn voice khoảng 2 phút có "ờ/ừm" thật. Chạy `transcribe_sequence`.
