@@ -107,11 +107,18 @@ async function bundleFfmpeg() {
     await rm(zip, { force: true });
     throw new Error('ffmpeg archive failed its SHA-256 check; deleted, run again.');
   }
-  const unpacked = join(cache, 'ffmpeg-unpacked');
-  await rm(unpacked, { recursive: true, force: true });
-  await mkdir(unpacked, { recursive: true });
-  await run(winTar, ['-xf', zip, '-C', unpacked]);
-  const [folder] = await readdir(unpacked);
+  // Unpacking the 7z takes a while; keep it until the release changes.
+  const unpacked = join(cache, 'ffmpeg-unpacked', asset.name);
+  const done = join(unpacked, '.unpacked');
+  if (existsSync(done)) {
+    log(`cached unpack of ${asset.name}`);
+  } else {
+    await rm(join(cache, 'ffmpeg-unpacked'), { recursive: true, force: true });
+    await mkdir(unpacked, { recursive: true });
+    await run(winTar, ['-xf', zip, '-C', unpacked]);
+    await writeFile(done, '');
+  }
+  const [folder] = (await readdir(unpacked)).filter((name) => name !== '.unpacked');
   const source = join(unpacked, folder);
   await mkdir(join(stage, 'ffmpeg', 'bin'), { recursive: true });
   for (const exe of ['ffmpeg.exe', 'ffprobe.exe']) await cp(join(source, 'bin', exe), join(stage, 'ffmpeg', 'bin', exe));

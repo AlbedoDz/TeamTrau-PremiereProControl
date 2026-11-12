@@ -6,4 +6,4 @@ face detection, caption rendering. The TypeScript server runs it as
 and reads the JSON result back.
 """
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"

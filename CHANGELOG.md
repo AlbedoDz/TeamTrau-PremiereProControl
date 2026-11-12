@@ -4,6 +4,10 @@ All notable changes are documented here. Releases use semantic versioning.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-12
+
+- Windows installer: setup and uninstall now stop the server, sidecar and ffmpeg processes running from the install folder or the sidecar venv first. Installing over a copy that an AI client was running failed with "DeleteFile failed; code 5. Access is denied." on `node\node.exe`. Reopen Claude or Antigravity after installing.
+- Windows installer build: LZMA2 compression runs on 8 block threads in a separate process (the compile step went from about 3 minutes to under 1), and the unpacked ffmpeg archive is cached between builds.
 - **Update the analysis sidecar:** run `premiere-pro-mcp --setup-asr` once after upgrading. The setup command now always reinstalls the local sidecar package (version 1.5.1), and the caption tools refuse an old sidecar with `sidecar.outdated` and this command instead of drawing the wrong look.
 - Caption looks: five styles (`clean`, `pop`, `karaoke`, `highlight`, `minimal`) with `captionAccent` (#RRGGBB), `captionPosition` (`bottom` or `middle`) and `captionSize` (`small`, `medium`, `large`), on `build_short`, `build_recap` and the shorts/recap workflows. The panel has a look picker with a live preview.
 - New tool `preview_caption_style` draws a look to a cached PNG so it can be checked before captions are burned in. Previews are cached under `renders/previews/v<renderer version>`.
