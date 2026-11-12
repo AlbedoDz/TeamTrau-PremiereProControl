@@ -333,6 +333,7 @@ def _draw(
     # the pop ramp (65.55 -> 66 up, then a jump on the way back down).
     active_font = caption_font(font.path, max(1.0, font.size * scale)) if active is not None else None
     side_px = width * safe["side"]
+    ascent, descent = font.getmetrics()
 
     index = 0
     for row, line in enumerate(lines):
@@ -361,7 +362,7 @@ def _draw(
                     left = max(x - pad_x, side_px)
                     right = min(x + font.getlength(piece) + pad_x, width - side_px)
                     pill_draw.rounded_rectangle(
-                        (left, row_top - pad_y, right, row_top + line_height + pad_y),
+                        (left, baseline - ascent - pad_y, right, baseline + descent + pad_y),
                         radius=int(pill["radiusPx"]), fill=accent,
                     )
                 overlay_draw.text(

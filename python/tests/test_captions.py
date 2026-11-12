@@ -481,6 +481,20 @@ def test_highlight_draws_accent_pill_behind_active_word_only():
     assert box[0] <= x0 and box[2] >= x1
     next_x0 = x1 + font.getlength(" ")
     assert box[2] <= next_x0
+    # The pill sits on the word's own line, with the word drawn white on top of it.
+    pixels = image.load()
+    ink = [
+        (px, py)
+        for py in range(box[1] - 40, box[3] + 40)
+        for px in range(int(x0), int(x1))
+        if pixels[px, py][:3] == (255, 255, 255) and pixels[px, py][3] == 255
+        and box[0] <= px < box[2] and box[1] <= py < box[3]
+    ]
+    assert ink, "active word must be white inside the pill"
+    ink_top = min(py for _, py in ink)
+    ink_bottom = max(py for _, py in ink)
+    assert ink_top >= box[1] and ink_bottom < box[3]
+    assert ink_top <= (box[1] + box[3]) / 2 <= ink_bottom
 
 
 def test_highlight_pill_stays_inside_side_margin():
