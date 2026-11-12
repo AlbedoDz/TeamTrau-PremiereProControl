@@ -2,7 +2,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_FILLER_LEXICON, loadFillerLexicon } from '../../analysis/fillers-vi.js';
-import { findFillerRanges, findRetakeRanges, snapEdges } from '../../analysis/fillers.js';
+import { findFillerRanges, findIsolatedUtterances, findRetakeRanges, snapEdges } from '../../analysis/fillers.js';
 import type { Sentence, TimelineWord } from '../../analysis/transcript.js';
 
 type Spec = Array<string | [string, number]>;
@@ -215,6 +215,35 @@ describe('findRetakeRanges', () => {
     expect(findRetakeRanges(t, wordsFor(t), OPTS)).toEqual([]);
   });
 
+  it('cuts the abandoned tail when the next sentence restarts in the middle (live case)', () => {
+    // Live, Zipformer: three readings of the same point; the first trails into the restart.
+    const texts = [
+      'đã đa dạng hóa tuyên truyền thiết thực nhờ đó chi hội đã đạt được nhiều thành tựu nổi bật như',
+      'Nhờ đó chi hội đã đạt được nhiều thành tựu nổi bật',
+      'Nhờ đó chi hội đã đạt được nhiều thành tựu nổi bật như tám mươi phần trăm',
+    ];
+    const words: TimelineWord[] = [];
+    const sentences: Sentence[] = [];
+    let t = 0;
+    texts.forEach((text, id) => {
+      const first = words.length;
+      for (const w of text.split(' ')) { words.push({ w, start: t, end: t + 0.3, p: 1, trackIndex: 0, clipId: 'c' }); t += 0.35; }
+      sentences.push({ id, start: words[first]!.start, end: words[words.length - 1]!.end, text, firstWord: first, lastWord: words.length - 1 });
+      t += 1;
+    });
+    const r = findRetakeRanges(sentences, words, OPTS);
+    expect(r).toHaveLength(2);
+    // The tail of reading 1 goes from its "nhờ" (word 8), not from the sentence start.
+    expect(r[0]).toMatchObject({ reason: 'retake', start: words[8]!.start, end: sentences[0]!.end });
+    expect(r[0]!.text.startsWith('nhờ đó chi hội')).toBe(true);
+    expect(r[1]).toMatchObject({ start: sentences[1]!.start, end: sentences[1]!.end });
+  });
+
+  it('does not treat a short shared phrase as a restart', () => {
+    const s = [sent(0, 'hôm qua tôi đi chợ mua rau', 0, 3, 0), sent(1, 'mua rau xong tôi về nhà nấu cơm', 4, 8, 6)];
+    expect(findRetakeRanges(s, wordsFor(s), OPTS)).toEqual([]);
+  });
+
   it('never calls a one-word sentence a retake', () => {
     const s = [sent(0, 'Vâng', 0, 1, 0), sent(1, 'Vâng tôi đồng ý', 1.5, 3, 1)];
     expect(findRetakeRanges(s, wordsFor(s), OPTS)).toEqual([]);
@@ -309,5 +338,31 @@ describe('snapEdges', () => {
   it('keeps an edge when there are no samples near it', () => {
     const out = snapEdges([{ start: 1.0, end: 1.5, reason: 'retake', text: 'x' }], [], 0.08);
     expect(out[0]).toEqual({ start: 1.0, end: 1.5, reason: 'retake', text: 'x' });
+  });
+});
+
+describe('findIsolatedUtterances', () => {
+  const w = (text: string, start: number, end: number): TimelineWord => ({ w: text, start, end, p: 1, trackIndex: 0, clipId: 'c' });
+  const s = (id: number, first: number, last: number, words: TimelineWord[]): Sentence => ({
+    id, start: words[first]!.start, end: words[last]!.end, text: words.slice(first, last + 1).map((x) => x.w).join(' '), firstWord: first, lastWord: last,
+  });
+  const OPT = { maxSec: 0.6, minGapSec: 0.5 };
+
+  it('finds a lone short word between long pauses (live: "Này" at 17.1 s)', () => {
+    const words = [w('cộng', 15.9, 16.1), w('đồng.', 16.1, 16.35), w('Này', 17.1, 17.5), w('Tại', 19.8, 20.1), w('tổ', 20.1, 20.3)];
+    const sentences = [s(0, 0, 1, words), s(1, 2, 2, words), s(2, 3, 4, words)];
+    expect(findIsolatedUtterances(words, sentences, OPT)).toEqual([{ start: 17.1, end: 17.5, reason: 'isolated', text: 'Này' }]);
+  });
+
+  it('keeps a lone word that is long or close to its neighbours, and multi-word sentences', () => {
+    const long = [w('a', 0, 1), w('Vânggg', 2, 2.9), w('b', 4, 4.2)];
+    expect(findIsolatedUtterances(long, [s(0, 0, 0, long), s(1, 1, 1, long), s(2, 2, 2, long)].slice(0, 3), OPT)
+      .filter((r) => r.text === 'Vânggg')).toEqual([]);
+    const close = [w('a', 0, 1), w('này', 1.2, 1.5), w('b', 2.5, 2.8)];
+    expect(findIsolatedUtterances(close, [s(0, 0, 0, close), s(1, 1, 1, close), s(2, 2, 2, close)], OPT)
+      .filter((r) => r.text === 'này')).toEqual([]);
+    const two = [w('a', 0, 1), w('ờ', 2, 2.2), w('thì', 2.2, 2.4), w('b', 4, 4.2)];
+    expect(findIsolatedUtterances(two, [s(0, 0, 0, two), s(1, 1, 2, two), s(2, 3, 3, two)], OPT)
+      .filter((r) => r.start === 2)).toEqual([]);
   });
 });

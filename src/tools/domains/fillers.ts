@@ -9,13 +9,16 @@ import { z } from 'zod';
 import type { ToolContext, ToolModule } from '../context.js';
 import { cached } from '../../analysis/cache.js';
 import { ffmpegMissingResult, findFfTool, runFf } from '../../analysis/ffmpeg.js';
-import { findFillerRanges, findRetakeRanges, snapEdges, type FillerRange } from '../../analysis/fillers.js';
+import { findFillerRanges, findIsolatedUtterances, findRetakeRanges, snapEdges, type FillerRange } from '../../analysis/fillers.js';
 import { loadFillerLexicon } from '../../analysis/fillers-vi.js';
 import { parseMetric, type FrameSample } from '../../analysis/roughcut.js';
 import { ENGINE_IDS } from '../../analysis/asr-engines.js';
 import type { SequenceClip } from '../../analysis/cleanup.js';
 import { isError, readSequence } from './cleanup.js';
 import { loadTranscript, type TranscriptArgs, type TranscriptPending } from './shorts.js';
+
+/** Longer than this, a single recognised word is almost surely swallowed speech. */
+const LONG_WORD_SEC = 1.5;
 
 export type FindFillersArgs = TranscriptArgs & {
   tiers?: Array<'A' | 'B'> | undefined;
@@ -93,6 +96,16 @@ export async function findFillersAndRetakes(
   if (lexicon.warning) warnings.push(lexicon.warning);
   let ranges: FillerRange[] = findFillerRanges(loaded.words, loaded.sentences, lexicon, { tiers, minPauseSec: args.minPauseMs / 1000 });
   if (args.retakes) ranges.push(...findRetakeRanges(loaded.sentences, loaded.words, { windowSec: 10, jaccard: 0.6 }));
+  // Narration only (no video): a lone short word between long pauses is a stray sound.
+  if (!hasVideo) ranges.push(...findIsolatedUtterances(loaded.words, loaded.sentences, { maxSec: 0.6, minGapSec: 0.5 }));
+  // A "word" lasting seconds means the recogniser swallowed speech, typically a
+  // re-read passage (live: Whisper stretched "như" over 9.18 s across a retake).
+  for (const w of loaded.words) {
+    if (w.end - w.start > LONG_WORD_SEC) {
+      const at = `${Math.floor(w.start / 60)}:${String(Math.floor(w.start % 60)).padStart(2, '0')}`;
+      warnings.push(`Nhận dạng giọng nói có thể đã bỏ sót lời quanh ${at} (từ "${w.w.trim()}" kéo dài ${(w.end - w.start).toFixed(1)} giây). Nghe lại đoạn này; nếu có câu đọc lặp, chạy lại với engine zipformer-68m.`);
+    }
+  }
   ranges.sort((a, b) => a.start - b.start || a.end - b.end);
 
   const found = [...ranges];

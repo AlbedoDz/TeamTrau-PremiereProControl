@@ -6,7 +6,7 @@
  */
 import type { ToolContext } from '../context.js';
 import { ffmpegMissingResult, findFfTool, type Interval } from '../../analysis/ffmpeg.js';
-import { planSilenceCuts, unionIntervals } from '../../analysis/cleanup.js';
+import { liveSegments, planSilenceCuts, unionIntervals } from '../../analysis/cleanup.js';
 import {
   analyseSilence,
   isError,
@@ -41,6 +41,17 @@ const MERGE_GAP_SEC = 0.4;
 const MIN_KEEP_SEC = 0.4;
 const MIN_PAUSE_MS = 150;
 const DIALOGUE_EFFECTS = ['DeNoise', 'Dynamics'];
+/**
+ * Cleaning a voice-over needs a verbatim transcript. Live, Whisper (built to return clean
+ * text) dropped a hesitation and merged two re-read passages, so 3 of 4 stumbles stayed in;
+ * Zipformer kept them. Used unless the caller names an engine.
+ */
+const VERBATIM_ENGINE = 'zipformer-68m';
+/**
+ * A kept piece this short with no recognised word in it is a stray sound, not speech:
+ * up to 0.6 s of sound plus the 0.1 s silence padding left on each side of it.
+ */
+const MAX_ISLAND_SEC = 0.6 + 2 * SILENCE_PADDING_SEC;
 
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 const failure = (error: unknown): StepOutcome => ({
@@ -56,6 +67,7 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
   let silenceCuts: Interval[] = [];
   let fillerRanges: Array<{ start: number; end: number; reason: string; text?: string }> = [];
   let merged: Interval[] = [];
+  let transcriptWords: Array<{ start: number; end: number }> = [];
   let copyId = '';
   let backupPath: string | undefined;
 
@@ -87,8 +99,15 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
       }
 
       if (args.cutFillers || args.cutRetakes) {
-        const transcript = await awaitTranscript(ctx, { ...args, sequenceId: read.sequenceId, dialogueTrackIndices: dialogueTracks }, 'Nhận dạng giọng nói');
+        let engine: string | undefined = args.engine ?? VERBATIM_ENGINE;
+        let transcript = await awaitTranscript(ctx, { ...args, engine, sequenceId: read.sequenceId, dialogueTrackIndices: dialogueTracks }, 'Nhận dạng giọng nói');
+        if ('success' in transcript && !args.engine && (transcript as { errorCode?: unknown }).errorCode === 'asr.engine_not_installed') {
+          warnings.push(`Chưa cài engine ${VERBATIM_ENGINE} (ghi đúng từng chữ), nên dùng engine mặc định; có thể sót tiếng ngập ngừng và câu đọc lặp. Cài bằng: premiere-pro-mcp --setup-asr --engine ${VERBATIM_ENGINE}`);
+          engine = undefined;
+          transcript = await awaitTranscript(ctx, { ...args, engine, sequenceId: read.sequenceId, dialogueTrackIndices: dialogueTracks }, 'Nhận dạng giọng nói');
+        }
         if ('success' in transcript) return failure(transcript.error);
+        transcriptWords = transcript.words;
         if (transcript.words.length === 0) {
           warnings.push('Transcript rỗng (không có lời thoại), nên chỉ cắt khoảng lặng.');
         } else {
@@ -96,7 +115,7 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
             sequenceId: read.sequenceId,
             dialogueTrackIndices: dialogueTracks,
             glossary: args.glossary,
-            engine: args.engine,
+            engine,
             tiers: args.fillerTiers,
             retakes: args.cutRetakes,
             minPauseMs: MIN_PAUSE_MS,
@@ -126,6 +145,16 @@ export async function workflowCleanVoiceover(ctx: ToolContext, args: CleanVoiceo
         ...silenceCuts,
         ...fillerRanges.map((r) => ({ start: r.start, end: r.end, duration: r.end - r.start })),
       ]);
+      // Safety net: a short kept piece between two cuts with no recognised word in it is a
+      // sound the recogniser dropped (live: a 0.5 s hesitation Whisper never transcribed).
+      const islands = transcriptWords.length === 0 || !snapshot
+        ? []
+        : liveSegments(merged, snapshot.endTime).filter((k) => k.end - k.start <= MAX_ISLAND_SEC
+          && !transcriptWords.some((w) => (w.start + w.end) / 2 >= k.start && (w.start + w.end) / 2 < k.end));
+      if (islands.length > 0) {
+        merged = unionIntervals([...merged, ...islands]);
+        fillerRanges.push(...islands.map((k) => ({ start: k.start, end: k.end, reason: 'island' })));
+      }
       summary.cuts = [
         ...silenceCuts.map((r) => ({ start: round3(r.start), end: round3(r.end), reason: 'silence' })),
         ...fillerRanges.map((r) => ({ start: r.start, end: r.end, reason: r.reason, ...(r.text !== undefined ? { text: r.text } : {}) })),

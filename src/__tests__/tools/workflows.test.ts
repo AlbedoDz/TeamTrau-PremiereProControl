@@ -333,6 +333,37 @@ describe('workflow_clean_voiceover', () => {
     qaSequence.mockResolvedValue({ success: true, findings: [] });
   });
 
+  it('transcribes with the verbatim engine (zipformer-68m) unless one is given', async () => {
+    await runTool('workflow_clean_voiceover', ctxWith(), {});
+    expect(loadTranscript.mock.calls[0][1]).toMatchObject({ engine: 'zipformer-68m' });
+    expect(findFillers.mock.calls[0][1]).toMatchObject({ engine: 'zipformer-68m' });
+    loadTranscript.mockClear();
+    await runTool('workflow_clean_voiceover', ctxWith(), { engine: 'whisper-turbo' });
+    expect(loadTranscript.mock.calls[0][1]).toMatchObject({ engine: 'whisper-turbo' });
+  });
+
+  it('falls back to the default engine with a warning when zipformer-68m is not installed', async () => {
+    loadTranscript
+      .mockResolvedValueOnce({ success: false, errorCode: 'asr.engine_not_installed', error: 'not installed' })
+      .mockResolvedValue(transcript());
+    const result: any = await runTool('workflow_clean_voiceover', ctxWith(), {});
+    expect(result.success).toBe(true);
+    expect(loadTranscript.mock.calls[1][1].engine).toBeUndefined();
+    expect(result.warnings.some((w: string) => /zipformer-68m/.test(w))).toBe(true);
+  });
+
+  it('also cuts a short kept piece with no recognised word in it (live: a dropped hesitation)', async () => {
+    // Silence 10-12 and 12.5-15 leave 12-12.5 kept; no word falls in it.
+    analyseSilence.mockResolvedValue({ silenceByMedia: new Map([['C:/m.wav', [{ start: 10, end: 12, duration: 2 }, { start: 12.5, end: 15, duration: 2.5 }]]]) });
+    loadTranscript.mockResolvedValue(transcript([{ w: 'a', start: 5, end: 5.3 }, { w: 'b', start: 20, end: 20.3 }]));
+    const result: any = await runTool('workflow_clean_voiceover', ctxWith(), {});
+    expect(result.summary.cuts.some((c: any) => c.reason === 'island')).toBe(true);
+    const ranges = removeRanges.mock.calls[0][1].ranges as Array<{ start: number; end: number }>;
+    // The island is folded into one cut with the silences around it.
+    // Silence cuts are padded and snapped to the 0.04 s frame grid (10.12-11.88, 12.6-14.88).
+    expect(ranges.some((r) => r.start <= 12.1 && r.end >= 14.8)).toBe(true);
+  });
+
   it('measures everything before duplicating and calls remove_ranges once with the union', async () => {
     const order: string[] = [];
     findFillers.mockImplementation(async () => { order.push('fillers'); return fillerResult; });

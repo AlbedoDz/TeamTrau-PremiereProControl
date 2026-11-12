@@ -78,6 +78,39 @@ describe('find_fillers_and_retakes', () => {
     expect(result.tiers).toEqual(['A', 'B']);
   });
 
+  describe('lone one-word utterances and swallowed speech (live fixes)', () => {
+    // "xong." then a lone "Này" with long pauses either side, then "tiếp tục".
+    const lone = [word('tôi', 0, 0.3), word('xong.', 0.32, 0.6), word('Này', 1.5, 1.9), word('tiếp', 3.0, 3.3), word('tục', 3.32, 3.6)];
+    const loneReady = {
+      ...ready,
+      words: lone,
+      sentences: [
+        { id: 0, start: 0, end: 0.6, text: 'tôi xong.', firstWord: 0, lastWord: 1 },
+        { id: 1, start: 1.5, end: 1.9, text: 'Này', firstWord: 2, lastWord: 2 },
+        { id: 2, start: 3.0, end: 3.6, text: 'tiếp tục', firstWord: 3, lastWord: 4 },
+      ],
+    };
+
+    it('cuts a lone short word between long pauses in a voice-over (no video)', async () => {
+      loadTranscript.mockResolvedValue(loneReady);
+      const result: any = await findFillersAndRetakes(ctxWith([clip()]), baseArgs);
+      expect(result.ranges.some((r: any) => r.reason === 'isolated' && r.text === 'Này')).toBe(true);
+    });
+
+    it('keeps it when the sequence has video (a lone "Vâng." can be an answer)', async () => {
+      loadTranscript.mockResolvedValue(loneReady);
+      const result: any = await findFillersAndRetakes(ctxWith([videoClip, clip()]), baseArgs);
+      expect(result.ranges.some((r: any) => r.reason === 'isolated')).toBe(false);
+    });
+
+    it('warns in Vietnamese when one recognised word lasts seconds', async () => {
+      // Live: Whisper stretched "như" over 9.18 s across a re-read passage.
+      loadTranscript.mockResolvedValue({ ...ready, words: [...words.slice(0, 4), word('như', 1.62, 4.0)] });
+      const result: any = await findFillersAndRetakes(ctxWith([clip()]), baseArgs);
+      expect(result.warnings.some((w: string) => /bỏ sót lời quanh 0:01.*"như".*2\.4 giây.*zipformer-68m/.test(w))).toBe(true);
+    });
+  });
+
   it('keeps an explicit tiers argument', async () => {
     const result: any = await findFillersAndRetakes(ctxWith([clip()]), { ...baseArgs, tiers: ['A'] });
     expect(result.tiers).toEqual(['A']);

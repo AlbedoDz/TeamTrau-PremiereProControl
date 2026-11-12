@@ -346,7 +346,9 @@
         'filler-A': 'từ ngập ngừng',
         'filler-B': 'từ câu giờ',
         'retake': 'câu vấp',
-        'silence': 'khoảng lặng'
+        'silence': 'khoảng lặng',
+        'isolated': 'tiếng lẻ',
+        'island': 'mẩu tiếng không có lời'
     };
 
     function describeSummary(s, lines, warnings) {

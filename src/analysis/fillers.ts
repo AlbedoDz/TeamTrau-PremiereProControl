@@ -12,7 +12,7 @@ export type { FillerLexicon } from './fillers-vi.js';
 export interface FillerRange {
   start: number;
   end: number;
-  reason: 'filler-A' | 'filler-B' | 'retake';
+  reason: 'filler-A' | 'filler-B' | 'retake' | 'isolated';
   text: string;
 }
 
@@ -128,13 +128,39 @@ export function findFillerRanges(
 }
 
 function sentenceTokens(sentence: Sentence, words: TimelineWord[]): string[] {
-  const out: string[] = [];
+  return sentenceTokenWords(sentence, words).map((x) => x.token);
+}
+
+/** Normalized tokens of a sentence, each with the index of the word it came from. */
+function sentenceTokenWords(sentence: Sentence, words: TimelineWord[]): Array<{ token: string; word: number }> {
+  const out: Array<{ token: string; word: number }> = [];
   const last = Math.min(sentence.lastWord, words.length - 1);
   for (let k = Math.max(sentence.firstWord, 0); k <= last; k++) {
     const t = normalizeToken(words[k]!.w);
-    if (t) out.push(t);
+    if (t) out.push({ token: t, word: k });
   }
   return out;
+}
+
+/** Fewest repeated words for a restart in the middle of a sentence to count. */
+const MIN_RESTART_TOKENS = 3;
+/** Share of the abandoned tail that the next sentence must repeat. */
+const MIN_RESTART_SHARE = 0.6;
+
+/**
+ * Where S1 was abandoned mid-sentence and S2 restarts from that point: the earliest
+ * token index p > 0 of S1 from which at least MIN_RESTART_TOKENS tokens repeat S2's
+ * opening and cover at least MIN_RESTART_SHARE of S1's tail. Live: "… thiết thực, nhờ đó
+ * chi hội đã đạt được nhiều thành tựu nổi bật như" followed by "Nhờ đó chi hội đã đạt
+ * được …" — S1 is not a prefix of S2, but its tail is.
+ */
+function restartPoint(a: string[], b: string[]): number | null {
+  for (let p = 1; p + MIN_RESTART_TOKENS <= a.length; p++) {
+    let k = 0;
+    while (p + k < a.length && k < b.length && a[p + k] === b[k]) k++;
+    if (k >= MIN_RESTART_TOKENS && k / (a.length - p) >= MIN_RESTART_SHARE) return p;
+  }
+  return null;
 }
 
 function isRetake(a: string[], b: string[], jaccard: number): boolean {
@@ -164,10 +190,54 @@ export function findRetakeRanges(
     const s1 = sentences[n]!;
     const s2 = sentences[n + 1]!;
     if (s2.start - s1.end > opts.windowSec) continue;
-    if (isRetake(sentenceTokens(s1, words), sentenceTokens(s2, words), opts.jaccard)) {
+    const a = sentenceTokenWords(s1, words);
+    const at = a.map((x) => x.token);
+    const b = sentenceTokens(s2, words);
+    // A restart in the middle is checked before the word-overlap rule: overlap alone would
+    // drop the whole first sentence, including the words before the restart that the
+    // speaker never repeated.
+    const fullPrefix = at.length >= 2 && at.length <= b.length && at.every((t, k) => t === b[k]);
+    const p = fullPrefix ? null : restartPoint(at, b);
+    if (p === null && isRetake(at, b, opts.jaccard)) {
       ranges.push({ start: s1.start, end: s1.end, reason: 'retake', text: s1.text });
+      continue;
+    }
+    if (p !== null) {
+      const from = a[p]!.word;
+      ranges.push({
+        start: words[from]!.start,
+        end: s1.end,
+        reason: 'retake',
+        text: words.slice(from, Math.min(s1.lastWord, words.length - 1) + 1).map((w) => w.w).join(' '),
+      });
     }
   }
+  return ranges;
+}
+
+/**
+ * One-word utterances standing alone between long pauses: in a read voice-over these
+ * are stray sounds, whatever the word (live, Zipformer heard a hesitation as "Này",
+ * a tier C word that the lexicon never cuts). Only for narration: in dialogue a lone
+ * "Vâng." is an answer, so the caller decides when to use this.
+ */
+export function findIsolatedUtterances(
+  words: TimelineWord[],
+  sentences: Sentence[],
+  opts: { maxSec: number; minGapSec: number },
+): FillerRange[] {
+  const ranges: FillerRange[] = [];
+  sentences.forEach((s, n) => {
+    const toks = sentenceTokenWords(s, words);
+    if (toks.length !== 1) return;
+    const w = words[toks[0]!.word]!;
+    if (w.end - w.start > opts.maxSec) return;
+    const before = n > 0 ? w.start - sentences[n - 1]!.end : Infinity;
+    const after = n + 1 < sentences.length ? sentences[n + 1]!.start - w.end : Infinity;
+    if (before >= opts.minGapSec && after >= opts.minGapSec) {
+      ranges.push({ start: w.start, end: w.end, reason: 'isolated', text: w.w });
+    }
+  });
   return ranges;
 }
 
