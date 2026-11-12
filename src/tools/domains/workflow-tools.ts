@@ -68,7 +68,7 @@ export const workflowToolsTools: ToolModule[] = [
       targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90).'),
       aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe (default "16:9").'),
       captionStyle: z.enum(['none', 'clean', 'pop', 'karaoke']).default('none').describe('Burned-in captions from the transcript (default none).'),
-      audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds. Not supported yet: values above 0 are ignored with a warning (default 0).'),
+      audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds: the next segment\'s audio starts this much before its picture (default 0 = straight cuts).'),
       dryRun: z.boolean().default(false).describe('Only plan and return the segments; create and change nothing.'),
       backup: backupArg,
     }),

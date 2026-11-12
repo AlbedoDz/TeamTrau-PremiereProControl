@@ -47,7 +47,7 @@
             { "value": "karaoke", "label": "Karaoke" }
           ]
         },
-        { "key": "audioLeadSec", "label": "J-cut: âm thanh vào sớm (giây)", "type": "number", "default": 0, "min": 0, "max": 2, "hidden": true }
+        { "key": "audioLeadSec", "label": "J-cut: âm thanh vào sớm (giây, 0 = cắt thẳng)", "type": "number", "default": 0, "min": 0, "max": 2 }
       ]
     },
     {

@@ -16,6 +16,7 @@ jest.mock('../../tools/domains/cleanup.js', () => ({
   readSequence: jest.fn(),
   removeRanges: jest.fn(),
   normalizeLoudness: jest.fn(),
+  addAudioCrossfades: jest.fn(),
 }));
 jest.mock('../../tools/domains/sequence.js', () => ({
   ...jest.requireActual('../../tools/domains/sequence.js'),
@@ -40,6 +41,7 @@ const addAlphaCaptions = shorts.addAlphaCaptions as jest.Mock;
 const readSequence = cleanup.readSequence as jest.Mock;
 const removeRanges = cleanup.removeRanges as jest.Mock;
 const normalizeLoudness = cleanup.normalizeLoudness as jest.Mock;
+const addAudioCrossfades = cleanup.addAudioCrossfades as jest.Mock;
 const duplicateSequence = sequence.duplicateSequence as jest.Mock;
 const ensureBackup = editing.ensureBackup as jest.Mock;
 const qaSequence = editing.qaSequence as jest.Mock;
@@ -87,7 +89,7 @@ describe('build_recap', () => {
   it('duplicates once, then removes ranges once with invert and exactly the segments', async () => {
     const result = await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), dialogueTrackIndices: [0] });
 
-    expect(result).toMatchObject({ success: true, sequenceId: 'new', durationSec: 20, verified: true, audioLeadSupported: false });
+    expect(result).toMatchObject({ success: true, sequenceId: 'new', durationSec: 20, verified: true, audioLeadSupported: true });
     expect(duplicateSequence).toHaveBeenCalledTimes(1);
     expect(duplicateSequence).toHaveBeenCalledWith(expect.anything(), 'src', 'Recap');
     expect(removeRanges).toHaveBeenCalledTimes(1);
@@ -208,12 +210,36 @@ describe('build_recap', () => {
     expect(loadTranscript).not.toHaveBeenCalled();
   });
 
-  it('ignores audioLeadSec with a warning and still builds', async () => {
-    const result = await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), audioLeadSec: 0.5 });
+  it('makes J-cuts and puts the audio crossfades on the new audio joins', async () => {
+    const ctx = ctxWith();
+    const exec = ctx.bridge.executeScript as jest.Mock;
+    exec.mockImplementation(async (script: string) =>
+      script.includes('unlinkSelection') ? { success: true, joins: [9, 22.32], applied: 2, skipped: 0 } : { success: true, names: ['Tap 1'] });
+    addAudioCrossfades.mockResolvedValue({ success: true, joinsPlaced: 2 });
+    const result = await run(ctx, { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), audioLeadSec: 0.5 });
     expect(result.success).toBe(true);
-    expect(result.audioLeadSupported).toBe(false);
-    expect(result.warnings.some((w: string) => w.includes('J-cut'))).toBe(true);
-    expect(removeRanges).toHaveBeenCalledTimes(1);
+    expect(result.audioLeadSupported).toBe(true);
+    // No fades on the old joins: they would sit where the audio no longer joins.
+    expect(removeRanges.mock.calls[0][1]).toMatchObject({ crossfadeMs: 0 });
+    const jscript = exec.mock.calls.map((c) => c[0] as string).find((x) => x.includes('unlinkSelection'))!;
+    expect(jscript).toContain('Math.round(0.5 * fps) / fps');
+    expect(addAudioCrossfades).toHaveBeenCalledWith(expect.anything(), 'new', [9, 22.32], 1, 0.02);
+    expect(result.warnings.some((w: string) => w.includes('J-cut'))).toBe(false);
+  });
+
+  it('keeps straight cuts with a warning when the J-cut script fails', async () => {
+    const ctx = ctxWith();
+    (ctx.bridge.executeScript as jest.Mock).mockImplementation(async (script: string) =>
+      script.includes('unlinkSelection') ? { success: false, error: 'boom' } : { success: true, names: ['Tap 1'] });
+    const result = await run(ctx, { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), audioLeadSec: 0.5 });
+    expect(result.success).toBe(true);
+    expect(result.warnings.some((w: string) => /J-cut.*boom/.test(w))).toBe(true);
+  });
+
+  it('keeps the 30 ms crossfades in remove_ranges when there is no J-cut', async () => {
+    await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint() });
+    expect(removeRanges.mock.calls[0][1]).toMatchObject({ crossfadeMs: 30 });
+    expect(addAudioCrossfades).not.toHaveBeenCalled();
   });
 
   it('appends (2), (3) when the name is taken and keeps accents', async () => {

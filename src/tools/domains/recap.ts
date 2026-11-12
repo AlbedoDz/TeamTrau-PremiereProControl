@@ -22,8 +22,8 @@ import {
   type RecapSegment,
   type ScoredShot,
 } from '../../analysis/recap.js';
-import type { SequenceClip } from '../../analysis/cleanup.js';
-import { isError, normalizeLoudness, readSequence, removeRanges, type SequenceSnapshot } from './cleanup.js';
+import { crossfadeFrames, type SequenceClip } from '../../analysis/cleanup.js';
+import { addAudioCrossfades, isError, normalizeLoudness, readSequence, removeRanges, type SequenceSnapshot } from './cleanup.js';
 import { ensureBackup, qaSequence } from './editing.js';
 import { duplicateSequence } from './sequence.js';
 import { uniqueSequenceName } from '../workflows/steps.js';
@@ -291,7 +291,85 @@ export interface BuildRecapResult {
 }
 
 /** J-cut placement (audio starting before its picture) is not implemented: Task 1's spike was deferred. */
-const JCUT_SUPPORTED = false;
+/** J-cuts verified live on Premiere 25.6.3 (5 of 5 joins exact, no gaps, sync kept). */
+const JCUT_SUPPORTED = true;
+
+/**
+ * J-cut every join on the lowest video track that has clips: unlink the clips on each
+ * side, end the outgoing audio `lead` early and start the incoming audio `lead` early from
+ * earlier source material. The lead is whole frames. A join is skipped when the outgoing
+ * audio is too short or the incoming media has too little before its in-point.
+ * Returns the new audio joins.
+ */
+async function applyJCuts(
+  ctx: ToolContext,
+  sequenceId: string,
+  leadSec: number,
+): Promise<{ joins: number[]; applied: number; skipped: number } | { error: string }> {
+  const script = `
+    try {
+      var seq = __findSequence(${JSON.stringify(sequenceId)});
+      if (!seq) return JSON.stringify({ success: false, error: "Sequence not found" });
+      var fps = seq.timebase ? (254016000000 / parseInt(seq.timebase, 10)) : 30;
+      var frame = 1 / fps;
+      var lead = Math.round(${leadSec} * fps) / fps;
+      function at(t) { var x = new Time(); x.seconds = t; return x; }
+      function clipAt(track, edge, t) {
+        for (var i = 0; i < track.clips.numItems; i++) {
+          var c = track.clips[i];
+          if (Math.abs((edge === "end" ? c.end.seconds : c.start.seconds) - t) < frame / 2) return c;
+        }
+        return null;
+      }
+      var video = null;
+      for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+        if (seq.videoTracks[vt].clips.numItems > 0) { video = seq.videoTracks[vt]; break; }
+      }
+      if (!video) return JSON.stringify({ success: false, error: "No video clips" });
+      var joins = [], applied = 0, skipped = 0;
+      for (var k = 1; k < video.clips.numItems; k++) {
+        var vPrev = video.clips[k - 1], vNext = video.clips[k];
+        var J = vNext.start.seconds;
+        if (Math.abs(vPrev.end.seconds - J) > frame / 2) continue;
+        var pairs = [];
+        for (var t = 0; t < seq.audioTracks.numTracks; t++) {
+          var aPrev = clipAt(seq.audioTracks[t], "end", J), aNext = clipAt(seq.audioTracks[t], "start", J);
+          if (aPrev && aNext) pairs.push([aPrev, aNext]);
+        }
+        var ok = pairs.length > 0;
+        for (var p = 0; p < pairs.length; p++) {
+          if (pairs[p][0].end.seconds - pairs[p][0].start.seconds <= lead + frame) ok = false;
+          if (pairs[p][1].inPoint.seconds < lead) ok = false;
+        }
+        if (!ok) { skipped++; continue; }
+        for (var s1 = 0; s1 < video.clips.numItems; s1++) video.clips[s1].setSelected(0, 1);
+        for (var s2 = 0; s2 < seq.audioTracks.numTracks; s2++) {
+          for (var s3 = 0; s3 < seq.audioTracks[s2].clips.numItems; s3++) seq.audioTracks[s2].clips[s3].setSelected(0, 1);
+        }
+        vPrev.setSelected(1, 1);
+        vNext.setSelected(1, 1);
+        for (var q = 0; q < pairs.length; q++) { pairs[q][0].setSelected(1, 1); pairs[q][1].setSelected(1, 1); }
+        seq.unlinkSelection();
+        for (var r = 0; r < pairs.length; r++) {
+          var outgoing = pairs[r][0], incoming = pairs[r][1];
+          var oOut = outgoing.outPoint.seconds, iIn = incoming.inPoint.seconds;
+          outgoing.end = at(J - lead);
+          outgoing.outPoint = at(oOut - lead);
+          incoming.inPoint = at(iIn - lead);
+          incoming.start = at(J - lead);
+        }
+        joins.push(Math.round((J - lead) * 1000) / 1000);
+        applied++;
+      }
+      return JSON.stringify({ success: true, joins: joins, applied: applied, skipped: skipped });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: e.toString() });
+    }
+  `;
+  const r: any = await ctx.bridge.executeScript(script);
+  if (!r || r.success === false) return { error: String(r?.error ?? 'J-cut script returned nothing') };
+  return { joins: r.joins ?? [], applied: Number(r.applied ?? 0), skipped: Number(r.skipped ?? 0) };
+}
 const RECAP_CROSSFADE_MS = 30;
 const RECAP_MERGE_GAP_SEC = 0.4;
 const RECAP_MIN_KEEP_SEC = 0.4;
@@ -408,9 +486,7 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   if (chopped.length > 0) {
     warnings.push(`music-chopped: ${chopped.length} clip audio dài trên ${MUSIC_MIN_SEC} giây (nhạc nền) bị cắt thành nhiều đoạn; nhạc sẽ bị ngắt quãng. Cân nhắc đặt nhạc riêng lên recap sau khi dựng.`);
   }
-  if (args.audioLeadSec > 0) {
-    warnings.push('Chưa hỗ trợ J-cut (âm thanh vào trước hình): audioLeadSec bị bỏ qua, recap dùng cắt thẳng có crossfade âm thanh.');
-  }
+  const jcut = JCUT_SUPPORTED && args.audioLeadSec > 0;
   const planned = round3(segments.reduce((sum, s) => sum + (s.end - s.start), 0));
 
   if (args.dryRun) {
@@ -439,7 +515,8 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
     sequenceId,
     ranges: segments.map((s) => ({ start: s.start, end: s.end })),
     invert: true,
-    crossfadeMs: RECAP_CROSSFADE_MS,
+    // With a J-cut the audio joins move; fades go on the new joins afterwards.
+    crossfadeMs: jcut ? 0 : RECAP_CROSSFADE_MS,
     mergeGapSec: RECAP_MERGE_GAP_SEC,
     minKeepSec: RECAP_MIN_KEEP_SEC,
     dryRun: false,
@@ -448,6 +525,23 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   if (!cut.success) return fail(cut.error ?? 'Không cắt được các khoảng ngoài segments.', withBackup({ failedStep: 'remove_ranges', sequenceId }));
   if (cut.warning) warnings.push(cut.warning);
   const timeMap = mapAfterRemoval([...(cut.removed ?? [])].sort((a, b) => a.start - b.start));
+
+  // 2b. J-cut: the next segment's audio starts audioLeadSec before its picture.
+  if (jcut) {
+    const j = await applyJCuts(ctx, sequenceId, args.audioLeadSec);
+    if ('error' in j) {
+      warnings.push(`Không tạo được J-cut (${j.error}); recap giữ cắt thẳng.`);
+    } else {
+      if (j.skipped > 0) warnings.push(`Bỏ qua J-cut ở ${j.skipped} mối nối (đoạn âm thanh quá ngắn hoặc file nguồn không đủ phần trước điểm vào).`);
+      const frames = crossfadeFrames(RECAP_CROSSFADE_MS, snapshot.frameDuration);
+      if (j.joins.length > 0 && frames > 0) {
+        const fade: any = await addAudioCrossfades(ctx, sequenceId, j.joins, frames, snapshot.frameDuration / 2);
+        if (!fade || fade.success === false || !(fade.joinsPlaced >= j.joins.length)) {
+          warnings.push(`Chỉ đặt được ${fade?.joinsPlaced ?? 0}/${j.joins.length} crossfade âm thanh ở các mối nối J-cut.`);
+        }
+      }
+    }
+  }
 
   // 3. 9:16 reframe of the whole cut copy.
   if (vertical) {
@@ -526,7 +620,7 @@ export const recapTools: ToolModule[] = [
   {
     name: 'build_recap',
     description:
-      'Builds a recap sequence from the segments of plan_recap. Never edits the original: backs up the project, duplicates the sequence, keeps exactly the given segments with one remove_ranges call (30 ms audio crossfades), optionally Auto Reframes to 9:16 (aspect "9:16"), burns transcript captions (captionStyle clean/pop/karaoke; needs transcribe_sequence done), normalises loudness to targetLufs and runs qa_sequence, then reads the result back (verified). Pass the segments and fingerprint from plan_recap unchanged; a changed sequence is refused. Warns with "music-chopped" when a long audio clip (background music) would be cut into 3+ pieces. audioLeadSec (J-cut) is not supported yet: the result has audioLeadSupported false and builds hard cuts. The new sequence name gets " (2)", " (3)" ... when taken. dryRun=true only validates and reports the planned length.',
+      'Builds a recap sequence from the segments of plan_recap. Never edits the original: backs up the project, duplicates the sequence, keeps exactly the given segments with one remove_ranges call (30 ms audio crossfades), optionally Auto Reframes to 9:16 (aspect "9:16"), burns transcript captions (captionStyle clean/pop/karaoke; needs transcribe_sequence done), normalises loudness to targetLufs and runs qa_sequence, then reads the result back (verified). Pass the segments and fingerprint from plan_recap unchanged; a changed sequence is refused. Warns with "music-chopped" when a long audio clip (background music) would be cut into 3+ pieces. audioLeadSec > 0 makes a J-cut at every join (the audio of the next segment starts that much before its picture, in whole frames; joins without enough audio or source handle are skipped with a warning). The new sequence name gets " (2)", " (3)" ... when taken. dryRun=true only validates and reports the planned length.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as plan_recap. Also the tracks loudness is applied to.'),
@@ -543,7 +637,7 @@ export const recapTools: ToolModule[] = [
       name: z.string().min(1).describe('Name of the new sequence.'),
       aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe; "16:9" (default) keeps the source frame.'),
       captionStyle: z.enum(['none', 'clean', 'pop', 'karaoke']).default('none').describe('Burned-in alpha captions from the transcript. Default none.'),
-      audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds. Not supported yet: values above 0 are ignored with a warning.'),
+      audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds (default 0 = straight cuts). Rounded to whole frames.'),
       targetLufs: z.number().min(-30).max(-6).default(-14).describe('Loudness target (default -14).'),
       dryRun: z.boolean().default(false).describe('Only validate and report the planned length; changes nothing.'),
       backup: z.boolean().default(true).describe('Back up the project first (default true).'),

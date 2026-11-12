@@ -395,7 +395,7 @@ export interface RemoveRangesResult {
 /** How far a computed join may sit from the real (frame-snapped) clip start it names. */
 const JOIN_SNAP_SEC = 0.25;
 
-async function addAudioCrossfades(ctx: ToolContext, sequenceId: string, joins: number[], frames: number, tolerance: number): Promise<any> {
+export async function addAudioCrossfades(ctx: ToolContext, sequenceId: string, joins: number[], frames: number, tolerance: number): Promise<any> {
   const script = `
     try {
       app.enableQE();
