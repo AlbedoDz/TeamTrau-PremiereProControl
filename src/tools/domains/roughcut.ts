@@ -249,6 +249,7 @@ export async function assembleRoughCut(
   if (placed?.success === false || failures.length) {
     return { success: false, error: `${failures.length || 'Some'} shot(s) could not be placed.`, failures, backupPath, ...summary };
   }
+  const gaps = await closeFrameGaps(ctx, before.sequenceId);
 
   const after = await readSequence(ctx, before.sequenceId);
   if (isError(after)) return { success: false, error: `Shots were placed but the result could not be re-read: ${after.error}`, backupPath, ...summary };
@@ -262,8 +263,50 @@ export async function assembleRoughCut(
     backupPath,
     ...summary,
     videoTrackEndsAt: Math.round(placedEnd * 1000) / 1000,
+    ...('error' in gaps ? { gapWarning: `One-frame gaps between shots could not be closed: ${gaps.error}` } : { frameGapsClosed: gaps.closed }),
     ...(verified ? {} : { warning: `The video track ends at ${placedEnd}s but the cut should end at ${endsAt}s. Check for locked tracks or clips that were not placed.` }),
   };
+}
+
+/**
+ * Closes gaps of up to two frames between neighbouring clips by extending the earlier clip.
+ * A source at another frame rate (30 fps footage on a 25 fps timeline) lands its out-point on
+ * its own frame grid, and Premiere rounds the timeline end down: live, 4 of 40 beat-cut shots
+ * left a one-frame black flash. Only for sequences this tool just built.
+ */
+export async function closeFrameGaps(ctx: ToolContext, sequenceId: string): Promise<{ closed: number } | { error: string }> {
+  const r: any = await ctx.bridge.executeScript(`
+    // roughcut:close_gaps
+    try {
+      var seq = __findSequence(${JSON.stringify(sequenceId)});
+      if (!seq) return JSON.stringify({ success: false, error: "Sequence not found" });
+      var fps = seq.timebase ? (254016000000 / parseInt(seq.timebase, 10)) : 30;
+      var frame = 1 / fps, closed = 0;
+      function at(t) { var x = new Time(); x.seconds = t; return x; }
+      function pass(tracks) {
+        for (var t = 0; t < tracks.numTracks; t++) {
+          var clips = tracks[t].clips;
+          for (var i = 0; i + 1 < clips.numItems; i++) {
+            var cur = clips[i], next = clips[i + 1];
+            var gap = next.start.seconds - cur.end.seconds;
+            if (gap <= frame / 4 || gap > frame * 2.5) continue;
+            var target = Math.round(next.start.seconds * fps) / fps;
+            var out = cur.outPoint.seconds;
+            cur.end = at(target);
+            if (Math.abs(cur.outPoint.seconds - out) < frame / 4) cur.outPoint = at(out + gap);
+            closed++;
+          }
+        }
+      }
+      pass(seq.videoTracks);
+      pass(seq.audioTracks);
+      return JSON.stringify({ success: true, closed: closed });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: e.toString() });
+    }
+  `);
+  if (!r || r.success === false) return { error: String(r?.error ?? 'close_gaps returned nothing') };
+  return { closed: Number(r.closed ?? 0) };
 }
 
 // -------------------------------------------------------------- declarations

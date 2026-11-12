@@ -13,7 +13,7 @@ import { analyseRhythm, envelopeFromSamples, parseRmsSamples, type Rhythm } from
 import { assignShots, cutSlots } from '../../analysis/beatcut.js';
 import { bestWindows, type Candidate } from '../../analysis/roughcut.js';
 import { backupProject, BACKUP_FAILED_HINT, isError, readSequence } from './cleanup.js';
-import { ensureProjectItems, listFootage, scoreAll } from './roughcut.js';
+import { closeFrameGaps, ensureProjectItems, listFootage, scoreAll } from './roughcut.js';
 
 const ENVELOPE_FILTER = 'aresample=22050,asetnsamples=n=221:p=0,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-';
 
@@ -170,6 +170,7 @@ export async function assembleBeatCut(
   if (placed?.success === false || failures.length) {
     return { success: false, error: `${failures.length || 'Some'} item(s) could not be placed.`, failures, backupPath, ...summary };
   }
+  const gaps = await closeFrameGaps(ctx, before.sequenceId);
 
   const after = await readSequence(ctx, before.sequenceId);
   if (isError(after)) return { success: false, error: `Items were placed but the result could not be re-read: ${after.error}`, backupPath, ...summary };
@@ -183,6 +184,7 @@ export async function assembleBeatCut(
     backupPath,
     ...summary,
     videoTrackEndsAt: round(videoEnd),
+    ...('error' in gaps ? { gapWarning: `One-frame gaps between shots could not be closed: ${gaps.error}` } : { frameGapsClosed: gaps.closed }),
     ...(verified ? {} : { verificationWarning: `The video track ends at ${videoEnd}s but the cut should end at ${endsAt}s. Check for locked tracks or items that were not placed.` }),
   };
 }
