@@ -664,6 +664,11 @@ describe('workflow_shorts', () => {
     expect(buildShort.mock.calls[0][1]).toMatchObject({ sequenceId: 'src', name: 'Tap 1 - short 1' });
   });
 
+  it('forwards caption options to build_short', async () => {
+    await runTool('workflow_shorts', ctxWith(), { count: 1, captionStyle: 'highlight', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'small' });
+    expect(buildShort.mock.calls[0][1]).toMatchObject({ captionStyle: 'highlight', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'small' });
+  });
+
   it('dryRun builds nothing', async () => {
     const result = await runTool('workflow_shorts', ctxWith(), { count: 2, dryRun: true });
     expect(buildShort).not.toHaveBeenCalled();
@@ -736,6 +741,11 @@ describe('workflow_recap', () => {
     buildRecap.mockResolvedValue({ success: true, sequenceId: 'rc', durationSec: 17.03, verified: true, warnings: [], audioLeadSupported: false });
     const result = await runTool('workflow_recap', ctxWith(), { minSec: 10, maxSec: 17 });
     expect(result.summary.verified).toBe(true);
+  });
+
+  it('forwards caption options to build_recap', async () => {
+    await runTool('workflow_recap', ctxWith(), { captionStyle: 'minimal', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'large' });
+    expect(buildRecap.mock.calls[0][1]).toMatchObject({ captionStyle: 'minimal', captionAccent: '#22D3EE', captionPosition: 'middle', captionSize: 'large' });
   });
 
   it('dryRun plans only', async () => {

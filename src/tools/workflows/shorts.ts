@@ -4,6 +4,7 @@
  * sequence, and when one fails the earlier ones are kept.
  */
 import type { ToolContext } from '../context.js';
+import type { CaptionPosition, CaptionSize, CaptionStyleId } from '../../analysis/caption-looks.js';
 import { isError } from '../domains/cleanup.js';
 import { ensureBackup } from '../domains/editing.js';
 import { buildShort, findHighlightCandidates, type TranscriptArgs } from '../domains/shorts.js';
@@ -13,7 +14,10 @@ export interface ShortsArgs extends TranscriptArgs {
   count: number;
   minSec: number;
   maxSec: number;
-  captionStyle: 'clean' | 'pop' | 'karaoke';
+  captionStyle: CaptionStyleId;
+  captionAccent?: string | undefined;
+  captionPosition?: CaptionPosition | undefined;
+  captionSize?: CaptionSize | undefined;
   dryRun: boolean;
   backup: boolean;
 }
@@ -166,6 +170,9 @@ export async function workflowShorts(ctx: ToolContext, args: ShortsArgs): Promis
         endSentenceId: pick.endSentenceId,
         name,
         captionStyle: args.captionStyle,
+        captionAccent: args.captionAccent,
+        captionPosition: args.captionPosition,
+        captionSize: args.captionSize,
         targetLufs: SHORT_LUFS,
         detectFaces: false,
         dryRun: false,

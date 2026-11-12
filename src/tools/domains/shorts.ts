@@ -38,7 +38,9 @@ import { resolveEngine } from '../../analysis/asr-config.js';
 import { ENGINE_IDS, usesZipformer } from '../../analysis/asr-engines.js';
 import { restoreCasing } from '../../analysis/casing.js';
 import { asrStatus } from '../../setup/asr.js';
-import { applyCaptionOverrides, groupCaptions, safeFileName, SAFE_AREA } from '../../analysis/captions.js';
+import { applyCaptionOverrides, groupCaptions, safeFileName } from '../../analysis/captions.js';
+import { ASPECT_RATIOS, CAPTION_STYLE_IDS, captionOptionsFrom, resolveLook, type CaptionOptions, type CaptionPosition, type CaptionSize, type CaptionStyleId } from '../../analysis/caption-looks.js';
+import { captionOptionFields } from './caption-preview.js';
 import { isError, normalizeLoudness, readSequence, uniquePaths, type SequenceSnapshot } from './cleanup.js';
 import { ensureBackup, qaSequence } from './editing.js';
 import { importMedia } from './media.js';
@@ -450,7 +452,10 @@ interface BuildShortArgs extends TranscriptArgs {
   startSentenceId: number;
   endSentenceId: number;
   name: string;
-  captionStyle: 'clean' | 'pop' | 'karaoke';
+  captionStyle: CaptionStyleId;
+  captionAccent?: string | undefined;
+  captionPosition?: CaptionPosition | undefined;
+  captionSize?: CaptionSize | undefined;
   captions?: Array<{ start: number; end: number; text: string }> | undefined;
   font?: string | undefined;
   targetLufs: number;
@@ -668,12 +673,12 @@ export async function reframeToVertical(
   };
 }
 
-export type CaptionStyle = 'clean' | 'pop' | 'karaoke';
+export type CaptionStyle = CaptionStyleId;
 
 /** Renders the caption groups to a ProRes 4444 alpha .mov under the renders folder; throws on failure. */
 async function renderCaptionFile(opts: {
   groups: unknown[];
-  style: CaptionStyle;
+  caption: CaptionOptions;
   width: number;
   height: number;
   fps: number;
@@ -685,15 +690,14 @@ async function renderCaptionFile(opts: {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
   const outPath = join(renders, `${safeFileName(opts.name)}-${stamp}.mov`);
   await mkdir(renders, { recursive: true });
+  const { look } = resolveLook(opts.caption, opts.width, opts.height);
   const rendered = await runSidecar<{ path?: string; frames?: number }>('captions', {
     groups: opts.groups,
-    style: opts.style,
+    look: opts.font ? { ...look, font: opts.font } : look,
     width: opts.width,
     height: opts.height,
     fps: opts.fps,
     duration: opts.duration,
-    ...(opts.font ? { font: opts.font } : {}),
-    safeArea: SAFE_AREA,
     outPath,
   });
   return rendered.path ?? outPath;
@@ -728,7 +732,7 @@ export async function addAlphaCaptions(
   ctx: ToolContext,
   sequenceId: string,
   words: TimelineWord[],
-  style: CaptionStyle,
+  caption: CaptionOptions,
   timeMap: (t: number) => number | null,
 ): Promise<{ ok: true; warnings?: string[] } | { error: string }> {
   const snapshot = await readSequence(ctx, sequenceId);
@@ -744,16 +748,24 @@ export async function addAlphaCaptions(
     const end = timeMap(word.end);
     mapped.push({ w: word.w, start, end: end !== null && end > start ? end : start + Math.max(0.05, word.end - word.start) });
   }
-  const groups = groupCaptions(mapped, 0);
+  const width = Math.round(Number(probe.frameSizeHorizontal));
+  const height = Math.round(Number(probe.frameSizeVertical));
+  let groups;
+  try {
+    const { grouping } = resolveLook(caption, width, height);
+    groups = groupCaptions(mapped, 0, grouping.maxWords, grouping.maxChars);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
   const warnings: string[] = [];
   if (groups.length === 0) warnings.push('No words fall in the sequence, so the caption track is empty.');
   let captionFile: string;
   try {
     captionFile = await renderCaptionFile({
       groups,
-      style,
-      width: Math.round(Number(probe.frameSizeHorizontal)),
-      height: Math.round(Number(probe.frameSizeVertical)),
+      caption,
+      width,
+      height,
       fps: round3(1 / snapshot.frameDuration),
       duration: round3(snapshot.endTime),
       name: snapshot.sequenceName,
@@ -807,7 +819,16 @@ export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promis
   const end = round6(Math.ceil(last.end / fd - 1e-6) * fd);
   const durationSec = round3(end - start);
   const inRange = loaded.words.filter((w) => w.start >= start && w.start < end);
-  const captions = applyCaptionOverrides(groupCaptions(inRange, start), args.captions ?? []);
+  const caption = captionOptionsFrom(args);
+  // Grouping depends only on the frame shape; a dry run has no probe, so use the 9:16 target at a nominal size.
+  const target = ASPECT_RATIOS['9:16'];
+  let grouping;
+  try {
+    grouping = resolveLook(caption, target.num * 120, target.den * 120).grouping;
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const captions = applyCaptionOverrides(groupCaptions(inRange, start, grouping.maxWords, grouping.maxChars), args.captions ?? []);
   if (args.dryRun) {
     return { success: true, dryRun: true, start, end, durationSec, name: args.name, captions, warnings };
   }
@@ -829,7 +850,7 @@ export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promis
   try {
     captionFile = await renderCaptionFile({
       groups: captions,
-      style: args.captionStyle,
+      caption,
       width,
       height,
       fps: round3(1 / fd),
@@ -1003,7 +1024,8 @@ export const shortsTools: ToolModule[] = [
       startSentenceId: z.number().int().min(0).describe('Id of the first sentence of the short.'),
       endSentenceId: z.number().int().min(0).describe('Id of the last sentence of the short (inclusive).'),
       name: z.string().min(1).describe('Name of the new sequence. Any characters are kept; the caption file name is made safe.'),
-      captionStyle: z.enum(['clean', 'pop', 'karaoke']).default('clean').describe('Caption look (default clean).'),
+      captionStyle: z.enum(CAPTION_STYLE_IDS as [CaptionStyleId, ...CaptionStyleId[]]).default('clean').describe('Caption look: clean, pop, karaoke, highlight or minimal (default clean).'),
+      ...captionOptionFields,
       captions: z.array(z.object({ start: z.number(), end: z.number(), text: z.string() })).optional()
         .describe('Caption text overrides from a dryRun, matched by start/end (seconds from 0 of the short). Empty text removes that caption.'),
       font: z.string().optional().describe('Path to a .ttf font. Defaults to Be Vietnam Pro.'),

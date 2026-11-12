@@ -17,6 +17,21 @@ export interface CaptionOptions {
   size?: CaptionSize;
 }
 
+/** The caption options out of a tool's flat caption* arguments; unset ones are left out. */
+export function captionOptionsFrom(args: {
+  captionStyle: CaptionStyleId;
+  captionAccent?: string | undefined;
+  captionPosition?: CaptionPosition | undefined;
+  captionSize?: CaptionSize | undefined;
+}): CaptionOptions {
+  return {
+    style: args.captionStyle,
+    ...(args.captionAccent ? { accent: args.captionAccent } : {}),
+    ...(args.captionPosition ? { position: args.captionPosition } : {}),
+    ...(args.captionSize ? { size: args.captionSize } : {}),
+  };
+}
+
 export const ACCENT_SWATCHES: readonly string[] = ['#FFD400', '#FF3B5C', '#22D3EE', '#4ADE80', '#A855F7'];
 export const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 

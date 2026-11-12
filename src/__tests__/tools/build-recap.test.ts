@@ -185,6 +185,13 @@ describe('build_recap', () => {
     expect(result.warnings.some((w: string) => w.includes('music-chopped'))).toBe(false);
   });
 
+  it('passes caption options to addAlphaCaptions', async () => {
+    const words = [{ w: 'xin', start: 12, end: 12.4, trackIndex: 0, clipId: 'a1' }];
+    loadTranscript.mockResolvedValue({ status: 'done', fingerprint: shotsFingerprint(), words, sentences: [] });
+    await run(ctxWith(), { segments: SEGMENTS, expectedFingerprint: shotsFingerprint(), captionStyle: 'minimal', captionSize: 'large', captionPosition: 'middle' });
+    expect(addAlphaCaptions.mock.calls[0][3]).toEqual({ style: 'minimal', size: 'large', position: 'middle' });
+  });
+
   it('reframes to 9:16 and captions the reframed sequence', async () => {
     const words = [{ w: 'xin', start: 12, end: 12.4, trackIndex: 0, clipId: 'a1' }];
     loadTranscript.mockResolvedValue({ status: 'done', fingerprint: shotsFingerprint(), words, sentences: [] });
@@ -198,7 +205,7 @@ describe('build_recap', () => {
     const [, seqId, passedWords, style, timeMap] = addAlphaCaptions.mock.calls[0];
     expect(seqId).toBe('vert');
     expect(passedWords).toBe(words);
-    expect(style).toBe('pop');
+    expect(style).toEqual({ style: 'pop' });
     expect(timeMap(12)).toBe(2); // 10 s removed before it
     expect(timeMap(55)).toBe(15); // 10 s removed, then 30 s removed, minus 0: 55-10-30
     expect(timeMap(30)).toBeNull(); // inside a removed stretch

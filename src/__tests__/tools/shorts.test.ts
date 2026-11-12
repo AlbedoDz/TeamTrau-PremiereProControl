@@ -571,6 +571,22 @@ describe('build_short', () => {
     expect(writes()).toEqual([]);
   });
 
+  it('dryRun groups with limits of the chosen look', async () => {
+    const base = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', dryRun: true });
+    const minimal = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'S', dryRun: true, captionStyle: 'minimal' });
+    const longest = (r: any): number => Math.max(...r.captions.map((c: any) => c.words.length));
+    expect(longest(base)).toBeLessThanOrEqual(3);
+    expect(longest(minimal)).toBeGreaterThan(3);
+    expect(longest(minimal)).toBeLessThanOrEqual(6);
+  });
+
+  it('sends a highlight look to the sidecar', async () => {
+    await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', captionStyle: 'highlight', captionAccent: '#22d3ee' });
+    const render = runSidecar.mock.calls.find(([c]) => c === 'captions')![1];
+    expect(render.look).toMatchObject({ active: 'pill', accentColor: '#22D3EE' });
+    expect(render).not.toHaveProperty('style');
+  });
+
   it('rejects a reversed or out-of-range sentence range', async () => {
     const reversed = await tools.executeTool('build_short', { startSentenceId: 2, endSentenceId: 1, name: 'S' });
     expect(reversed).toMatchObject({ success: false, totalSentences: 4 });
@@ -694,7 +710,8 @@ describe('build_short', () => {
     expect(events).not.toContain('faces');
 
     const render = runSidecar.mock.calls.find(([c]) => c === 'captions')![1];
-    expect(render).toMatchObject({ style: 'pop', width: 1215, height: 2160, fps: 25, duration: 23.52, safeArea: SAFE_AREA });
+    expect(render).toMatchObject({ width: 1215, height: 2160, fps: 25, duration: 23.52 });
+    expect(render.look).toMatchObject({ active: 'pop', uppercase: true });
     expect(render.groups[0].start).toBe(0);
     expect(render.outPath.startsWith(join(home, 'renders', 'Short-'))).toBe(true);
     expect(render.outPath.endsWith('.mov')).toBe(true);

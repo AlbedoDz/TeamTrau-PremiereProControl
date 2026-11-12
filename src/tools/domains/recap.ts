@@ -8,6 +8,8 @@ import { z } from 'zod';
 import type { ToolContext, ToolModule } from '../context.js';
 import { ENGINE_IDS } from '../../analysis/asr-engines.js';
 import { detectScenes } from '../../analysis/scenes.js';
+import { CAPTION_STYLE_IDS, captionOptionsFrom, type CaptionPosition, type CaptionSize, type CaptionStyleId } from '../../analysis/caption-looks.js';
+import { captionOptionFields } from './caption-preview.js';
 import { steadyReframe } from '../steady-reframe.js';
 import { ffmpegMissingResult, findFfTool } from '../../analysis/ffmpeg.js';
 import { candidateWindows, scoreCandidates, signalsFor } from '../../analysis/highlights.js';
@@ -280,7 +282,10 @@ export interface BuildRecapArgs extends TranscriptArgs {
   expectedFingerprint?: string | undefined;
   name: string;
   aspect: '16:9' | '9:16';
-  captionStyle: 'none' | 'clean' | 'pop' | 'karaoke';
+  captionStyle: 'none' | CaptionStyleId;
+  captionAccent?: string | undefined;
+  captionPosition?: CaptionPosition | undefined;
+  captionSize?: CaptionSize | undefined;
   audioLeadSec: number;
   targetLufs: number;
   dryRun: boolean;
@@ -571,7 +576,7 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   // 4. Captions from the transcript words, moved to recap time.
   const ready = transcript as TranscriptReady | null;
   if (needWords && ready) {
-    const captioned = await addAlphaCaptions(ctx, sequenceId, ready.words, args.captionStyle as 'clean' | 'pop' | 'karaoke', timeMap);
+    const captioned = await addAlphaCaptions(ctx, sequenceId, ready.words, captionOptionsFrom({ ...args, captionStyle: args.captionStyle as CaptionStyleId }), timeMap);
     if ('error' in captioned) return fail(captioned.error, withBackup({ failedStep: 'captions', sequenceId }));
     for (const w of captioned.warnings ?? []) warnings.push(w);
   }
@@ -644,7 +649,7 @@ export const recapTools: ToolModule[] = [
   {
     name: 'build_recap',
     description:
-      'Builds a recap sequence from the segments of plan_recap. Never edits the original: backs up the project, duplicates the sequence, keeps exactly the given segments with one remove_ranges call (30 ms audio crossfades), optionally Auto Reframes to 9:16 (aspect "9:16"), burns transcript captions (captionStyle clean/pop/karaoke; needs transcribe_sequence done), normalises loudness to targetLufs and runs qa_sequence, then reads the result back (verified). Pass the segments and fingerprint from plan_recap unchanged; a changed sequence is refused. Warns with "music-chopped" when a long audio clip (background music) would be cut into 3+ pieces. audioLeadSec > 0 makes a J-cut at every join (the audio of the next segment starts that much before its picture, in whole frames; joins without enough audio or source handle are skipped with a warning). The new sequence name gets " (2)", " (3)" ... when taken. dryRun=true only validates and reports the planned length.',
+      'Builds a recap sequence from the segments of plan_recap. Never edits the original: backs up the project, duplicates the sequence, keeps exactly the given segments with one remove_ranges call (30 ms audio crossfades), optionally Auto Reframes to 9:16 (aspect "9:16"), burns transcript captions (captionStyle clean/pop/karaoke/highlight/minimal, with captionAccent, captionPosition and captionSize; needs transcribe_sequence done), normalises loudness to targetLufs and runs qa_sequence, then reads the result back (verified). Pass the segments and fingerprint from plan_recap unchanged; a changed sequence is refused. Warns with "music-chopped" when a long audio clip (background music) would be cut into 3+ pieces. audioLeadSec > 0 makes a J-cut at every join (the audio of the next segment starts that much before its picture, in whole frames; joins without enough audio or source handle are skipped with a warning). The new sequence name gets " (2)", " (3)" ... when taken. dryRun=true only validates and reports the planned length.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as plan_recap. Also the tracks loudness is applied to.'),
@@ -660,7 +665,8 @@ export const recapTools: ToolModule[] = [
       expectedFingerprint: z.string().optional().describe('fingerprint returned by plan_recap. If the sequence changed since, build_recap refuses.'),
       name: z.string().min(1).describe('Name of the new sequence.'),
       aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe; "16:9" (default) keeps the source frame.'),
-      captionStyle: z.enum(['none', 'clean', 'pop', 'karaoke']).default('none').describe('Burned-in alpha captions from the transcript. Default none.'),
+      captionStyle: z.enum(['none', ...CAPTION_STYLE_IDS] as ['none', ...CaptionStyleId[]]).default('none').describe('Burned-in alpha captions from the transcript: none (default), clean, pop, karaoke, highlight or minimal.'),
+      ...captionOptionFields,
       audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds (default 0 = straight cuts). Rounded to whole frames.'),
       targetLufs: z.number().min(-30).max(-6).default(-14).describe('Loudness target (default -14).'),
       dryRun: z.boolean().default(false).describe('Only validate and report the planned length; changes nothing.'),

@@ -60,7 +60,7 @@ const CANDIDATES: unknown[] = [
 
 
 /** Preferred value where several are legal and one exercises more of the tool. */
-const STRINGY: Record<string, string> = { position: 'end', format: 'png' };
+const STRINGY: Record<string, string> = { position: 'end', format: 'png', captionAccent: '#FFD400' };
 
 /** A structural guess, from public accessors only. */
 function shapedGuess(schema: Schema, key: string): unknown {

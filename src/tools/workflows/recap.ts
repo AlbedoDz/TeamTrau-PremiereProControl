@@ -4,6 +4,7 @@
  * last step.
  */
 import type { ToolContext } from '../context.js';
+import type { CaptionPosition, CaptionSize, CaptionStyleId } from '../../analysis/caption-looks.js';
 import { isError } from '../domains/cleanup.js';
 import { buildRecap, planRecap, type PlanRecapResult } from '../domains/recap.js';
 import type { TranscriptArgs } from '../domains/shorts.js';
@@ -16,7 +17,10 @@ export interface RecapArgs extends TranscriptArgs {
   minSec?: number | undefined;
   maxSec?: number | undefined;
   aspect: '16:9' | '9:16';
-  captionStyle: 'none' | 'clean' | 'pop' | 'karaoke';
+  captionStyle: 'none' | CaptionStyleId;
+  captionAccent?: string | undefined;
+  captionPosition?: CaptionPosition | undefined;
+  captionSize?: CaptionSize | undefined;
   audioLeadSec: number;
   dryRun: boolean;
   backup: boolean;
@@ -79,6 +83,9 @@ export async function workflowRecap(ctx: ToolContext, args: RecapArgs): Promise<
         name,
         aspect: args.aspect,
         captionStyle: args.captionStyle,
+        captionAccent: args.captionAccent,
+        captionPosition: args.captionPosition,
+        captionSize: args.captionSize,
         audioLeadSec: args.audioLeadSec,
         targetLufs: RECAP_LUFS,
         dryRun: false,

@@ -1,6 +1,8 @@
 /** The workflow_* tools: one-call pipelines shared by MCP agents and the panel. */
 import { z } from 'zod';
 import type { ToolModule } from '../context.js';
+import { CAPTION_STYLE_IDS, type CaptionStyleId } from '../../analysis/caption-looks.js';
+import { captionOptionFields } from './caption-preview.js';
 import { ENGINE_IDS } from '../../analysis/asr-engines.js';
 import { workflowCleanVoiceover } from '../workflows/clean-voiceover.js';
 import { workflowSubtitles } from '../workflows/subtitles.js';
@@ -71,7 +73,8 @@ export const workflowToolsTools: ToolModule[] = [
       minSec: z.number().min(5).optional().describe('Shortest acceptable recap in seconds; give with maxSec. A shorter plan is kept with a warning.'),
       maxSec: z.number().min(5).optional().describe('Hard ceiling in seconds; give with minSec. The plan never exceeds it and a built recap more than a frame over it is reported as not verified.'),
       aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe (default "16:9").'),
-      captionStyle: z.enum(['none', 'clean', 'pop', 'karaoke']).default('none').describe('Burned-in captions from the transcript (default none).'),
+      captionStyle: z.enum(['none', ...CAPTION_STYLE_IDS] as ['none', ...CaptionStyleId[]]).default('none').describe('Burned-in captions from the transcript: none (default), clean, pop, karaoke, highlight or minimal.'),
+      ...captionOptionFields,
       audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds: the next segment\'s audio starts this much before its picture (default 0 = straight cuts).'),
       dryRun: z.boolean().default(false).describe('Only plan and return the segments; create and change nothing.'),
       backup: backupArg,
@@ -90,7 +93,8 @@ export const workflowToolsTools: ToolModule[] = [
       count: z.number().int().min(1).max(5).default(3).describe('How many shorts to build, 1-5 (default 3).'),
       minSec: z.number().positive().default(30).describe('Shortest short in seconds (default 30).'),
       maxSec: z.number().positive().default(60).describe('Longest short in seconds (default 60).'),
-      captionStyle: z.enum(['clean', 'pop', 'karaoke']).default('clean').describe('Caption look (default clean).'),
+      captionStyle: z.enum(CAPTION_STYLE_IDS as [CaptionStyleId, ...CaptionStyleId[]]).default('clean').describe('Caption look: clean, pop, karaoke, highlight or minimal (default clean).'),
+      ...captionOptionFields,
       dryRun: z.boolean().default(false).describe('Only choose the windows; create and change nothing.'),
       backup: backupArg,
     }),
