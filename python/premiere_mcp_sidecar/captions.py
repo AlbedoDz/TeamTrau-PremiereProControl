@@ -82,7 +82,9 @@ def caption_font(name: str | None = None, size: float = FONT_SIZE_AT_1920) -> Im
 
 
 def _baseline(font: ImageFont.FreeTypeFont) -> int:
-    """Distance from the top of the text box down to the baseline."""
+    """Negative of the cap-top offset: ``font.getbbox("H")[1]`` is the distance from the
+    text origin down to the top of a capital, so the baseline sits that far above the
+    box top (the value is <= 0). Callers add it to the box top to place the baseline."""
     return -font.getbbox("H")[1]
 
 
@@ -397,8 +399,12 @@ def _place(source: Path, target: Path) -> None:
         shutil.copyfile(source, target)
 
 
+# Bumped when the spec/look contract changes; the TypeScript side refuses a lower value.
+RENDERER_VERSION = 2
+
+
 def render(spec: dict) -> dict:
-    """Render ``spec["groups"]`` to ``spec["outPath"]`` and return ``{path, frames}``."""
+    """Render ``spec["groups"]`` to ``spec["outPath"]`` and return ``{path, frames, renderer}``."""
     io.set_ffmpeg(spec.get("ffmpegPath"))
     groups = sorted(spec["groups"], key=lambda group: group["start"])
     style = spec.get("style", "clean")
@@ -480,7 +486,7 @@ def render(spec: dict) -> dict:
         shutil.rmtree(scratch, ignore_errors=True)
 
     io.write_progress(progress_path, 1.0, None)
-    return {"path": str(out_path), "frames": frame_count}
+    return {"path": str(out_path), "frames": frame_count, "renderer": RENDERER_VERSION}
 
 
 _BREAK_AFTER = re.compile(r"[.,;:!?…][\"')\]”’]*$")
@@ -519,5 +525,12 @@ def preview(spec: dict) -> dict:
         _draw(image, font, words, active, 1.0, width, height, look)
     out_path = Path(spec["outPath"])
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(out_path, "PNG")
-    return {"path": str(out_path), "width": width, "height": height}
+    # Save beside the target and rename, so a reader never sees a half-written PNG.
+    temp_path = out_path.with_name(f"{out_path.stem}.{os.getpid()}.tmp{out_path.suffix}")
+    try:
+        image.save(temp_path, "PNG")
+        os.replace(temp_path, out_path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+    return {"path": str(out_path), "width": width, "height": height, "renderer": RENDERER_VERSION}

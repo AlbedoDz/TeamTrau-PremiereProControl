@@ -67,6 +67,29 @@ export function sidecarMissingResult(tool: string): Record<string, unknown> {
   };
 }
 
+/** The installed sidecar predates the caption looks renderer; the setup command updates it. */
+export function sidecarOutdatedResult(tool: string): Record<string, unknown> {
+  return {
+    success: false,
+    retry: false,
+    status: 'sidecar.outdated',
+    userActionRequired: true,
+    errorCode: 'sidecar.outdated',
+    error: `The analysis sidecar is outdated and ${tool} needs the newer caption renderer.`,
+    command: SETUP_COMMAND,
+    nextStep: `The analysis sidecar is outdated. Run this in a terminal on this machine to update it, then retry ${tool} once: ${SETUP_COMMAND}`,
+  };
+}
+
+/** True when a sidecar error means the installed sidecar does not know the caption_preview command. */
+export function outdatedSidecarMessage(): string {
+  return `The analysis sidecar is outdated and cannot draw the caption looks. Run in a terminal: ${SETUP_COMMAND}`;
+}
+
+export function isOutdatedSidecarError(error: unknown): boolean {
+  return error instanceof SidecarError && /unknown command/i.test(error.message);
+}
+
 /** The chosen engine's models are not installed. Nothing is downloaded: the user must approve it first. */
 export function engineMissingResult(tool: string, engine: EngineId): Record<string, unknown> {
   const info = ENGINES[engine];

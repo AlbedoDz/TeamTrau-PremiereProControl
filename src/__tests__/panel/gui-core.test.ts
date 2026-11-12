@@ -436,6 +436,12 @@ describe('gui-core vi', () => {
     expect(text).not.toContain('backup=false');
   });
 
+  it('tells the user to update an outdated sidecar, also inside a caption render failure', () => {
+    const expected = 'Bộ phân tích đã cũ, chưa vẽ được kiểu phụ đề mới. Chạy "premiere-pro-mcp --setup-asr" trong terminal để cập nhật rồi thử lại.';
+    expect(core.vi({ success: false, error: 'The analysis sidecar is outdated. Run this in a terminal on this machine to update it, then retry preview_caption_style once: premiere-pro-mcp --setup-asr' })).toBe(expected);
+    expect(core.vi({ success: false, error: 'Caption render failed: The analysis sidecar is outdated and cannot draw the caption looks. Run in a terminal: premiere-pro-mcp --setup-asr' })).toBe(expected);
+  });
+
   it('prefixes unknown English text with "Lỗi: "', () => {
     expect(core.vi({ success: false, error: 'Something odd' })).toBe('Lỗi: Something odd');
   });

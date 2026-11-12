@@ -13,6 +13,8 @@ import {
   modelPaths,
   premiereMcpHome,
   sidecarMissingResult,
+  isOutdatedSidecarError,
+  outdatedSidecarMessage,
   engineMissingResult,
   sidecarPython,
   startJob,
@@ -39,7 +41,7 @@ import { ENGINE_IDS, usesZipformer } from '../../analysis/asr-engines.js';
 import { restoreCasing } from '../../analysis/casing.js';
 import { asrStatus } from '../../setup/asr.js';
 import { applyCaptionOverrides, groupCaptions, safeFileName } from '../../analysis/captions.js';
-import { ASPECT_RATIOS, CAPTION_STYLE_IDS, captionOptionsFrom, resolveLook, type CaptionOptions, type CaptionPosition, type CaptionSize, type CaptionStyleId } from '../../analysis/caption-looks.js';
+import { ASPECT_RATIOS, CAPTION_RENDERER_VERSION, CAPTION_STYLE_IDS, captionOptionsFrom, resolveLook, type CaptionOptions, type CaptionPosition, type CaptionSize, type CaptionStyleId } from '../../analysis/caption-looks.js';
 import { captionOptionFields } from './caption-preview.js';
 import { isError, normalizeLoudness, readSequence, uniquePaths, type SequenceSnapshot } from './cleanup.js';
 import { ensureBackup, qaSequence } from './editing.js';
@@ -696,15 +698,25 @@ async function renderCaptionFile(opts: {
   const outPath = join(renders, `${safeFileName(opts.name)}-${stamp}.mov`);
   await mkdir(renders, { recursive: true });
   const { look } = resolveLook(opts.caption, opts.width, opts.height);
-  const rendered = await runSidecar<{ path?: string; frames?: number }>('captions', {
-    groups: opts.groups,
-    look: opts.font ? { ...look, font: opts.font } : look,
-    width: opts.width,
-    height: opts.height,
-    fps: opts.fps,
-    duration: opts.duration,
-    outPath,
-  });
+  let rendered: { path?: string; frames?: number; renderer?: number };
+  try {
+    rendered = await runSidecar<{ path?: string; frames?: number; renderer?: number }>('captions', {
+      groups: opts.groups,
+      look: opts.font ? { ...look, font: opts.font } : look,
+      width: opts.width,
+      height: opts.height,
+      fps: opts.fps,
+      duration: opts.duration,
+      outPath,
+    });
+  } catch (error) {
+    if (isOutdatedSidecarError(error)) throw new Error(outdatedSidecarMessage());
+    throw error;
+  }
+  // An old sidecar ignores the look and draws the legacy styles, so refuse its output.
+  if (typeof rendered.renderer !== 'number' || rendered.renderer < CAPTION_RENDERER_VERSION) {
+    throw new Error(outdatedSidecarMessage());
+  }
   return rendered.path ?? outPath;
 }
 

@@ -35,6 +35,9 @@ export function captionOptionsFrom(args: {
 export const ACCENT_SWATCHES: readonly string[] = ['#FFD400', '#FF3B5C', '#22D3EE', '#4ADE80', '#A855F7'];
 export const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
+/** Version of the sidecar's caption renderer this code expects (python captions.RENDERER_VERSION). */
+export const CAPTION_RENDERER_VERSION = 2;
+
 export const ASPECT_RATIOS: Record<'16:9' | '9:16' | '1:1' | '4:5', { num: number; den: number }> = {
   '16:9': { num: 16, den: 9 },
   '9:16': { num: 9, den: 16 },

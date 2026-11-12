@@ -515,7 +515,7 @@ describe('build_short', () => {
       events.push(command);
       if (command === 'captions') {
         captionPath = input.outPath;
-        return { path: input.outPath, frames: 588 };
+        return { path: input.outPath, frames: 588, renderer: 2 };
       }
       return { samples: [] };
     });
@@ -585,6 +585,13 @@ describe('build_short', () => {
     const render = runSidecar.mock.calls.find(([c]) => c === 'captions')![1];
     expect(render.look).toMatchObject({ active: 'pill', accentColor: '#22D3EE' });
     expect(render).not.toHaveProperty('style');
+  });
+
+  it('refuses captions from an outdated sidecar that returns no renderer version', async () => {
+    runSidecar.mockImplementation(async (command: string, input: any) => (command === 'captions' ? { path: input.outPath, frames: 588 } : { samples: [] }));
+    const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short' });
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r)).toMatch(/sidecar is outdated.*premiere-pro-mcp --setup-asr/);
   });
 
   it('rejects a reversed or out-of-range sentence range', async () => {
@@ -808,7 +815,7 @@ describe('build_short', () => {
   it('adds a warning marker for each multi-face stretch', async () => {
     runSidecar.mockImplementation(async (command: string, input: any) => {
       events.push(command);
-      if (command === 'captions') { captionPath = input.outPath; return { path: input.outPath, frames: 1 }; }
+      if (command === 'captions') { captionPath = input.outPath; return { path: input.outPath, frames: 1, renderer: 2 }; }
       return { samples: Array.from({ length: 48 }, (_, t) => ({ t, count: t === 20 || t === 21 ? 2 : 1 })) };
     });
     const r = await tools.executeTool('build_short', { startSentenceId: 1, endSentenceId: 2, name: 'Short', detectFaces: true });

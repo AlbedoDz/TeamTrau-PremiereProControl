@@ -23,7 +23,7 @@ beforeEach(() => {
   runSidecar.mockImplementation(async (_cmd: string, input: any) => {
     mkdirSync(dirname(input.outPath), { recursive: true });
     writeFileSync(input.outPath, 'png');
-    return { path: input.outPath, width: input.width, height: input.height };
+    return { path: input.outPath, width: input.width, height: input.height, renderer: 2 };
   });
 });
 
@@ -39,7 +39,7 @@ describe('preview_caption_style', () => {
     expect(input.look.accentColor).toBeDefined();
     expect(input.activeIndex).toBe(1);
     expect(input.outPath.endsWith('.png')).toBe(true);
-    expect(input.outPath.split(/[\\/]/).slice(-3, -1)).toEqual(['renders', 'previews']);
+    expect(input.outPath.split(/[\\/]/).slice(-3, -1)).toEqual(['previews', 'v2']);
     expect(res.path).toBe(input.outPath);
     expect(res.grouping).toBeDefined();
     expect(res.layout).toBe('9:16');
@@ -85,5 +85,22 @@ describe('preview_caption_style', () => {
     const res = await call({ style: 'clean' });
     expect(res.success).toBe(false);
     expect(res.errorCode).toBe('asr.not_installed');
+  });
+
+  it('reports an outdated sidecar whose result has no renderer version', async () => {
+    runSidecar.mockImplementation(async (_cmd: string, input: any) => {
+      mkdirSync(dirname(input.outPath), { recursive: true });
+      writeFileSync(input.outPath, 'png');
+      return { path: input.outPath, width: input.width, height: input.height };
+    });
+    const res = await call({ style: 'clean' });
+    expect(res).toMatchObject({ success: false, errorCode: 'sidecar.outdated', status: 'sidecar.outdated', command: 'premiere-pro-mcp --setup-asr' });
+    expect(res.error).toMatch(/outdated/);
+  });
+
+  it('reports an outdated sidecar that does not know caption_preview', async () => {
+    runSidecar.mockRejectedValue(new sidecar.SidecarError("unknown command 'caption_preview'; expected one of check, faces"));
+    const res = await call({ style: 'clean' });
+    expect(res).toMatchObject({ success: false, errorCode: 'sidecar.outdated' });
   });
 });

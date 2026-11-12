@@ -79,7 +79,7 @@ def render_frame(tmp_path, groups, frame, style="clean", **overrides):
     """Render the file at 25 fps and grab the `frame`-th picture back as RGBA."""
     spec = make_spec(tmp_path, groups, style=style, **overrides)
     result = captions.render(spec)
-    assert result == {"path": spec["outPath"], "frames": int(round(spec["duration"] * spec["fps"]))}
+    assert result == {"path": spec["outPath"], "frames": int(round(spec["duration"] * spec["fps"])), "renderer": captions.RENDERER_VERSION}
     png = tmp_path / f"frame-{frame}.png"
     subprocess.run(
         ["ffmpeg", "-v", "error", "-y", "-i", spec["outPath"],
@@ -547,7 +547,9 @@ def test_caption_preview_writes_png_of_requested_size(tmp_path):
         "look": look, "width": 540, "height": 960, "text": "one two three four",
         "maxWords": 3, "maxChars": 18, "activeIndex": 1, "outPath": str(out),
     })
-    assert result == {"path": str(out), "width": 540, "height": 960}
+    assert result == {"path": str(out), "width": 540, "height": 960, "renderer": captions.RENDERER_VERSION}
+    assert captions.RENDERER_VERSION == 2
+    assert [p.name for p in tmp_path.iterdir()] == ["preview.png"]
     image = Image.open(out)
     assert image.size == (540, 960)
     rgba = image.convert("RGBA")

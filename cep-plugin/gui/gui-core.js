@@ -522,6 +522,7 @@
      * Vietnamese part may be a function of the match, to keep the numbers of the message.
      */
     var KNOWN_MESSAGES = [
+        [/analysis sidecar is outdated/i, 'Bộ phân tích đã cũ, chưa vẽ được kiểu phụ đề mới. Chạy "premiere-pro-mcp --setup-asr" trong terminal để cập nhật rồi thử lại.'],
         [/^Backup failed/i, 'Không sao lưu được project: hãy lưu project (Ctrl+S) rồi chạy lại.'],
         [/^Only (\d+) of (\d+) audio crossfades/i, function (m) {
             return 'Chỉ đặt được ' + m[1] + '/' + m[2] + ' crossfade âm thanh. Các vết cắt vẫn đúng.';

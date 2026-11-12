@@ -8,8 +8,8 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ToolModule } from '../context.js';
-import { premiereMcpHome, runSidecar, sidecarMissingResult, sidecarPython, SidecarError } from '../../analysis/sidecar.js';
-import { ASPECT_RATIOS, CAPTION_STYLE_IDS, HEX_COLOR, resolveLook, type CaptionStyleId } from '../../analysis/caption-looks.js';
+import { premiereMcpHome, runSidecar, isOutdatedSidecarError, sidecarMissingResult, sidecarOutdatedResult, sidecarPython, SidecarError } from '../../analysis/sidecar.js';
+import { ASPECT_RATIOS, CAPTION_RENDERER_VERSION, CAPTION_STYLE_IDS, HEX_COLOR, resolveLook, type CaptionStyleId } from '../../analysis/caption-looks.js';
 
 const LONG_EDGE = 960;
 const DEFAULT_TEXT = 'Xin chào các bạn, hôm nay mình kể chuyện';
@@ -65,18 +65,23 @@ export const captionPreviewTools: ToolModule[] = [
           height,
         );
         const key = createHash('sha1').update(JSON.stringify({ look, width, height, text, grouping })).digest('hex');
-        const dir = join(premiereMcpHome(), 'renders', 'previews');
+        // The renderer version is part of the location, so a newer renderer never reuses an older picture.
+        const dir = join(premiereMcpHome(), 'renders', 'previews', `v${CAPTION_RENDERER_VERSION}`);
         const outPath = join(dir, `${key}.png`);
         if (!existsSync(outPath)) {
           await mkdir(dir, { recursive: true });
-          await runSidecar('caption_preview', {
+          const drawn = await runSidecar<{ renderer?: number }>('caption_preview', {
             look, width, height, text,
             maxWords: grouping.maxWords, maxChars: grouping.maxChars,
             activeIndex: ACTIVE_INDEX, outPath,
           });
+          if (typeof drawn?.renderer !== 'number' || drawn.renderer < CAPTION_RENDERER_VERSION) {
+            return sidecarOutdatedResult('preview_caption_style');
+          }
         }
         return { success: true, path: outPath, width, height, grouping, layout };
       } catch (error) {
+        if (isOutdatedSidecarError(error)) return sidecarOutdatedResult('preview_caption_style');
         if (error instanceof SidecarError && /not installed/i.test(error.message)) return sidecarMissingResult('preview_caption_style');
         return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
