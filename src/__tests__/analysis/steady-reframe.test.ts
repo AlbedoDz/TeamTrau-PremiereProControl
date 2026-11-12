@@ -26,6 +26,14 @@ describe('steadyPath', () => {
     expect(steadyPath([], [1477.2], 1472.28, 1482, F)).toEqual([]);
   });
 
+  it('merges neighbouring shots that hold nearly the same position (live: 0.461 / 0.463 on a recap clip)', () => {
+    const flat = [{ t: 0, x: 0.461, y: 0.5 }, { t: 3, x: 0.463, y: 0.5 }, { t: 6, x: 0.70, y: 0.5 }];
+    const out = steadyPath(flat, [2, 5], 0, 8, F);
+    expect(out.map((k) => k.t)).toEqual([0, 5 - F, 5, 8]);
+    expect(out[0]!.x).toBe(out[1]!.x);
+    expect(out[2]!.x).toBeCloseTo(0.70, 5);
+  });
+
   it('uses the path at the middle of a shot that has no key inside', () => {
     const sparse = [{ t: 0, x: 0.2, y: 0.5 }, { t: 10, x: 0.8, y: 0.5 }];
     const out = steadyPath(sparse, [4, 6], 0, 10, F);

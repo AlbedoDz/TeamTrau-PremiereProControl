@@ -11,6 +11,9 @@ export interface PathKey {
   y: number;
 }
 
+/** Held positions closer than this (fraction of the frame, ~38 px of 1920) count as one framing. */
+const SAME_FRAMING = 0.02;
+
 function median(values: number[]): number {
   const s = [...values].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
@@ -41,18 +44,33 @@ export function steadyPath(keys: PathKey[], cuts: number[], inPoint: number, out
   if (keys.length === 0 || outPoint <= inPoint) return [];
   const sorted = [...keys].sort((a, b) => a.t - b.t);
   const inner = [...new Set(cuts)].filter((c) => c > inPoint + frameSec && c < outPoint - frameSec).sort((a, b) => a - b);
+  const held = (start: number, end: number) => {
+    const inside = sorted.filter((k) => k.t >= start && k.t < end);
+    return inside.length > 0
+      ? { x: median(inside.map((k) => k.x)), y: median(inside.map((k) => k.y)) }
+      : valueAt(sorted, (start + end) / 2);
+  };
+  // Neighbouring shots that would hold nearly the same position are one framing: a jump of a
+  // few pixels on a false cut (a light change) reads as the slight move this exists to remove.
+  const shots: Array<{ start: number; end: number; at: { x: number; y: number } }> = [];
   const bounds = [inPoint, ...inner, outPoint];
-  const out: PathKey[] = [];
   for (let i = 0; i < bounds.length - 1; i++) {
     const start = bounds[i]!;
     const end = bounds[i + 1]!;
-    const inside = sorted.filter((k) => k.t >= start && k.t < end);
-    const at = inside.length > 0
-      ? { x: median(inside.map((k) => k.x)), y: median(inside.map((k) => k.y)) }
-      : valueAt(sorted, (start + end) / 2);
-    out.push({ t: start, x: at.x, y: at.y });
-    const last = i === bounds.length - 2 ? end : end - frameSec;
-    if (last > start) out.push({ t: last, x: at.x, y: at.y });
+    const at = held(start, end);
+    const prev = shots[shots.length - 1];
+    if (prev && Math.abs(prev.at.x - at.x) < SAME_FRAMING && Math.abs(prev.at.y - at.y) < SAME_FRAMING) {
+      prev.end = end;
+      prev.at = held(prev.start, end);
+    } else {
+      shots.push({ start, end, at });
+    }
   }
+  const out: PathKey[] = [];
+  shots.forEach((s, i) => {
+    out.push({ t: s.start, x: s.at.x, y: s.at.y });
+    const last = i === shots.length - 1 ? s.end : s.end - frameSec;
+    if (last > s.start) out.push({ t: last, x: s.at.x, y: s.at.y });
+  });
   return out;
 }
