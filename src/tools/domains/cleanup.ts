@@ -265,9 +265,25 @@ async function rippleDeleteRange(
       scan(sequence.videoTracks);
       scan(sequence.audioTracks);
       if (inside.length === 0) return JSON.stringify({ success: false, error: "No clips found inside the range after razoring; the razor may not have landed on the requested time." });
-      for (var k = 0; k < inside.length - 1; k++) inside[k].remove(false, false);
-      inside[inside.length - 1].remove(true, true);
-      return JSON.stringify({ success: true, removedClips: inside.length });
+      // Lift every clip in the range, then close the gap by moving every later clip on
+      // every track back by the range's length. Rippling the last removed clip only
+      // closed its own track: live on a linked video+audio sequence, a 4078 s recap cut
+      // shortened by 86 s and left 700 s gaps. TrackItem.move shifts one clip only
+      // (its linked partner stays put), so every track is moved explicitly.
+      for (var k = 0; k < inside.length; k++) inside[k].remove(false, false);
+      var gap = ${end} - ${start};
+      var moved = 0;
+      function shift(tracks) {
+        for (var i = 0; i < tracks.numTracks; i++) {
+          for (var j = 0; j < tracks[i].clips.numItems; j++) {
+            var later = tracks[i].clips[j];
+            if (later.start.seconds >= ${end} - ${tolerance}) { later.move(-gap); moved++; }
+          }
+        }
+      }
+      shift(sequence.videoTracks);
+      shift(sequence.audioTracks);
+      return JSON.stringify({ success: true, removedClips: inside.length, movedClips: moved });
     } catch (e) {
       return JSON.stringify({ success: false, error: e.toString() });
     }

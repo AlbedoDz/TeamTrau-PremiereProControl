@@ -81,7 +81,8 @@ describe('cleanup tools', () => {
     expect(result).toMatchObject({ success: true, applied: true, verified: true, cutCount: 1 });
     const scripts = executeScript.mock.calls.map((c) => c[0] as string);
     expect(scripts[1]).toContain('razor(');
-    expect(scripts[3]).toContain('inside[inside.length - 1].remove(true, true)');
+    expect(scripts[3]).toContain('inside[k].remove(false, false)');
+    expect(scripts[3]).toContain('later.move(-gap)');
   });
 
   it('flags verified=false when the sequence did not shorten as planned', async () => {

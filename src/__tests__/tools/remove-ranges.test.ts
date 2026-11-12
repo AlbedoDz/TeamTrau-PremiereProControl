@@ -18,7 +18,7 @@ function snapshot(endTime: number) {
   };
 }
 
-const DELETE = 'inside[inside.length - 1].remove(true, true)';
+const DELETE = 'later.move(-gap)';
 
 describe('remove_ranges', () => {
   let executeScript: jest.Mock;
