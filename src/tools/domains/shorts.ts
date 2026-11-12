@@ -42,6 +42,7 @@ import { applyCaptionOverrides, groupCaptions, safeFileName, SAFE_AREA } from '.
 import { isError, normalizeLoudness, readSequence, uniquePaths, type SequenceSnapshot } from './cleanup.js';
 import { ensureBackup, qaSequence } from './editing.js';
 import { importMedia } from './media.js';
+import { steadyReframe } from '../steady-reframe.js';
 
 export interface TranscriptArgs {
   sequenceId?: string | undefined;
@@ -920,6 +921,10 @@ export async function buildShort(ctx: ToolContext, args: BuildShortArgs): Promis
     }
     if (!(Number(read.reframeKeys) > 0)) {
       warnings.push(`Auto Reframe had no subject-tracking keyframes after ${Math.round(buildShortTiming.timeoutMs / 1000)} s; check the framing in Premiere.`);
+    } else {
+      // Still framing within each source shot instead of a glide after every camera cut.
+      const steady = await steadyReframe(ctx, shortSequenceId);
+      warnings.push(...steady.warnings);
     }
     const w = Number(read.frameSizeHorizontal);
     const h = Number(read.frameSizeVertical);

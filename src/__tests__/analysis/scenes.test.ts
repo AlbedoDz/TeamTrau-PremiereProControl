@@ -81,4 +81,13 @@ describe('detectScenes with real ffmpeg', () => {
     expect(second).toEqual(first);
     expect(runFf.mock.calls.length).toBe(callsAfterFirst);
   });
+
+  ifFfmpeg('decodes only the range and reports file times', async () => {
+    const found = await detectScenes(media, { threshold: 0.3, minShotSec: 0.5, range: { start: 3, end: 6 } });
+    if ('failure' in found) throw new Error(JSON.stringify(found.failure));
+    expect(found.cutTimes).toHaveLength(1);
+    expect(found.cutTimes[0]).toBeCloseTo(4, 1);
+    expect(found.shots[0]!.start).toBe(3);
+    expect(found.shots[found.shots.length - 1]!.end).toBeCloseTo(6, 1);
+  });
 });

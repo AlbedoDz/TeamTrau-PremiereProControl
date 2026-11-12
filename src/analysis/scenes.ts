@@ -40,9 +40,13 @@ export function shotsFromCuts(cuts: number[], duration: number, minShotSec: numb
   return shots;
 }
 
+/**
+ * Shots of `mediaPath`. With `range` only that part of the file is decoded (a short of a
+ * 70-minute show needs 40 s, not the whole file); times are still file times.
+ */
 export async function detectScenes(
   mediaPath: string,
-  opts: { threshold: number; minShotSec: number },
+  opts: { threshold: number; minShotSec: number; range?: { start: number; end: number } },
 ): Promise<{ shots: Shot[]; cutTimes: number[] } | { failure: Record<string, unknown> }> {
   const ffmpeg = await findFfTool('ffmpeg');
   const ffprobe = await findFfTool('ffprobe');
@@ -56,16 +60,23 @@ export async function detectScenes(
       if (probe.durationSeconds === null) {
         return { failure: { success: false, error: 'ffprobe could not read the duration of the file.', mediaPath } };
       }
+      const from = opts.range ? Math.max(0, opts.range.start) : 0;
+      const to = opts.range ? Math.min(probe.durationSeconds, opts.range.end) : probe.durationSeconds;
       const run = await runFf(ffmpeg, [
-        '-hide_banner', '-nostats', '-i', mediaPath,
+        '-hide_banner', '-nostats',
+        ...(opts.range ? ['-ss', String(from), '-t', String(Math.max(0, to - from))] : []),
+        '-i', mediaPath,
         '-vf', `select='gt(scene,${opts.threshold})',showinfo`,
         '-an', '-f', 'null', '-',
       ]);
       if (run.code !== 0) {
         return { failure: { success: false, error: `ffmpeg exited with code ${run.code}`, mediaPath, ffmpegStderr: run.stderr.slice(-1500) } };
       }
-      const cutTimes = parseSceneCuts(run.stderr);
-      return { shots: shotsFromCuts(cutTimes, probe.durationSeconds, opts.minShotSec), cutTimes };
+      // With -ss before -i, pts_time counts from the seek point.
+      const cutTimes = parseSceneCuts(run.stderr).map((t) => t + from);
+      const shots = shotsFromCuts(cutTimes.map((t) => t - from), to - from, opts.minShotSec)
+        .map((s) => ({ start: s.start + from, end: s.end + from }));
+      return { shots, cutTimes };
     });
   } catch (err) {
     return { failure: { success: false, error: `Failed to run ffmpeg: ${err instanceof Error ? err.message : String(err)}`, mediaPath } };

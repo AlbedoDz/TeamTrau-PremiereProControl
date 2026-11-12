@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { ToolContext, ToolModule } from '../context.js';
 import { ENGINE_IDS } from '../../analysis/asr-engines.js';
 import { detectScenes } from '../../analysis/scenes.js';
+import { steadyReframe } from '../steady-reframe.js';
 import { ffmpegMissingResult, findFfTool } from '../../analysis/ffmpeg.js';
 import { candidateWindows, scoreCandidates, signalsFor } from '../../analysis/highlights.js';
 import {
@@ -552,6 +553,9 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
       warnings.push(`Không xóa được sequence trung gian "${copyName}"; xóa tay trong project nếu không cần.`);
     }
     if (!reframed.deleted) warnings.push('Không xóa được subsequence trung gian của Auto Reframe; xóa tay trong project.');
+    // Still framing within each source shot instead of a glide after every camera cut.
+    const steady = await steadyReframe(ctx, sequenceId);
+    warnings.push(...steady.warnings);
   }
 
   // 4. Captions from the transcript words, moved to recap time.
