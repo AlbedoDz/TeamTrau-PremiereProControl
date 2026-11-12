@@ -10,6 +10,10 @@ export interface RecapOpts {
   targetSec: number;
   minSegmentSec: number;
   maxSegmentSec: number;
+  /** Shortest acceptable recap. Omitted: targetSec - 10%. */
+  minSec?: number | undefined;
+  /** Hard ceiling on the recap. Omitted: targetSec + 10%. */
+  maxSec?: number | undefined;
   /** Frame length in seconds: shots closer than this are time-adjacent. Default 1/24. */
   frameSec?: number;
 }
@@ -33,6 +37,15 @@ export interface ScoredShot {
 export const CHAPTER_SEC = 12;
 /** The recap total may miss the target by this fraction either way. */
 export const TARGET_TOLERANCE = 0.1;
+/** The accepted length of the recap: [minSec, maxSec] when given, else targetSec +/- TARGET_TOLERANCE. */
+export function recapBounds(opts: RecapOpts): { lo: number; hi: number } {
+  const round = (n: number): number => Math.round(n * 1000) / 1000;
+  return {
+    lo: opts.minSec ?? round(opts.targetSec * (1 - TARGET_TOLERANCE)),
+    hi: opts.maxSec ?? round(opts.targetSec * (1 + TARGET_TOLERANCE)),
+  };
+}
+
 const JACCARD_DUPLICATE = 0.6;
 const EPS = 1e-6;
 
@@ -111,12 +124,13 @@ export function shotPool(shots: ScoredShot[], opts: RecapOpts): RecapSegment[] {
 
 /**
  * Greedy by chapter (the best fitting segment of each), then by score until the total reaches the
- * target. Never overlaps, never keeps two near-identical texts, never exceeds target + 10%.
+ * target. Never overlaps, never keeps two near-identical texts, never exceeds the upper bound
+ * of recapBounds (maxSec, or target + 10%).
  * `trimmable` lets the last segment be cut short to land inside the tolerance (shots only).
  */
 function select(pool: RecapSegment[], total: number, opts: RecapOpts, trimmable: boolean): RecapSegment[] {
   const k = chapterCount(opts.targetSec);
-  const hi = opts.targetSec * (1 + TARGET_TOLERANCE);
+  const { hi } = recapBounds(opts);
   const eligible = pool
     .filter((p) => duration(p) > EPS && (trimmable || (duration(p) >= opts.minSegmentSec - EPS && duration(p) <= opts.maxSegmentSec + EPS)))
     .sort(byScore);

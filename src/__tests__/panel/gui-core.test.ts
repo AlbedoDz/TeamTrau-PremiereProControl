@@ -92,7 +92,7 @@ describe('gui-core resolveRunner', () => {
 
 describe('gui-core buildArgs', () => {
   it('gives the recap defaults for an empty form', () => {
-    expect(core.buildArgs(card('recap'), {})).toEqual({ targetSec: 90, aspect: '16:9', captionStyle: 'clean', audioLeadSec: 0 });
+    expect(core.buildArgs(card('recap'), {})).toEqual({ minSec: 75, maxSec: 105, aspect: '16:9', captionStyle: 'clean', audioLeadSec: 0 });
   });
 
   it('converts form text and clamps numbers', () => {
@@ -116,6 +116,13 @@ describe('gui-core buildArgs', () => {
     ]);
     expect(core.missingRequired(card('rough_cut'), core.buildArgs(card('rough_cut'), { folderPath: ' D:\\clips ', targetSec: '45' }))).toEqual([]);
     expect(core.missingRequired(card('rough_cut'), core.buildArgs(card('rough_cut'), { folderPath: 'D:/c', musicPath: 'D:/m.mp3' }))).toEqual([]);
+  });
+
+  it('recap: the shortest length must be under the longest', () => {
+    expect(core.missingRequired(card('recap'), core.buildArgs(card('recap'), { minSec: '60', maxSec: '90' }))).toEqual([]);
+    expect(core.missingRequired(card('recap'), core.buildArgs(card('recap'), { minSec: '90', maxSec: '90' }))).toEqual([
+      '"Ngắn nhất" phải nhỏ hơn "Dài nhất".',
+    ]);
   });
 
   it('rough cut: targetSec defaults to empty and is never sent with a music file', () => {

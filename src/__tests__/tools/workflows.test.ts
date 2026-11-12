@@ -718,6 +718,26 @@ describe('workflow_recap', () => {
     expect(buildRecap.mock.calls[0][1].sequenceId).toBe('src');
   });
 
+  it('passes minSec and maxSec to the plan and validates them', async () => {
+    await runTool('workflow_recap', ctxWith(), { minSec: 75, maxSec: 105 });
+    expect(planRecap.mock.calls[0][1]).toMatchObject({ minSec: 75, maxSec: 105 });
+    expect(() => tool('workflow_recap').inputSchema.parse({ minSec: 105, maxSec: 75 })).toThrow(/minSec must be less than maxSec/);
+    expect(() => tool('workflow_recap').inputSchema.parse({ maxSec: 75 })).toThrow(/minSec and maxSec/);
+  });
+
+  it('flags a built recap longer than maxSec by more than a frame', async () => {
+    buildRecap.mockResolvedValue({ success: true, sequenceId: 'rc', durationSec: 17.05, verified: true, warnings: [], audioLeadSupported: false });
+    const result = await runTool('workflow_recap', ctxWith(), { minSec: 10, maxSec: 17 });
+    expect(result.summary.verified).toBe(false);
+    expect(result.warnings.join(' ')).toMatch(/dài 17.05 giây, vượt mức tối đa 17 giây/);
+  });
+
+  it('accepts a built recap within a frame of maxSec', async () => {
+    buildRecap.mockResolvedValue({ success: true, sequenceId: 'rc', durationSec: 17.03, verified: true, warnings: [], audioLeadSupported: false });
+    const result = await runTool('workflow_recap', ctxWith(), { minSec: 10, maxSec: 17 });
+    expect(result.summary.verified).toBe(true);
+  });
+
   it('dryRun plans only', async () => {
     const result = await runTool('workflow_recap', ctxWith(), { dryRun: true });
     expect(buildRecap).not.toHaveBeenCalled();

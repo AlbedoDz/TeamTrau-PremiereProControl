@@ -15,6 +15,7 @@ import {
   bestShotRun,
   planShotRecap,
   planSpeechRecap,
+  recapBounds,
   recapCandidates,
   shotPool,
   speechCoverage,
@@ -43,6 +44,9 @@ import {
 
 export type PlanRecapArgs = TranscriptArgs & {
   targetSec: number;
+  /** Given together: the recap lands in [minSec, maxSec] (aiming at the middle) and never exceeds maxSec. */
+  minSec?: number | undefined;
+  maxSec?: number | undefined;
   mode: 'auto' | 'speech' | 'shots';
   /** Omitted: SPEECH_MIN_SEGMENT_SEC in speech mode, SHOT_MIN_SEGMENT_SEC in shot mode. */
   minSegmentSec?: number | undefined;
@@ -78,12 +82,16 @@ const MIN_SPEECH_COVERAGE = 0.3;
 const SPEED_TOLERANCE = 0.01;
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 
-/** Warns (Vietnamese) when the plan is more than 10% under the target. */
-function shortfallWarning(segments: RecapSegment[], targetSec: number, warnings: string[]): void {
+/** Warns (Vietnamese) when the plan is under minSec, or more than 10% under the target without a range. */
+function shortfallWarning(segments: RecapSegment[], opts: RecapOpts, warnings: string[]): void {
   const planned = segments.reduce((sum, s) => sum + (s.end - s.start), 0);
-  if (planned < targetSec * 0.9) {
-    warnings.push(`Chỉ chọn được ${round3(planned)} giây, thấp hơn mục tiêu ${targetSec} giây (dưới 90%).`);
-  }
+  const { lo } = recapBounds(opts);
+  if (planned >= lo - 1e-6) return;
+  warnings.push(
+    opts.minSec !== undefined
+      ? `Chỉ chọn được ${round3(planned)} giây, ngắn hơn mức tối thiểu ${opts.minSec} giây.`
+      : `Chỉ chọn được ${round3(planned)} giây, thấp hơn mục tiêu ${opts.targetSec} giây (dưới 90%).`,
+  );
 }
 
 const roundSegment = (s: RecapSegment): RecapSegment => ({ ...s, start: round3(s.start), end: round3(s.end), score: round3(s.score) });
@@ -162,7 +170,7 @@ async function planShots(
 
   const total = snapshot.endTime;
   const segments = planShotRecap(scored, total, opts);
-  shortfallWarning(segments, opts.targetSec, warnings);
+  shortfallWarning(segments, opts, warnings);
   const candidates = recapCandidates(shotPool(scored, opts), segments, opts);
   const fingerprint = shotsFingerprint(video);
   return {
@@ -181,8 +189,10 @@ export async function planRecap(
   ctx: ToolContext,
   args: PlanRecapArgs,
 ): Promise<PlanRecapResult | TranscriptPending | { success: false; error: string }> {
+  const ranged = args.minSec !== undefined && args.maxSec !== undefined;
   const opts: RecapOpts = {
-    targetSec: args.targetSec,
+    targetSec: ranged ? (args.minSec! + args.maxSec!) / 2 : args.targetSec,
+    ...(ranged ? { minSec: args.minSec, maxSec: args.maxSec } : {}),
     minSegmentSec: Math.min(args.minSegmentSec ?? SPEECH_MIN_SEGMENT_SEC, args.maxSegmentSec),
     maxSegmentSec: args.maxSegmentSec,
   };
@@ -249,7 +259,7 @@ export async function planRecap(
 
   const segments = planSpeechRecap(scored, total, opts);
   if (segments.length === 0 && windows.length > 0) warnings.push('Không chọn được đoạn nào trong giới hạn thời lượng.');
-  shortfallWarning(segments, opts.targetSec, warnings);
+  shortfallWarning(segments, opts, warnings);
   const candidates = recapCandidates(speechPool(scored), segments, opts);
   return {
     success: true,
@@ -604,21 +614,31 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   };
 }
 
+/** Problems with a minSec/maxSec pair, shared by plan_recap and workflow_recap. */
+export function recapRangeIssues(a: { minSec?: number | undefined; maxSec?: number | undefined }): string[] {
+  if ((a.minSec === undefined) !== (a.maxSec === undefined)) return ['Give minSec and maxSec together.'];
+  if (a.minSec !== undefined && a.maxSec !== undefined && a.minSec >= a.maxSec) return ['minSec must be less than maxSec.'];
+  return [];
+}
+
 export const recapTools: ToolModule[] = [
   {
     name: 'plan_recap',
     description:
-      'Plans a recap of a sequence: returns the segments to keep, in time order, plus extra candidates. Mode "speech" picks runs of whole transcribed sentences (4-20 s each) spread over chapters of about 12 s of the target, dropping near-duplicate passages; mode "shots" picks the best stretch (at most 6 s) of each shot of the clips on the lowest video track, scored by exposure and sharpness. "auto" (default) uses speech when the dialogue covers at least 30% of the sequence, otherwise shots. The total lands within targetSec +/-10%. Speech uses the transcript from transcribe_sequence (returns status "running" until it is done) and ffmpeg loudness; shots need ffmpeg. Segment times are sequence seconds; pass the segments unchanged to build_recap with the returned fingerprint. Read-only.',
+      'Plans a recap of a sequence: returns the segments to keep, in time order, plus extra candidates. Mode "speech" picks runs of whole transcribed sentences (4-20 s each) spread over chapters of about 12 s of the target, dropping near-duplicate passages; mode "shots" picks the best stretch (at most 6 s) of each shot of the clips on the lowest video track, scored by exposure and sharpness. "auto" (default) uses speech when the dialogue covers at least 30% of the sequence, otherwise shots. The total lands within targetSec +/-10%; with minSec and maxSec it lands in that range (aiming at the middle; targetSec is then ignored) and never exceeds maxSec. Speech uses the transcript from transcribe_sequence (returns status "running" until it is done) and ffmpeg loudness; shots need ffmpeg. Segment times are sequence seconds; pass the segments unchanged to build_recap with the returned fingerprint. Read-only.',
     inputSchema: z.object({
       sequenceId: z.string().optional().describe('Sequence ID. Defaults to the active sequence.'),
       dialogueTrackIndices: z.array(z.number().int().min(0)).optional().describe('Audio track indices that carry speech; use the same value as transcribe_sequence. Defaults to every audio track that has a clip with a media file.'),
       glossary: z.array(z.string()).optional().describe('Names and terms to bias recognition toward; use the same list as transcribe_sequence.'),
       engine: z.enum(ENGINE_IDS).optional().describe('Speech engine; use the same value as transcribe_sequence.'),
-      targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90).'),
+      targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90). Ignored when minSec and maxSec are given.'),
+      minSec: z.number().min(5).optional().describe('Shortest acceptable recap in seconds; give with maxSec. A plan under it is returned with a warning.'),
+      maxSec: z.number().min(5).optional().describe('Hard ceiling on the recap in seconds; give with minSec. The plan never exceeds it.'),
       mode: z.enum(['auto', 'speech', 'shots']).default('auto').describe('auto (default) picks speech when the dialogue covers at least 30% of the sequence, else shots.'),
       minSegmentSec: z.number().positive().optional().describe('Shortest segment in seconds (default 8 for speech, 4 for shots).'),
       maxSegmentSec: z.number().positive().default(20).describe('Longest segment in seconds (default 20; shot segments are capped at 6).'),
-    }).refine((a) => a.minSegmentSec === undefined || a.minSegmentSec <= a.maxSegmentSec, { message: 'minSegmentSec must not exceed maxSegmentSec.' }),
+    }).refine((a) => a.minSegmentSec === undefined || a.minSegmentSec <= a.maxSegmentSec, { message: 'minSegmentSec must not exceed maxSegmentSec.' })
+      .superRefine((a, issue) => recapRangeIssues(a).forEach((message) => issue.addIssue({ code: 'custom', message }))),
     run: (ctx, args) => planRecap(ctx, args),
   },
   {

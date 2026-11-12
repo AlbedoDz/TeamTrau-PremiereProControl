@@ -64,6 +64,13 @@ describe('plan_recap schema', () => {
   it('rejects a minimum above the maximum', () => {
     expect(() => parse({ minSegmentSec: 30 })).toThrow(/minSegmentSec/);
   });
+  it('takes minSec and maxSec together, the minimum below the maximum, both at least 5 s', () => {
+    expect(parse({ minSec: 75, maxSec: 105 })).toMatchObject({ minSec: 75, maxSec: 105 });
+    expect(() => parse({ minSec: 75 })).toThrow(/minSec and maxSec/);
+    expect(() => parse({ maxSec: 105 })).toThrow(/minSec and maxSec/);
+    expect(() => parse({ minSec: 100, maxSec: 100 })).toThrow(/minSec must be less than maxSec/);
+    expect(() => parse({ minSec: 3, maxSec: 10 })).toThrow();
+  });
 });
 
 describe('plan_recap shots mode', () => {
@@ -109,6 +116,15 @@ describe('plan_recap shots mode', () => {
     const result: any = await tool.run(ctxWith([vclip()]), parse({ mode: 'shots', targetSec: 90 }));
     expect(result.success).toBe(true);
     expect(result.warnings.join(' ')).toMatch(/Chỉ chọn được .* giây, thấp hơn mục tiêu 90/);
+  });
+
+  it('keeps a shots plan within minSec-maxSec and warns under minSec', async () => {
+    const result: any = await tool.run(ctxWith([vclip()]), parse({ mode: 'shots', minSec: 10, maxSec: 14 }));
+    expect(result.success).toBe(true);
+    expect(result.totalSec).toBeLessThanOrEqual(14);
+    const short: any = await tool.run(ctxWith([vclip()]), parse({ mode: 'shots', minSec: 80, maxSec: 100 }));
+    expect(short.totalSec).toBeLessThanOrEqual(100);
+    expect(short.warnings.join(' ')).toMatch(/Chỉ chọn được .* giây, ngắn hơn mức tối thiểu 80 giây/);
   });
 
   it('fails clearly when there is no video', async () => {

@@ -3,6 +3,7 @@ import {
   chapterCount,
   jaccard,
   planShotRecap,
+  recapBounds,
   planSpeechRecap,
   recapCandidates,
   shotPool,
@@ -180,5 +181,31 @@ describe('shot recap on fast cuts', () => {
 
   it('does not join shots separated by more than a frame', () => {
     expect(shotPool([{ start: 0, end: 2, score: 1 }, { start: 2.5, end: 4.5, score: 1 }], opts)).toEqual([]);
+  });
+});
+
+describe('recap duration range', () => {
+  it('derives the range from the target when no bounds are given', () => {
+    expect(recapBounds({ targetSec: 90, minSegmentSec: 4, maxSegmentSec: 20 })).toEqual({ lo: 81, hi: 99 });
+  });
+
+  it('uses minSec and maxSec when given', () => {
+    expect(recapBounds({ targetSec: 90, minSegmentSec: 4, maxSegmentSec: 20, minSec: 75, maxSec: 105 })).toEqual({ lo: 75, hi: 105 });
+  });
+
+  it('never goes past maxSec, even when it is under target + 10%', () => {
+    const opts: RecapOpts = { targetSec: 90, minSegmentSec: 4, maxSegmentSec: 20, minSec: 80, maxSec: 92 };
+    const segments = planSpeechRecap(scored, TOTAL, opts);
+    const total = segments.reduce((s, x) => s + (x.end - x.start), 0);
+    expect(total).toBeLessThanOrEqual(92 + 1e-6);
+    expect(total).toBeGreaterThanOrEqual(80);
+  });
+
+  it('trims shots to land under maxSec', () => {
+    const shots: ScoredShot[] = Array.from({ length: 100 }, (_, i) => ({ start: i * 6, end: i * 6 + 5.5, score: (i * 7) % 10 }));
+    const opts: RecapOpts = { targetSec: 45, minSegmentSec: 4, maxSegmentSec: 6, minSec: 40, maxSec: 47 };
+    const total = planShotRecap(shots, 600, opts).reduce((s, x) => s + (x.end - x.start), 0);
+    expect(total).toBeLessThanOrEqual(47 + 1e-6);
+    expect(total).toBeGreaterThanOrEqual(40);
   });
 });

@@ -148,6 +148,9 @@
         if (card.tool === 'workflow_shorts' && args.minSec > args.maxSec) {
             out.push('"Ngắn nhất" không được lớn hơn "Dài nhất".');
         }
+        if (card.tool === 'workflow_recap' && args.minSec >= args.maxSec) {
+            out.push('"Ngắn nhất" phải nhỏ hơn "Dài nhất".');
+        }
         if (card.tool === 'workflow_rough_cut' && !hasValue(args.musicPath) && !hasValue(args.targetSec)) {
             out.push('Cần điền: Thời lượng mong muốn (giây), hoặc chọn file nhạc.');
         }

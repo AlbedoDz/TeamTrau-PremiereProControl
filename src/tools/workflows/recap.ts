@@ -12,6 +12,9 @@ import { awaitPending, failure, resolveSource, runSteps, uniqueSequenceName, typ
 export interface RecapArgs extends TranscriptArgs {
   name?: string | undefined;
   targetSec: number;
+  /** Given together (the schema checks): the recap lands in [minSec, maxSec] and never exceeds maxSec. */
+  minSec?: number | undefined;
+  maxSec?: number | undefined;
   aspect: '16:9' | '9:16';
   captionStyle: 'none' | 'clean' | 'pop' | 'karaoke';
   audioLeadSec: number;
@@ -27,6 +30,7 @@ export async function workflowRecap(ctx: ToolContext, args: RecapArgs): Promise<
   const summary: Record<string, unknown> = {};
   let sourceId = args.sequenceId;
   let sourceName = '';
+  let frameSec = 0;
   let plan: PlanRecapResult | undefined;
 
   const planStep: WorkflowStep = {
@@ -36,6 +40,7 @@ export async function workflowRecap(ctx: ToolContext, args: RecapArgs): Promise<
       if (isError(source)) return failure(source.error);
       sourceId = source.sequenceId;
       sourceName = source.sequenceName;
+      frameSec = source.frameDuration;
       const planned: any = await awaitPending(ctx, 'Nhận dạng giọng nói', () =>
         planRecap(ctx, {
           sequenceId: sourceId,
@@ -43,6 +48,8 @@ export async function workflowRecap(ctx: ToolContext, args: RecapArgs): Promise<
           glossary: args.glossary,
           engine: args.engine,
           targetSec: args.targetSec,
+          minSec: args.minSec,
+          maxSec: args.maxSec,
           mode: 'auto',
           maxSegmentSec: MAX_SEGMENT_SEC,
         }),
@@ -92,6 +99,12 @@ export async function workflowRecap(ctx: ToolContext, args: RecapArgs): Promise<
       summary.verified = built.verified;
       if (built.qa !== undefined) summary.qa = built.qa;
       if (built.verified === false) warnings.push('Không xác nhận được độ dài recap sau khi dựng.');
+      // maxSec is a hard ceiling: a built recap more than a frame over it is not accepted as verified.
+      const durationSec = Number(built.durationSec);
+      if (args.maxSec !== undefined && Number.isFinite(durationSec) && durationSec > args.maxSec + (frameSec > 0 ? frameSec : 1 / 24)) {
+        summary.verified = false;
+        warnings.push(`Recap sau khi dựng dài ${durationSec} giây, vượt mức tối đa ${args.maxSec} giây.`);
+      }
       return { ok: true, detail: { sequenceId: built.sequenceId, durationSec: built.durationSec, verified: built.verified }, ...created, complete: true };
     },
   };

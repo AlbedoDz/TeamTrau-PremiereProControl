@@ -5,6 +5,7 @@ import { ENGINE_IDS } from '../../analysis/asr-engines.js';
 import { workflowCleanVoiceover } from '../workflows/clean-voiceover.js';
 import { workflowSubtitles } from '../workflows/subtitles.js';
 import { workflowRecap } from '../workflows/recap.js';
+import { recapRangeIssues } from './recap.js';
 import { workflowShorts } from '../workflows/shorts.js';
 import { workflowRoughCut } from '../workflows/rough-cut.js';
 import { FOOTAGE_SOURCE_HELP, MUSIC_PATH_HELP } from '../project-media.js';
@@ -59,20 +60,22 @@ export const workflowToolsTools: ToolModule[] = [
   {
     name: 'workflow_recap',
     description:
-      'One-call recap. Plans the recap (speech mode when the dialogue covers at least 30% of the sequence, otherwise shots; waits for the background transcription), then builds it as a new sequence "<name> - recap" with build_recap (30 ms crossfades, optional 9:16 Auto Reframe and captions, loudness -14, qa_sequence and readback). The source sequence is never changed. dryRun=true only returns the planned segments and creates nothing. Reports per-step progress and can be cancelled. Needs ffmpeg and, for speech mode, the analysis sidecar.',
+      'One-call recap. Plans the recap (speech mode when the dialogue covers at least 30% of the sequence, otherwise shots; waits for the background transcription), aiming at targetSec, or inside minSec-maxSec when both are given (never over maxSec), then builds it as a new sequence "<name> - recap" with build_recap (30 ms crossfades, optional 9:16 Auto Reframe and captions, loudness -14, qa_sequence and readback). The source sequence is never changed. dryRun=true only returns the planned segments and creates nothing. Reports per-step progress and can be cancelled. Needs ffmpeg and, for speech mode, the analysis sidecar.',
     inputSchema: z.object({
       sequenceId: sequenceIdArg,
       name: z.string().min(1).optional().describe('Name of the recap sequence. Default "<source name> - recap"; " (2)" is added when the name is taken.'),
       dialogueTrackIndices: dialogueArg,
       glossary: glossaryArg,
       engine: engineArg,
-      targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90).'),
+      targetSec: z.number().positive().default(90).describe('Length of the recap in seconds (default 90); the result lands within +/-10%. Ignored when minSec and maxSec are given.'),
+      minSec: z.number().min(5).optional().describe('Shortest acceptable recap in seconds; give with maxSec. A shorter plan is kept with a warning.'),
+      maxSec: z.number().min(5).optional().describe('Hard ceiling in seconds; give with minSec. The plan never exceeds it and a built recap more than a frame over it is reported as not verified.'),
       aspect: z.enum(['16:9', '9:16']).default('16:9').describe('"9:16" reframes the recap to vertical with Auto Reframe (default "16:9").'),
       captionStyle: z.enum(['none', 'clean', 'pop', 'karaoke']).default('none').describe('Burned-in captions from the transcript (default none).'),
       audioLeadSec: z.number().min(0).max(2).default(0).describe('J-cut lead in seconds: the next segment\'s audio starts this much before its picture (default 0 = straight cuts).'),
       dryRun: z.boolean().default(false).describe('Only plan and return the segments; create and change nothing.'),
       backup: backupArg,
-    }),
+    }).superRefine((a, issue) => recapRangeIssues(a).forEach((message) => issue.addIssue({ code: 'custom', message }))),
     run: (ctx, args) => workflowRecap(ctx, args),
   },
   {

@@ -28,9 +28,10 @@
       "id": "recap",
       "tool": "workflow_recap",
       "title": "Recap dài thành ngắn",
-      "hint": "Chọn tự động các đoạn hay và dựng thành sequence mới \"… - recap\".",
+      "hint": "Chọn tự động các đoạn hay và dựng thành sequence mới \"… - recap\". Recap nằm trong khoảng Ngắn nhất – Dài nhất (tuỳ chỗ câu kết thúc) và không bao giờ dài hơn Dài nhất.",
       "fields": [
-        { "key": "targetSec", "label": "Thời lượng mong muốn (giây)", "type": "number", "default": 90, "min": 5 },
+        { "key": "minSec", "label": "Ngắn nhất (giây)", "type": "number", "default": 75, "min": 5 },
+        { "key": "maxSec", "label": "Dài nhất (giây)", "type": "number", "default": 105, "min": 5 },
         {
           "key": "aspect", "label": "Khung hình", "type": "select", "default": "16:9",
           "options": [
