@@ -119,6 +119,9 @@
         return out;
     }
 
+    /** Colour, position and size only apply when there are captions. */
+    function captionOptionsVisible(style) { return hasValue(style) && style !== 'none'; }
+
     /** The preview_caption_style call for a caption look; null when there are no captions to preview. */
     function previewRequest(state, cardId, aspect, caption) {
         var v = caption || {};
@@ -702,6 +705,7 @@
         CAPTION_STYLE_LABELS: CAPTION_STYLE_LABELS,
         ACCENT_SWATCHES: ACCENT_SWATCHES,
         isHexColor: isHexColor,
+        captionOptionsVisible: captionOptionsVisible,
         captionArgs: captionArgs,
         previewRequest: previewRequest,
         nextPreview: nextPreview,

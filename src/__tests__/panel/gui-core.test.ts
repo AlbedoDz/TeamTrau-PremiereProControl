@@ -522,6 +522,12 @@ describe('gui-core caption look helpers', () => {
     expect(Object.keys(core.CAPTION_STYLE_LABELS)).toEqual(['clean', 'pop', 'karaoke', 'highlight', 'minimal', 'none']);
   });
 
+  it('captionOptionsVisible hides the options for none', () => {
+    expect(core.captionOptionsVisible('none')).toBe(false);
+    expect(core.captionOptionsVisible('')).toBe(false);
+    expect(core.captionOptionsVisible('pop')).toBe(true);
+  });
+
   it('previewRequest builds the tool call and returns null for none', () => {
     const req = core.previewRequest({}, 'shorts', '9:16', { style: 'pop', accent: '#FFD400', position: 'middle' });
     expect(req).toEqual({ tool: 'preview_caption_style', args: { style: 'pop', captionAccent: '#FFD400', captionPosition: 'middle', aspect: '9:16' } });

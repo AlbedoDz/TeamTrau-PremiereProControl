@@ -581,7 +581,7 @@
                     note.textContent = Core.vi(result || {});
                 } else {
                     note.textContent = '';
-                    image.src = 'file:///' + String(result.path).replace(/\\/g, '/') + '?t=' + new Date().getTime();
+                    image.src = 'file:///' + encodeURI(String(result.path).replace(/\\/g, '/')) + '?t=' + new Date().getTime();
                     image.style.display = '';
                 }
                 flush();
@@ -599,6 +599,7 @@
                 return;
             }
             if (value.accent && !Core.isHexColor(value.accent)) {
+                pending = null;
                 note.textContent = 'Màu phải có dạng #RRGGBB.';
                 return;
             }
@@ -611,11 +612,17 @@
             }
         }
 
+        function showOptions() {
+            options.style.display = Core.captionOptionsVisible(style.value) ? '' : 'none';
+        }
+
         function changed() {
+            showOptions();
             if (timer) clearTimeout(timer);
             timer = setTimeout(request, 400);
         }
 
+        var options = el('div', { className: 'gui-caption-options' });
         var swatches = [];
         for (var s = 0; s < Core.ACCENT_SWATCHES.length; s++) {
             (function (color) {
@@ -633,16 +640,21 @@
         hex.oninput = changed;
         captionControls[card.id] = { read: read, flush: flush, changed: changed };
 
+        options.appendChild(el('div', { className: 'gui-swatches' }, swatches));
+        options.appendChild(el('div', { className: 'gui-caption-row' }, [
+            el('label', { 'for': id + '-position', text: 'Vị trí' }), position,
+            el('label', { 'for': id + '-size', text: 'Cỡ chữ' }), size
+        ]));
+        showOptions();
+        // First sample: through the same debounce and nextPreview path as any change.
+        changed();
+
         return el('div', { className: 'gui-field gui-caption' }, [
             el('label', { 'for': id + '-style', text: field.label }),
             style,
             image,
             note,
-            el('div', { className: 'gui-swatches' }, swatches),
-            el('div', { className: 'gui-caption-row' }, [
-                el('label', { 'for': id + '-position', text: 'Vị trí' }), position,
-                el('label', { 'for': id + '-size', text: 'Cỡ chữ' }), size
-            ])
+            options
         ]);
     }
 
