@@ -267,6 +267,7 @@
     var cardButtons = {};          // card id -> [Xem trước, Chạy trên bản sao]
 
     function updateCardLocks() {
+        if (!isActive()) for (var cid in captionControls) captionControls[cid].flush();
         for (var id in cardButtons) {
             var locked = Core.isCardLocked(runState, id);
             for (var i = 0; i < cardButtons[id].length; i++) cardButtons[id][i].disabled = locked;
@@ -332,6 +333,9 @@
             var input = $('f-' + card.id + '-' + field.key);
             if (!input) continue;
             values[field.key] = field.type === 'toggle' ? input.checked : input.value;
+        }
+        for (var j = 0; j < card.fields.length; j++) {
+            if (card.fields[j].type === 'caption' && captionControls[card.id]) values[card.fields[j].key] = captionControls[card.id].read();
         }
         return values;
     }
@@ -524,9 +528,128 @@
 
     // ----------------------------------------------------------------------- the UI
 
+    var captionControls = {};      // card id -> { read, flush, changed } of its caption look picker
+
+    var POSITION_OPTIONS = [{ value: 'bottom', label: 'Dưới' }, { value: 'middle', label: 'Giữa' }];
+    var SIZE_OPTIONS = [{ value: 'small', label: 'Nhỏ' }, { value: 'medium', label: 'Vừa' }, { value: 'large', label: 'Lớn' }];
+
+    function selectNode(id, options, selected) {
+        var select = el('select', { id: id });
+        for (var i = 0; i < options.length; i++) {
+            var option = el('option', { value: options[i].value, text: options[i].label });
+            if (options[i].value === selected) option.selected = true;
+            select.appendChild(option);
+        }
+        return select;
+    }
+
+    /** Caption look picker: style, colour, position, size, and a live preview image. */
+    function captionNode(card, field) {
+        var id = 'f-' + card.id + '-' + field.key;
+        var def = field.default || {};
+        var styleOptions = [];
+        for (var key in Core.CAPTION_STYLE_LABELS) {
+            if (key === 'none' && card.id !== 'recap') continue;
+            styleOptions.push({ value: key, label: Core.CAPTION_STYLE_LABELS[key] });
+        }
+        var style = selectNode(id + '-style', styleOptions, def.style);
+        var position = selectNode(id + '-position', POSITION_OPTIONS, 'bottom');
+        var size = selectNode(id + '-size', SIZE_OPTIONS, 'medium');
+        var hex = el('input', { type: 'text', id: id + '-accent', value: '', placeholder: '#RRGGBB (để trống: màu mặc định)' });
+        var image = el('img', { className: 'gui-caption-preview', alt: 'Xem trước phụ đề' });
+        image.style.display = 'none';
+        var note = el('div', { className: 'gui-hint' });
+
+        var timer = null;
+        var inFlight = false;
+        var pending = null;
+
+        function read() {
+            return { style: style.value, accent: hex.value.replace(/^\s+|\s+$/g, ''), position: position.value, size: size.value };
+        }
+
+        /** Sends the kept request when neither a workflow nor an earlier preview is running. */
+        function flush() {
+            var step = Core.nextPreview(pending, inFlight || isActive(), null);
+            pending = step.pending;
+            if (!step.send) return;
+            inFlight = true;
+            callTool(step.send.tool, step.send.args, function (result) {
+                inFlight = false;
+                if (!result || result.success === false || !result.path) {
+                    image.style.display = 'none';
+                    note.textContent = Core.vi(result || {});
+                } else {
+                    note.textContent = '';
+                    image.src = 'file:///' + String(result.path).replace(/\\/g, '/') + '?t=' + new Date().getTime();
+                    image.style.display = '';
+                }
+                flush();
+            });
+        }
+
+        function request() {
+            var aspectInput = $('f-' + card.id + '-aspect');
+            var value = read();
+            var req = Core.previewRequest({}, card.id, aspectInput ? aspectInput.value : '', value);
+            if (!req) {
+                pending = null;
+                image.style.display = 'none';
+                note.textContent = '';
+                return;
+            }
+            if (value.accent && !Core.isHexColor(value.accent)) {
+                note.textContent = 'Màu phải có dạng #RRGGBB.';
+                return;
+            }
+            note.textContent = '';
+            var step = Core.nextPreview(pending, inFlight || isActive(), req);
+            pending = step.pending;
+            if (step.send) {
+                pending = step.send;
+                flush();
+            }
+        }
+
+        function changed() {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(request, 400);
+        }
+
+        var swatches = [];
+        for (var s = 0; s < Core.ACCENT_SWATCHES.length; s++) {
+            (function (color) {
+                var button = el('button', { type: 'button', className: 'gui-swatch', title: color });
+                button.style.background = color;
+                button.onclick = function () { hex.value = color; changed(); };
+                swatches.push(button);
+            })(Core.ACCENT_SWATCHES[s]);
+        }
+        swatches.push(hex);
+
+        style.onchange = changed;
+        position.onchange = changed;
+        size.onchange = changed;
+        hex.oninput = changed;
+        captionControls[card.id] = { read: read, flush: flush, changed: changed };
+
+        return el('div', { className: 'gui-field gui-caption' }, [
+            el('label', { 'for': id + '-style', text: field.label }),
+            style,
+            image,
+            note,
+            el('div', { className: 'gui-swatches' }, swatches),
+            el('div', { className: 'gui-caption-row' }, [
+                el('label', { 'for': id + '-position', text: 'Vị trí' }), position,
+                el('label', { 'for': id + '-size', text: 'Cỡ chữ' }), size
+            ])
+        ]);
+    }
+
     function fieldNode(card, field) {
         var id = 'f-' + card.id + '-' + field.key;
         var input;
+        if (field.type === 'caption') return captionNode(card, field);
         if (field.type === 'toggle') {
             input = el('input', { type: 'checkbox', id: id });
             input.checked = !!field.default;
@@ -626,6 +749,8 @@
         var preview = el('button', { type: 'button', className: 'secondary', text: 'Xem trước', onclick: function () { runCard(card, true); } });
         var runButton = el('button', { type: 'button', className: 'primary', text: 'Chạy trên bản sao', onclick: function () { runCard(card, false); } });
         cardButtons[card.id] = [preview, runButton];
+        var aspectSelect = node.querySelector('#f-' + card.id + '-aspect');
+        if (aspectSelect && captionControls[card.id]) aspectSelect.onchange = captionControls[card.id].changed;
         node.appendChild(el('div', { className: 'gui-actions' }, [preview, runButton]));
         return node;
     }

@@ -294,3 +294,44 @@
     font-size: 11px;
     color: var(--text-1);
 }
+
+.gui-caption-preview {
+    display: block;
+    max-width: 100%;
+    max-height: 220px;
+    margin: 6px 0;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #000;
+}
+
+.gui-swatches {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0;
+}
+
+.gui-swatches input[type="text"] {
+    flex: 1;
+    min-width: 0;
+}
+
+.gui-swatch {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid #888;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.gui-caption-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.gui-caption-row label {
+    margin: 0;
+}

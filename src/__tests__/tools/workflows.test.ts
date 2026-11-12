@@ -499,7 +499,8 @@ describe('workflow_subtitles', () => {
 
   it('writes only the SRT by default and leaves the project alone', async () => {
     const result = await runTool('workflow_subtitles', ctxWith(), {});
-    expect(createCaptions.mock.calls[0][1]).toMatchObject({ srtOnly: true, maxCharsPerLine: 42 });
+    expect(createCaptions.mock.calls[0][1]).toMatchObject({ srtOnly: true });
+    expect(createCaptions.mock.calls[0][1].maxCharsPerLine).toBeUndefined();
     expect(duplicateSequence).not.toHaveBeenCalled();
     expect(createCaptionTrack).not.toHaveBeenCalled();
     expect(result).toMatchObject({ success: true, outputSequenceIds: [] });

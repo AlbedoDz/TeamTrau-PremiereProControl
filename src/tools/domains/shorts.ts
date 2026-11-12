@@ -492,7 +492,7 @@ function multiFaceStretches(
   return out;
 }
 
-const probeScript = (sequenceId: string): string => `
+export const probeScript = (sequenceId: string): string => `
   // build_short:probe
   try {
     var seq = __findSequence(${JSON.stringify(sequenceId)});

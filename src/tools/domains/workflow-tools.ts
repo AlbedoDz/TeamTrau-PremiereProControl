@@ -52,7 +52,7 @@ export const workflowToolsTools: ToolModule[] = [
       glossary: glossaryArg,
       engine: engineArg,
       output: z.enum(['srt', 'caption_track']).default('srt').describe('"srt" writes the file only; "caption_track" also adds a caption track on a copy of the sequence (default "srt").'),
-      maxCharsPerLine: z.number().int().min(10).default(42).describe('Maximum characters per caption line (default 42).'),
+      maxCharsPerLine: z.number().int().min(10).optional().describe('Maximum characters per caption line. Default: sized to the sequence frame (42 for 16:9, 22 for 9:16, 30 for 1:1, 28 for 4:5).'),
       outputPath: z.string().optional().describe('Where to write the .srt; must end in .srt and must not exist. Defaults to the premiere-mcp renders folder.'),
       dryRun: z.boolean().default(false).describe('Return the cue count and a preview; write and change nothing.'),
       backup: backupArg,

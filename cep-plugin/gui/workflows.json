@@ -36,18 +36,12 @@
           "key": "aspect", "label": "Khung hình", "type": "select", "default": "16:9",
           "options": [
             { "value": "16:9", "label": "Ngang 16:9" },
-            { "value": "9:16", "label": "Dọc 9:16" }
+            { "value": "9:16", "label": "Dọc 9:16" },
+            { "value": "1:1", "label": "Vuông 1:1" },
+            { "value": "4:5", "label": "Dọc 4:5" }
           ]
         },
-        {
-          "key": "captionStyle", "label": "Kiểu phụ đề", "type": "select", "default": "clean",
-          "options": [
-            { "value": "none", "label": "Không phụ đề" },
-            { "value": "clean", "label": "Gọn" },
-            { "value": "pop", "label": "Nổi bật" },
-            { "value": "karaoke", "label": "Karaoke" }
-          ]
-        },
+        { "key": "caption", "type": "caption", "label": "Phụ đề", "default": { "style": "none" } },
         { "key": "audioLeadSec", "label": "J-cut: âm thanh vào sớm (giây, 0 = cắt thẳng)", "type": "number", "default": 0, "min": 0, "max": 2 }
       ]
     },
@@ -61,13 +55,14 @@
         { "key": "minSec", "label": "Ngắn nhất (giây)", "type": "number", "default": 30, "min": 5 },
         { "key": "maxSec", "label": "Dài nhất (giây)", "type": "number", "default": 60, "min": 10 },
         {
-          "key": "captionStyle", "label": "Kiểu phụ đề", "type": "select", "default": "clean",
+          "key": "aspect", "label": "Khung hình", "type": "select", "default": "9:16",
           "options": [
-            { "value": "clean", "label": "Gọn" },
-            { "value": "pop", "label": "Nổi bật" },
-            { "value": "karaoke", "label": "Karaoke" }
+            { "value": "9:16", "label": "Dọc 9:16" },
+            { "value": "1:1", "label": "Vuông 1:1" },
+            { "value": "4:5", "label": "Dọc 4:5" }
           ]
-        }
+        },
+        { "key": "caption", "type": "caption", "label": "Phụ đề", "default": { "style": "clean" } }
       ]
     },
     {
@@ -83,7 +78,7 @@
             { "value": "caption_track", "label": "SRT và track phụ đề trên bản sao" }
           ]
         },
-        { "key": "maxCharsPerLine", "label": "Số ký tự tối đa mỗi dòng", "type": "number", "default": 42, "min": 10, "integer": true },
+        { "key": "maxCharsPerLine", "label": "Số ký tự tối đa mỗi dòng", "type": "number", "default": "", "min": 10, "integer": true, "placeholder": "Tự động theo khung" },
         { "key": "outputPath", "label": "Lưu SRT tại (để trống là tự chọn)", "type": "path", "default": "", "placeholder": "phu-de.srt" }
       ]
     },

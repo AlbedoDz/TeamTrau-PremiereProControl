@@ -97,6 +97,50 @@
         };
     }
 
+    // ------------------------------------------------------------------- caption look
+
+    var CAPTION_STYLE_LABELS = {
+        clean: 'Gọn', pop: 'Nổi bật', karaoke: 'Karaoke', highlight: 'Tô nền từ', minimal: 'Tối giản', none: 'Không phụ đề'
+    };
+
+    /** Copy of ACCENT_SWATCHES in src/analysis/caption-looks.ts (the panel cannot import TS; a test checks they match). */
+    var ACCENT_SWATCHES = ['#FFD400', '#FF3B5C', '#22D3EE', '#4ADE80', '#A855F7'];
+
+    function isHexColor(v) { return isString(v) && /^#[0-9A-Fa-f]{6}$/.test(v); }
+
+    /** { style, accent, position, size } to the caption* tool arguments, without defaults and empty values. */
+    function captionArgs(value) {
+        var v = value || {};
+        var out = {};
+        if (hasValue(v.style)) out.captionStyle = v.style;
+        if (hasValue(v.accent)) out.captionAccent = v.accent;
+        if (hasValue(v.position) && v.position !== 'bottom') out.captionPosition = v.position;
+        if (hasValue(v.size) && v.size !== 'medium') out.captionSize = v.size;
+        return out;
+    }
+
+    /** The preview_caption_style call for a caption look; null when there are no captions to preview. */
+    function previewRequest(state, cardId, aspect, caption) {
+        var v = caption || {};
+        if (!hasValue(v.style) || v.style === 'none') return null;
+        var args = { style: v.style };
+        if (hasValue(v.accent) && isHexColor(v.accent)) args.captionAccent = v.accent;
+        if (hasValue(v.position) && v.position !== 'bottom') args.captionPosition = v.position;
+        if (hasValue(v.size) && v.size !== 'medium') args.captionSize = v.size;
+        if (hasValue(aspect)) args.aspect = aspect;
+        return { tool: 'preview_caption_style', args: args };
+    }
+
+    /**
+     * Keeps preview calls from piling up: while the runner is busy only the newest request is kept
+     * (pending); when it is free a request, or the one kept, is sent at once.
+     */
+    function nextPreview(pending, busy, request) {
+        var want = request || pending || null;
+        if (busy) return { send: null, pending: want };
+        return { send: want, pending: null };
+    }
+
     // ------------------------------------------------------------------- buildArgs
 
     /** The form value as the tool expects it; undefined for a number field left empty with no default. */
@@ -113,6 +157,7 @@
             return n;
         }
         if (field.type === 'path') return isString(value) ? value.trim() : '';
+        if (field.type === 'caption') return value && typeof value === 'object' ? value : field.default;
         return value;
     }
 
@@ -130,6 +175,11 @@
             var value = coerceField(field, form[field.key]);
             if (value === undefined) continue;
             if (field.type === 'path' && value === '') continue;
+            if (field.type === 'caption') {
+                var cap = captionArgs(value);
+                for (var ck in cap) if (Object.prototype.hasOwnProperty.call(cap, ck)) args[ck] = cap[ck];
+                continue;
+            }
             if (hasValue(field.omitValue) && value === field.omitValue) continue;
             if (field.map && Object.prototype.hasOwnProperty.call(field.map, value)) value = field.map[value];
             args[field.key] = value;
@@ -145,6 +195,7 @@
         for (var i = 0; i < fields.length; i++) {
             if (fields[i].required && !hasValue(args[fields[i].key])) out.push('Cần điền: ' + fields[i].label + '.');
         }
+        if (hasValue(args.captionAccent) && !isHexColor(args.captionAccent)) out.push('Màu phải có dạng #RRGGBB.');
         if (card.tool === 'workflow_shorts' && args.minSec > args.maxSec) {
             out.push('"Ngắn nhất" không được lớn hơn "Dài nhất".');
         }
@@ -375,6 +426,9 @@
         }
         if (Array.isArray(s.shorts)) lines.push('Đã dựng ' + s.shorts.length + ' short');
         if (isNumber(s.cueCount)) lines.push(s.cueCount + ' dòng phụ đề');
+        if (s.lineLimits && isNumber(s.lineLimits.maxCharsPerLine)) {
+            lines.push(s.lineLimits.maxCharsPerLine + ' ký tự/dòng' + (s.lineLimits.layout ? ' (khung ' + s.lineLimits.layout + ')' : ''));
+        }
         if (s.srtPath) lines.push('File SRT: ' + s.srtPath);
         if (isNumber(s.shotCount)) {
             lines.push(s.shotCount + ' shot' + (isNumber(s.totalSeconds) ? ', tổng ' + formatDuration(s.totalSeconds) : ''));
@@ -645,6 +699,12 @@
         DEFAULT_SETTINGS: DEFAULT_SETTINGS,
         resolveRunner: resolveRunner,
         buildArgs: buildArgs,
+        CAPTION_STYLE_LABELS: CAPTION_STYLE_LABELS,
+        ACCENT_SWATCHES: ACCENT_SWATCHES,
+        isHexColor: isHexColor,
+        captionArgs: captionArgs,
+        previewRequest: previewRequest,
+        nextPreview: nextPreview,
         missingRequired: missingRequired,
         normalizeSettings: normalizeSettings,
         applySettings: applySettings,
