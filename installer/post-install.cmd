@@ -12,8 +12,7 @@ set "FAILED=0"
 set "PATH=%ROOT%\node;%ROOT%\uv;%ROOT%\ffmpeg\bin;%PATH%"
 set "UV_PYTHON_INSTALL_DIR=%ROOT%\uvpython"
 set "UV_PYTHON_DOWNLOADS=never"
-set "UV_NO_INDEX=1"
-set "UV_FIND_LINKS=%ROOT%\wheels"
+set "PREMIERE_MCP_WHEELS=%ROOT%\wheels"
 if not defined PREMIERE_MCP_HOME set "PREMIERE_MCP_HOME=%USERPROFILE%\.premiere-mcp"
 
 echo [1/4] Installing the Premiere bridge panel

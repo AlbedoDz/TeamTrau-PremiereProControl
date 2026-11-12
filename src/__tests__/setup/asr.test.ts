@@ -193,6 +193,26 @@ describe('setupAsr and asrStatus', () => {
       expect(spawned.some((s) => s.cmd === 'uv' && s.args[0] === 'venv')).toBe(true);
     });
 
+    it('installs from the bundled wheels only when PREMIERE_MCP_WHEELS is set', async () => {
+      uvAvailable = true;
+      process.env.PREMIERE_MCP_WHEELS = '/app/wheels';
+      try {
+        await setupAsr(() => undefined, {
+          pkgPythonDir: fakePkgPythonDir,
+          platform: 'win32',
+          home: fakeHome,
+          exists: () => true,
+        });
+      } finally {
+        delete process.env.PREMIERE_MCP_WHEELS;
+      }
+      const installs = spawned.filter((s) => s.cmd === 'uv' && s.args[0] === 'pip' && s.args[1] === 'install');
+      expect(installs.length).toBeGreaterThan(0);
+      for (const call of installs) {
+        expect(call.args.slice(2, 5)).toEqual(['--no-index', '--find-links', '/app/wheels']);
+      }
+    });
+
     it('uses uv when available', async () => {
       uvAvailable = true;
       const logsWin: string[] = [];

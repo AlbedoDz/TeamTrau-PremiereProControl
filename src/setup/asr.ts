@@ -273,6 +273,11 @@ export async function setupAsr(
     }
   }
 
+  // The Windows installer ships the wheels and sets this; uv and pip then install from that folder only
+  // (uv's UV_NO_INDEX variable is not honoured by `uv pip install`, so the flags are passed explicitly).
+  const wheelsDir = process.env.PREMIERE_MCP_WHEELS;
+  const offline = wheelsDir ? ['--no-index', '--find-links', wheelsDir] : [];
+
   const uv = await isUvAvailable(spawnFn);
 
   if (uv) {
@@ -282,20 +287,20 @@ export async function setupAsr(
     }
     if (code !== 0) return code;
 
-    code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', reqTxt], log, spawnFn);
+    code = await runCommand('uv', ['pip', 'install', ...offline, '-p', py, '-r', reqTxt], log, spawnFn);
     if (code !== 0) return code;
 
     if (installWhisper) {
-      code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', whisperTxt], log, spawnFn);
+      code = await runCommand('uv', ['pip', 'install', ...offline, '-p', py, '-r', whisperTxt], log, spawnFn);
       if (code !== 0) return code;
     }
 
     if (installCuda) {
-      code = await runCommand('uv', ['pip', 'install', '-p', py, '-r', cudaTxt], log, spawnFn);
+      code = await runCommand('uv', ['pip', 'install', ...offline, '-p', py, '-r', cudaTxt], log, spawnFn);
       if (code !== 0) return code;
     }
 
-    code = await runCommand('uv', ['pip', 'install', '-p', py, pkgPythonDir], log, spawnFn);
+    code = await runCommand('uv', ['pip', 'install', ...offline, '-p', py, pkgPythonDir], log, spawnFn);
     if (code !== 0) return code;
   } else {
     if (!venvExists) {
@@ -317,20 +322,20 @@ export async function setupAsr(
     }
     }
 
-    let code = await runCommand(py, ['-m', 'pip', 'install', '-r', reqTxt], log, spawnFn);
+    let code = await runCommand(py, ['-m', 'pip', 'install', ...offline, '-r', reqTxt], log, spawnFn);
     if (code !== 0) return code;
 
     if (installWhisper) {
-      code = await runCommand(py, ['-m', 'pip', 'install', '-r', whisperTxt], log, spawnFn);
+      code = await runCommand(py, ['-m', 'pip', 'install', ...offline, '-r', whisperTxt], log, spawnFn);
       if (code !== 0) return code;
     }
 
     if (installCuda) {
-      code = await runCommand(py, ['-m', 'pip', 'install', '-r', cudaTxt], log, spawnFn);
+      code = await runCommand(py, ['-m', 'pip', 'install', ...offline, '-r', cudaTxt], log, spawnFn);
       if (code !== 0) return code;
     }
 
-    code = await runCommand(py, ['-m', 'pip', 'install', pkgPythonDir], log, spawnFn);
+    code = await runCommand(py, ['-m', 'pip', 'install', ...offline, pkgPythonDir], log, spawnFn);
     if (code !== 0) return code;
   }
 
