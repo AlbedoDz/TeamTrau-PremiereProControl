@@ -2,6 +2,17 @@
 
 All notable changes are documented here. Releases use semantic versioning.
 
+## [Unreleased]
+
+- **Update the analysis sidecar:** run `premiere-pro-mcp --setup-asr` once after upgrading. The setup command now always reinstalls the local sidecar package (version 1.5.1), and the caption tools refuse an old sidecar with `sidecar.outdated` and this command instead of drawing the wrong look.
+- Caption looks: five styles (`clean`, `pop`, `karaoke`, `highlight`, `minimal`) with `captionAccent` (#RRGGBB), `captionPosition` (`bottom` or `middle`) and `captionSize` (`small`, `medium`, `large`), on `build_short`, `build_recap` and the shorts/recap workflows. The panel has a look picker with a live preview.
+- New tool `preview_caption_style` draws a look to a cached PNG so it can be checked before captions are burned in. Previews are cached under `renders/previews/v<renderer version>`.
+- `build_short`, `build_recap` and the shorts/recap workflows export 1:1 and 4:5 (besides 9:16) through Auto Reframe: pass `aspect`.
+- Behaviour change: SRT `maxCharsPerLine` now defaults to the frame (22 on 9:16, 42 on 16:9) instead of always 42. An explicit `maxCharsPerLine` still wins.
+- Behaviour change: burned-in captions on a 16:9 recap now use the 16:9 size and safe-area row instead of the vertical one.
+- Behaviour change: the panel recap card defaults to "Không phụ đề" (no burned-in captions).
+- `plan_recap`, `build_recap` and `workflow_recap` accept `minSec` and `maxSec` together: the plan aims at the middle of the range, never exceeds `maxSec` and warns when under `minSec`.
+
 ## [1.5.0] - 2026-11-12
 
 - Panel GUI: the **TeamTrau PremiereProControl** panel now has a **Quy trình** tab next to the old **Kết nối** tab (bridge status, Start/Stop Bridge, logs; unchanged), plus a settings dialog (filler dictionary, speech engine, output folder, runner path). Five workflow cards run the workflow tools without any AI client open. Each card has **Xem trước** (`dryRun`) and **Chạy trên bản sao**; below them are a progress bar (step, elapsed time), **Hủy**, and a result area with the summary, warnings and **Mở sequence** / **Xóa bản sao**. The default panel size is 420x760 (minimum 320x480).

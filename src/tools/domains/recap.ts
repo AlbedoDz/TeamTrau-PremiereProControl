@@ -577,6 +577,7 @@ export async function buildRecap(ctx: ToolContext, args: BuildRecapArgs): Promis
   // 4. Captions from the transcript words, moved to recap time.
   const ready = transcript as TranscriptReady | null;
   if (needWords && ready) {
+    // needWords is false for 'none', so the style is a real CaptionStyleId here.
     const captioned = await addAlphaCaptions(ctx, sequenceId, ready.words, captionOptionsFrom({ ...args, captionStyle: args.captionStyle as CaptionStyleId }), timeMap);
     if ('error' in captioned) return fail(captioned.error, withBackup({ failedStep: 'captions', sequenceId }));
     for (const w of captioned.warnings ?? []) warnings.push(w);

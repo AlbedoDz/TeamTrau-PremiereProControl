@@ -581,7 +581,7 @@
                     note.textContent = Core.vi(result || {});
                 } else {
                     note.textContent = '';
-                    image.src = 'file:///' + encodeURI(String(result.path).replace(/\\/g, '/')) + '?t=' + new Date().getTime();
+                    image.src = 'file:///' + encodeURI(String(result.path).replace(/\\/g, '/')).replace(/#/g, '%23').replace(/\?/g, '%3F') + '?t=' + new Date().getTime();
                     image.style.display = '';
                 }
                 flush();

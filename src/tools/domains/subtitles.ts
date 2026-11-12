@@ -37,6 +37,12 @@ export interface CaptionsArgs {
 
 const FALLBACK_LIMITS = { maxCharsPerLine: 42, maxLines: 2, layout: '16:9' as const };
 
+function frameFallbackWarning(explicit: number | undefined): string {
+  return explicit !== undefined
+    ? `Không đọc được khung hình của sequence, dùng ${explicit} ký tự x 2 dòng theo maxCharsPerLine.`
+    : 'Không đọc được khung hình của sequence, dùng 42 ký tự x 2 dòng.';
+}
+
 /** Line limits for the sequence frame; an explicit maxCharsPerLine wins over the frame's. */
 async function resolveLineLimits(ctx: ToolContext, sequenceId: string, explicit: number | undefined, warnings: string[]) {
   let base: { maxCharsPerLine: number; maxLines: number; layout: string } = FALLBACK_LIMITS;
@@ -45,9 +51,9 @@ async function resolveLineLimits(ctx: ToolContext, sequenceId: string, explicit:
     const w = Number(probe?.frameSizeHorizontal);
     const h = Number(probe?.frameSizeVertical);
     if (probe && probe.success !== false && w > 0 && h > 0) base = subtitleLineLimits(w, h);
-    else warnings.push('Không đọc được khung hình của sequence, dùng 42 ký tự x 2 dòng.');
+    else warnings.push(frameFallbackWarning(explicit));
   } catch {
-    warnings.push('Không đọc được khung hình của sequence, dùng 42 ký tự x 2 dòng.');
+    warnings.push(frameFallbackWarning(explicit));
   }
   return explicit !== undefined ? { ...base, maxCharsPerLine: explicit } : base;
 }
