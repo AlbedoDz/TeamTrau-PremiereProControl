@@ -9,6 +9,7 @@
  */
 
 import { PremiereProBridge } from '../../bridge/index.js';
+import { PremiereBusyError, isBridgeUnavailableMessage } from '../../bridge/errors.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -205,7 +206,56 @@ describe('bridge file-queue protocol', () => {
       expect(Date.now() - started).toBeGreaterThanOrEqual(700);
     });
 
-    it('says the scripting thread is stuck when the panel heartbeat is fresh but ExtendScript has not returned', async () => {
+    // Reproduced against Premiere 25.6 with a 50 s ExtendScript call: the panel
+    // rewrites the heartbeat every 250 ms with a truncating write, the server read
+    // it empty once (raw "") and reported "panel is not running" 17.7 s into a call
+    // the panel was still running. One unreadable sample is not an absent panel.
+    it('does not report the panel missing when one heartbeat read lands mid-write', async () => {
+      let heartbeatReads = 0;
+      const answerAt = Date.now() + 1900;
+      mockFs.readFile.mockImplementation(async (file) => {
+        if (String(file) === heartbeatPath) {
+          heartbeatReads++;
+          return heartbeatReads === 1 ? '' : JSON.stringify({ t: Date.now(), started: true, scriptOkAt: Date.now() });
+        }
+        if (String(file) === responsePath && Date.now() >= answerAt) {
+          return JSON.stringify({ success: true, result: { ok: true } });
+        }
+        throw new Error('ENOENT');
+      });
+      const bridge = await readyBridge();
+
+      await expect(bridge.executeScript('return 1;', 20000)).resolves.toEqual({ ok: true });
+    });
+
+    it('still reports the panel missing when the heartbeat stays unreadable', async () => {
+      mockFs.readFile.mockImplementation(async (file) => {
+        if (String(file) === heartbeatPath) return '';
+        throw new Error('ENOENT');
+      });
+      const bridge = await readyBridge();
+
+      await expect(bridge.executeScript('return 1;', 20000)).rejects.toThrow(
+        /The TeamTrau PremiereProControl panel is not running/,
+      );
+    });
+
+    it('reports Premiere busy, not a lost connection, when the panel is still running an earlier command', async () => {
+      mockFs.readFile.mockImplementation(async (file) => {
+        if (String(file) === heartbeatPath) {
+          return JSON.stringify({ t: Date.now(), started: true, scriptOkAt: Date.now() - 20000, busySince: Date.now() - 20000 });
+        }
+        throw new Error('ENOENT');
+      });
+      const bridge = await readyBridge();
+
+      const error = await bridge.executeScript('return 1;', 700).catch((e: Error) => e);
+      expect(error).toBeInstanceOf(PremiereBusyError);
+      expect((error as PremiereBusyError).busyMs).toBeGreaterThanOrEqual(20000);
+      expect(isBridgeUnavailableMessage((error as Error).message)).toBe(false);
+    });
+
+    it('treats a stale scriptOkAt from a panel without busySince as busy too', async () => {
       mockFs.readFile.mockImplementation(async (file) => {
         if (String(file) === heartbeatPath) {
           return JSON.stringify({ t: Date.now(), started: true, scriptOkAt: Date.now() - 20000 });
@@ -214,7 +264,7 @@ describe('bridge file-queue protocol', () => {
       });
       const bridge = await readyBridge();
 
-      await expect(bridge.executeScript('return 1;', 700)).rejects.toThrow(/scripting thread is stuck/i);
+      await expect(bridge.executeScript('return 1;', 700)).rejects.toBeInstanceOf(PremiereBusyError);
     });
   });
 });

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import type { PremiereProTransport } from '../bridge/types.js';
-import { bridgeUnavailableResult, isBridgeUnavailableMessage } from '../bridge/errors.js';
+import { PREMIERE_STUCK_MS, bridgeErrorResult } from '../bridge/errors.js';
 import type { MCPTool } from './types.js';
 
 export const expandedToolNames = [
@@ -302,13 +302,15 @@ export async function executeExpandedTool(
       args = { ...args, outputPath: join(tmpdir(), `premiere-mcp-frame-${Date.now()}.png`) };
     }
     const script = buildExpandedToolScript(name, args);
-    const timeoutMs = name === 'ping' ? 8000 : undefined;
+    // Scene detection blocks until Premiere finishes; see detectSceneEdits in domains/timeline.ts.
+    const timeoutMs = name === 'ping'
+      ? 8000
+      : name === 'scene_edit_detection' && args.allowUnsafeSynchronous === true ? PREMIERE_STUCK_MS : undefined;
     return await bridge.executeScript(script, timeoutMs);
   } catch (error) {
+    const connectionFailure = bridgeErrorResult(name, error);
+    if (connectionFailure) return connectionFailure;
     const message = error instanceof Error ? error.message : String(error);
-    if (isBridgeUnavailableMessage(message)) {
-      return bridgeUnavailableResult(name, message);
-    }
     return {
       success: false,
       tool: name,
@@ -2092,7 +2094,7 @@ function buildExpandedToolScript(name: string, args: Record<string, any>): strin
             return ok({
               performed: false,
               guarded: true,
-              reason: "Premiere performSceneEditDetectionOnSelection blocks CEP in this bridge. Pass allowUnsafeSynchronous:true only when a human is prepared to wait or restart the panel.",
+              reason: "Premiere performSceneEditDetectionOnSelection blocks Premiere scripting until it finishes, which takes minutes on long footage. detect_scenes (ffmpeg) does not block Premiere. Pass allowUnsafeSynchronous:true to run it anyway; other tools report premiere_busy until it finishes.",
               action: String(args.action || "CreateMarkers"),
               sensitivity: String(args.sensitivity || "Medium")
             });

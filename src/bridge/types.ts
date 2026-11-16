@@ -23,6 +23,7 @@ export interface EnsureHostResult {
   agentAction?: string;
   nextStep?: string;
   tool?: string;
+  busyForSec?: number;
 }
 
 export interface PremiereProTransport {

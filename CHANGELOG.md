@@ -4,6 +4,10 @@ All notable changes are documented here. Releases use semantic versioning.
 
 ## [Unreleased]
 
+- Long Premiere calls no longer read as a lost connection. The panel rewrote `bridge-heartbeat.json` in place every 250 ms, and the server, which reads it every 150 ms while it waits, sometimes caught it empty and answered "panel is not running" with `userActionRequired`, so agents stopped and told users to reopen Premiere. Reproduced on Premiere 25.6 within 10–20 s of a 50 s call. The panel now publishes the heartbeat with a rename, and the server re-reads an unreadable heartbeat before deciding the panel is gone (this also covers 1.5.1 panels).
+- New status `premiere_busy` (`retry: true`, `userActionRequired: false`) when the panel is alive but Premiere is still inside an earlier ExtendScript call. The heartbeat carries `busySince` for this. `verify_premiere_connection` returns it at once instead of queuing a health check that timed out after 8 s. After 10 minutes on one call it asks the user to look for an open dialog or progress window. The old timeout text told agents to quit Premiere.
+- `detect_scene_edits` and `scene_edit_detection` with `allowUnsafeSynchronous: true` wait up to 10 minutes for Premiere's scene detection. Under the 45 s default they reported failure while Premiere was still cutting, so a retry cut the same clips twice.
+
 ## [1.5.1] - 2026-11-12
 
 - Windows installer: setup and uninstall now stop the server, sidecar and ffmpeg processes running from the install folder or the sidecar venv first. Installing over a copy that an AI client was running failed with "DeleteFile failed; code 5. Access is denied." on `node\node.exe`. Reopen Claude or Antigravity after installing.

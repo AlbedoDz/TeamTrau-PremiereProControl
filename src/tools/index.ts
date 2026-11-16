@@ -9,7 +9,7 @@
  */
 import { z } from 'zod';
 import type { PremiereProTransport } from '../bridge/types.js';
-import { bridgeUnavailableResult, isBridgeUnavailableMessage } from '../bridge/errors.js';
+import { bridgeErrorResult } from '../bridge/errors.js';
 import { Logger } from '../utils/logger.js';
 import { executeExpandedTool, getExpandedTools, isExpandedTool } from './expanded.js';
 import { canonicalizeMcpArgs, coerceArgsFromIssues } from '../utils/mcp-args.js';
@@ -239,10 +239,9 @@ export class PremiereProTools {
       }
     } catch (error) {
       this.logger.error(`Error executing tool ${name}:`, error);
+      const connectionFailure = bridgeErrorResult(name, error);
+      if (connectionFailure) return connectionFailure;
       const message = error instanceof Error ? error.message : String(error);
-      if (isBridgeUnavailableMessage(message)) {
-        return bridgeUnavailableResult(name, message);
-      }
       return {
         success: false,
         error: `Tool execution failed: ${message}`,

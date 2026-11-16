@@ -31,7 +31,7 @@ export interface LoadedPanel {
   /** Whatever the panel last handed to evalScript. */
   handedToEvalScript: () => string;
   /** The fs stub the panel closed over at load. */
-  fs: { writeFileSync: jest.Mock; existsSync: jest.Mock };
+  fs: { writeFileSync: jest.Mock; existsSync: jest.Mock; renameSync: jest.Mock };
 }
 
 /** Minimal stand-ins for what the panel pulls in at load time. */
@@ -66,7 +66,7 @@ export function loadPanel(): LoadedPanel {
   const fsStub = {
     existsSync: jest.fn(() => false), mkdirSync: () => {}, readdirSync: () => [],
     readFileSync: () => '', writeFileSync: jest.fn(), unlinkSync: () => {},
-    renameSync: () => {}, statSync: () => ({ isDirectory: () => false }),
+    renameSync: jest.fn(), statSync: () => ({ isDirectory: () => false }),
   };
 
   const sandbox: Record<string, unknown> = {

@@ -13,12 +13,25 @@ import { promises as fs } from 'fs';
 import { extname, join, posix as pathPosix, win32 as pathWin32 } from 'path';
 import { createSecureTempDir, validateFilePath } from '../utils/security.js';
 import type { EnsureHostOptions, EnsureHostResult, PremiereProTransport } from './types.js';
+import { PremiereBusyError, premiereBusyResult } from './errors.js';
 
 const execFileAsync = promisify(execFile);
 
 export const BRIDGE_HEARTBEAT_FILE = 'bridge-heartbeat.json';
 export const BRIDGE_PANEL_ABSENT_MS = 1500;
 export const BRIDGE_HEARTBEAT_STALE_MS = 2500;
+const HEARTBEAT_READ_ATTEMPTS = 3;
+const HEARTBEAT_RETRY_MS = 50;
+/** A native call running at least this long is reported as Premiere being busy. */
+export const PREMIERE_BUSY_REPORT_MS = 5000;
+
+interface PanelHeartbeat {
+  t: number;
+  started: boolean;
+  scriptOkAt: number | null;
+  /** How long the panel's current native evalScript has been running; 0 when idle. */
+  busyMs: number;
+}
 export const HEALTH_CHECK_TIMEOUT_MS = 8000;
 export const BRIDGE_PANEL_NOT_RUNNING =
   'The TeamTrau PremiereProControl panel is not running. Open Adobe Premiere Pro. The TeamTrau PremiereProControl panel auto-starts when Premiere opens it. If the panel is missing, choose Window > Extensions > TeamTrau PremiereProControl. Call verify_premiere_connection once rather than retrying other tools.';
@@ -970,6 +983,11 @@ export class PremiereProBridge implements PremiereProTransport {
 
     const beat = await this.readHeartbeat();
     if (beat?.started) {
+      // A health-check script queued behind a long call would only time out and read as a
+      // lost connection. Say what is actually happening instead.
+      if (beat.busyMs >= PREMIERE_BUSY_REPORT_MS) {
+        return { ready: false, ...premiereBusyResult(tool, beat.busyMs) };
+      }
       return { ready: true, success: true, status: 'connected' };
     }
     if (beat && !beat.started) {
@@ -1214,19 +1232,38 @@ export class PremiereProBridge implements PremiereProTransport {
     }
   }
 
-  private async readHeartbeat(): Promise<{ t: number; started: boolean; scriptOkAt: number | null } | null> {
-    try {
-      const raw = await fs.readFile(join(this.tempDir, BRIDGE_HEARTBEAT_FILE), 'utf8');
-      const parsed = JSON.parse(raw) as { t?: unknown; started?: unknown; scriptOkAt?: unknown };
+  private async readHeartbeat(): Promise<PanelHeartbeat | null> {
+    // The panel rewrites this file every 250 ms, and panels up to 1.5.1 truncate and
+    // rewrite it in place. A read that lands between the two sees an empty or partial
+    // file; against Premiere 25.6 that happened 17 s into a long call and was reported
+    // as "panel is not running" while the panel was still working. One unreadable
+    // sample is not an absent panel, so re-read before concluding anything.
+    for (let attempt = 0; attempt < HEARTBEAT_READ_ATTEMPTS; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, HEARTBEAT_RETRY_MS));
+      let parsed: { t?: unknown; started?: unknown; scriptOkAt?: unknown; busySince?: unknown };
+      try {
+        parsed = JSON.parse(await fs.readFile(join(this.tempDir, BRIDGE_HEARTBEAT_FILE), 'utf8'));
+      } catch {
+        continue;
+      }
       if (typeof parsed?.t !== 'number' || !Number.isFinite(parsed.t)) return null;
-      if (Date.now() - parsed.t > BRIDGE_HEARTBEAT_STALE_MS) return null;
+      const now = Date.now();
+      if (now - parsed.t > BRIDGE_HEARTBEAT_STALE_MS) return null;
       const scriptOkAt = typeof parsed.scriptOkAt === 'number' && Number.isFinite(parsed.scriptOkAt) && parsed.scriptOkAt > 0
         ? parsed.scriptOkAt
         : null;
-      return { t: parsed.t, started: parsed.started === true, scriptOkAt };
-    } catch {
-      return null;
+      // busySince is when the panel handed its current call to evalScript (null when idle).
+      // Panels that predate it only report scriptOkAt, which the idle panel refreshes every
+      // 2 s, so its age is how long the current call has been running.
+      let busyMs = 0;
+      if (typeof parsed.busySince === 'number' && Number.isFinite(parsed.busySince) && parsed.busySince > 0) {
+        busyMs = Math.max(0, now - parsed.busySince);
+      } else if (!('busySince' in parsed) && scriptOkAt != null) {
+        busyMs = Math.max(0, now - scriptOkAt);
+      }
+      return { t: parsed.t, started: parsed.started === true, scriptOkAt, busyMs };
     }
+    return null;
   }
 
   private async waitForResponse(responseFile: string, timeout = 60000): Promise<any> {
@@ -1286,19 +1323,22 @@ export class PremiereProBridge implements PremiereProTransport {
       );
     }
 
-    throw new Error(await this.timeoutMessage());
+    throw await this.timeoutError();
   }
 
-  private async timeoutMessage(): Promise<string> {
+  private async timeoutError(): Promise<Error> {
     const beat = await this.readHeartbeat();
-    const base = 'Bridge response timeout. Ensure Premiere Pro is open, TeamTrau PremiereProControl (CEP or UXP) panel is open, ' +
-      'Temp Directory is set to ' + this.tempDir + ', and Start Bridge is clicked. Do not retry until the panel says Connected.';
-    if (!beat?.started || beat.scriptOkAt == null) return base;
-    const scriptAgeSec = Math.round((Date.now() - beat.scriptOkAt) / 1000);
-    if (scriptAgeSec < 5) return base;
-    return 'Bridge response timeout. The CEP panel heartbeat is fresh, but Premiere has not finished an ExtendScript call in ' +
-      scriptAgeSec + 's. The panel process can stay alive while Premiere\'s scripting thread is stuck. ' +
-      'Quit Premiere to recover; an in-flight ExtendScript call cannot be cancelled.';
+    // A live panel that is still inside a native call runs nothing else until it returns,
+    // so this command timed out waiting in line. That is a busy host, not a lost bridge:
+    // reporting it as bridge_unavailable made agents stop and tell users to restart
+    // Premiere over a call that finished by itself moments later.
+    if (beat?.started && beat.busyMs >= PREMIERE_BUSY_REPORT_MS) {
+      return new PremiereBusyError(beat.busyMs);
+    }
+    return new Error(
+      'Bridge response timeout. Ensure Premiere Pro is open, TeamTrau PremiereProControl (CEP or UXP) panel is open, ' +
+      'Temp Directory is set to ' + this.tempDir + ', and Start Bridge is clicked. Do not retry until the panel says Connected.',
+    );
   }
 
   // Project Management

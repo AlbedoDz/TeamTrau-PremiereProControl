@@ -218,6 +218,7 @@ function inferErrorCode(
   if (normalized.includes('nul character')) return 'nul_argument';
   if (normalized.includes("tool '") && normalized.includes('not found')) return 'unknown_tool';
   if (normalized.includes('never became valid json')) return 'bridge.parse';
+  if (status === 'premiere_busy') return 'bridge.busy';
   if (
     normalized.includes('timed out') ||
     normalized.includes('response timeout') ||
@@ -281,7 +282,7 @@ export function summarizeToolFailure(result: unknown): ToolFailureSummary {
   const status = sanitizeStatus(typeof record.status === 'string' ? record.status : undefined);
   const retry = typeof record.retry === 'boolean' ? record.retry : undefined;
   let errorKind = classifyToolError(error);
-  if (status === 'bridge_unavailable' || status === 'bridge_timeout') errorKind = 'connection';
+  if (status === 'bridge_unavailable' || status === 'bridge_timeout' || status === 'premiere_busy') errorKind = 'connection';
   if (status === 'validation') errorKind = 'validation';
   if (status === 'unsupported') errorKind = 'unsupported';
 

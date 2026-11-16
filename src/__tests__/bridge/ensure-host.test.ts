@@ -68,6 +68,35 @@ describe('ensureHost', () => {
     delete process.env.PREMIERE_TEMP_DIR;
   });
 
+  // A health-check script queued behind a long call times out after 8 s and used to
+  // come back as bridge_unavailable, so the agent told the user to reopen Premiere.
+  it('reports Premiere busy with a retryable status while the panel runs a long command', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ t: Date.now(), started: true, scriptOkAt: Date.now() - 30000, busySince: Date.now() - 30000 }));
+    const bridge = new PremiereProBridge();
+    await bridge.initialize();
+    const result = await bridge.ensureHost({ launchIfNeeded: false, waitMs: 10 });
+    expect(result).toMatchObject({ ready: false, status: 'premiere_busy', retry: true, userActionRequired: false });
+    expect(result.nextStep).toMatch(/verify_premiere_connection/);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('asks the user to look at Premiere only once a command has been running far too long', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ t: Date.now(), started: true, scriptOkAt: Date.now() - 11 * 60000, busySince: Date.now() - 11 * 60000 }));
+    const bridge = new PremiereProBridge();
+    await bridge.initialize();
+    const result = await bridge.ensureHost({ launchIfNeeded: false, waitMs: 10 });
+    expect(result).toMatchObject({ ready: false, status: 'premiere_busy', retry: false, userActionRequired: true });
+    expect(result.nextStep).toMatch(/dialog|progress/i);
+  });
+
+  it('is ready when the panel is busy only briefly', async () => {
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ t: Date.now(), started: true, scriptOkAt: Date.now() - 500, busySince: Date.now() - 500 }));
+    const bridge = new PremiereProBridge();
+    await bridge.initialize();
+    const result = await bridge.ensureHost({ launchIfNeeded: false, waitMs: 10 });
+    expect(result.ready).toBe(true);
+  });
+
   it('is ready when the panel heartbeat is already started', async () => {
     mockFs.readFile.mockResolvedValue(JSON.stringify({ t: Date.now(), started: true }));
     const bridge = new PremiereProBridge();

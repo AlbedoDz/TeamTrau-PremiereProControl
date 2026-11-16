@@ -434,6 +434,7 @@
         this.evalScriptBusy = false;
         this.evalScriptQueue = [];
         this.lastScriptOkAt = 0;
+        this.busySince = null;
         this.telemetryEnabled = true;
         this.csInterface = new CSInterface();
         this.init();
@@ -591,6 +592,7 @@
 
     MCPPremiereBridge.prototype.releaseEvalScript = function() {
         this.evalScriptBusy = false;
+        this.busySince = null;
         this.isProcessing = false;
         this.pumpEvalScript();
     };
@@ -600,6 +602,7 @@
         if (this.evalScriptBusy) return;
         if (this.evalScriptQueue.length === 0) return;
         this.evalScriptBusy = true;
+        this.busySince = Date.now();
         var job = this.evalScriptQueue.shift();
         this.runEvalScriptJob(job);
     };
@@ -716,15 +719,21 @@
         return script.length <= 500000;
     };
 
+    // Published with a rename like responses: the server reads this file every 150 ms
+    // while it waits, and a truncate-then-write let it read an empty file and report
+    // the panel missing in the middle of a long call. busySince tells the server that
+    // Premiere is still inside a native call, so a command waiting behind it reads as
+    // "busy", not as a lost connection.
     MCPPremiereBridge.prototype.writeHeartbeat = function() {
         try {
             var tempPath = this.getTempDirectory();
             if (!tempPath) return;
-            fs.writeFileSync(path.join(tempPath, 'bridge-heartbeat.json'), JSON.stringify({
+            this.writeResponseAtomic(path.join(tempPath, 'bridge-heartbeat.json'), {
                 t: Date.now(),
                 started: !!this.isConnected,
-                scriptOkAt: this.lastScriptOkAt || null
-            }));
+                scriptOkAt: this.lastScriptOkAt || null,
+                busySince: this.busySince || null
+            });
         } catch (e) {}
     };
 

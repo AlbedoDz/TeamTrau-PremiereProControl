@@ -6,6 +6,7 @@
  */
 import { z } from 'zod';
 import type { ToolContext, ToolModule } from '../context.js';
+import { PREMIERE_STUCK_MS } from '../../bridge/errors.js';
 
 export const timelineTools: ToolModule[] = [
   {
@@ -230,7 +231,7 @@ export const timelineTools: ToolModule[] = [
       action: z.enum(['ApplyCuts', 'CreateMarkers']).optional().describe('Action to take at detected edit points'),
       applyCutsToLinkedAudio: z.boolean().optional().describe('Whether to apply cuts to linked audio'),
       sensitivity: z.string().optional().describe('Detection sensitivity (e.g., "Low", "Medium", "High")'),
-      allowUnsafeSynchronous: z.boolean().optional().describe('Actually invoke Premiere scene detection synchronously; can block CEP for a long time')
+      allowUnsafeSynchronous: z.boolean().optional().describe('Actually invoke Premiere scene detection. It blocks Premiere scripting until done (minutes on long footage); the call waits up to 10 minutes. Prefer detect_scenes, which uses ffmpeg and does not block Premiere.')
     }),
     run: (ctx, args) => detectSceneEdits(ctx, args.sequenceId, args.action, args.applyCutsToLinkedAudio, args.sensitivity, args.allowUnsafeSynchronous),
   },
@@ -1354,7 +1355,7 @@ async function detectSceneEdits(ctx: ToolContext, sequenceId: string, action?: s
             success: true,
             performed: false,
             guarded: true,
-            reason: "Premiere performSceneEditDetectionOnSelection blocks CEP in this bridge. Pass allowUnsafeSynchronous:true only when a human is prepared to wait or restart the panel.",
+            reason: "Premiere performSceneEditDetectionOnSelection blocks Premiere scripting until it finishes, which takes minutes on long footage. detect_scenes (ffmpeg) does not block Premiere. Pass allowUnsafeSynchronous:true to run it anyway; other tools report premiere_busy until it finishes.",
             action: ${JSON.stringify(actionVal)},
             sensitivity: ${JSON.stringify(sensitivityVal)}
           });
@@ -1370,5 +1371,8 @@ async function detectSceneEdits(ctx: ToolContext, sequenceId: string, action?: s
         return JSON.stringify({ success: false, error: e.toString() });
       }
     `;
-  return await ctx.bridge.executeScript(script);
+  // performSceneEditDetectionOnSelection blocks until Premiere finishes analysing the selection, which
+  // takes minutes on long footage. Under the default 45 s limit the agent was told it failed while
+  // Premiere was still cutting, and a retry would cut the same clips twice.
+  return await ctx.bridge.executeScript(script, allowUnsafeSynchronous === true ? PREMIERE_STUCK_MS : undefined);
 }

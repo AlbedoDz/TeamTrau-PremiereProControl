@@ -73,20 +73,45 @@ describe('CEP panel auto-start', () => {
 });
 
 describe('CEP panel heartbeat', () => {
-  it('writes bridge-heartbeat.json so the server can fail fast when Premiere is not listening', () => {
+  const lastHeartbeat = (fs: { writeFileSync: jest.Mock }): Record<string, unknown> => {
+    const calls = fs.writeFileSync.mock.calls.filter((call) => String(call[0]).indexOf('bridge-heartbeat.json') >= 0);
+    return JSON.parse(String(calls[calls.length - 1][1]));
+  };
+
+  it('publishes bridge-heartbeat.json with a rename so the server never reads it half-written', () => {
     const { bridge, fs } = loadPanel();
     bridge.getTempDirectory = () => '/tmp/premiere-mcp-bridge';
     bridge.isConnected = true;
 
     bridge.writeHeartbeat();
 
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
+    const written = fs.writeFileSync.mock.calls.map((call) => String(call[0]));
+    expect(written).not.toContain('/tmp/premiere-mcp-bridge/bridge-heartbeat.json');
+    expect(fs.renameSync).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/tmp\/premiere-mcp-bridge\/bridge-heartbeat\.json\..+/),
       '/tmp/premiere-mcp-bridge/bridge-heartbeat.json',
-      expect.stringMatching(/"started":true/),
     );
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      '/tmp/premiere-mcp-bridge/bridge-heartbeat.json',
-      expect.stringMatching(/"scriptOkAt":/),
-    );
+    expect(lastHeartbeat(fs)).toMatchObject({ started: true, scriptOkAt: null, busySince: null });
+  });
+
+  it('reports busySince while a native evalScript is outstanding and clears it on the callback', () => {
+    jest.useFakeTimers();
+    const { bridge, fs } = loadPanel();
+    bridge.getTempDirectory = () => '/tmp/premiere-mcp-bridge';
+    bridge.isConnected = true;
+    const evalCalls: Array<(result: string) => void> = [];
+    bridge.csInterface = {
+      getHostEnvironment: () => ({ appName: 'PPRO', appVersion: '26.0.0' }),
+      evalScript: (_script: string, callback: (result: string) => void) => { evalCalls.push(callback); },
+    };
+
+    bridge.executeExtendScript('return 1;', () => {});
+    bridge.writeHeartbeat();
+    expect(typeof lastHeartbeat(fs).busySince).toBe('number');
+
+    evalCalls[0]('1');
+    jest.advanceTimersByTime(0);
+    bridge.writeHeartbeat();
+    expect(lastHeartbeat(fs).busySince).toBeNull();
   });
 });
