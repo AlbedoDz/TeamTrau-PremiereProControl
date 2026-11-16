@@ -1,6 +1,6 @@
 {
   "name": "adobe-premiere-pro-mcp",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "MCP Bridge for Adobe Premiere Pro with a searchable catalog of 280 Premiere tools.",
   "main": "dist/index.js",
   "bin": {
