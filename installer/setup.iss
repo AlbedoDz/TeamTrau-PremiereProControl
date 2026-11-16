@@ -62,13 +62,25 @@ begin
   Result := '''' + S + '''';
 end;
 
-procedure StopRunningCopies();
+// Some clients (mcpproxy, DeepSeek Harness) start the server again within a second of it being
+// killed, so a single kill pass lost the race and node.exe was locked again before Setup reached
+// it (1.5.2 test install: killed at 13:12:46, respawned at 13:12:47, code 5 at 13:13:14).
+// A running exe can still be renamed, so on install node.exe is moved aside first: a client that
+// restarts the server during the copy finds no node.exe instead of relocking it, and picks up
+// the new one afterwards. Uninstall keeps node.exe because [UninstallRun] still needs it.
+procedure StopRunningCopies(MoveNodeAside: Boolean);
 var
-  Dirs, Script: string;
+  Dirs, Node, Script: string;
   Code: Integer;
 begin
   Dirs := PsQuote(ExpandConstant('{app}') + '\') + ',' + PsQuote(ExpandConstant('{%USERPROFILE}') + '\.premiere-mcp\venv\');
-  Script :=
+  Node := ExpandConstant('{app}\node');
+  Script := '';
+  if MoveNodeAside then
+    Script :=
+      'Get-ChildItem -LiteralPath ' + PsQuote(Node) + ' -Filter ''node.exe.old-*'' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue;' +
+      'if (Test-Path -LiteralPath ' + PsQuote(Node + '\node.exe') + ') { Rename-Item -LiteralPath ' + PsQuote(Node + '\node.exe') + ' -NewName (''node.exe.old-'' + [DateTime]::Now.Ticks) -ErrorAction SilentlyContinue };';
+  Script := Script +
     '$dirs=@(' + Dirs + ');' +
     '$p=Get-CimInstance Win32_Process | Where-Object { $e=$_.ExecutablePath; $e -and ($dirs | Where-Object { $e.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }) };' +
     'foreach($x in $p){ Stop-Process -Id $x.ProcessId -Force -ErrorAction SilentlyContinue };' +
@@ -78,13 +90,13 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  StopRunningCopies();
+  StopRunningCopies(True);
   Result := '';
 end;
 
 function InitializeUninstall(): Boolean;
 begin
-  StopRunningCopies();
+  StopRunningCopies(False);
   Result := True;
 end;
 
